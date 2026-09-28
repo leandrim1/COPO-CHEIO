@@ -1,5 +1,6 @@
 import { ArrowRight, GlassWater, Motorbike, Snowflake } from 'lucide-react';
-import type { CSSProperties, ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode, RefObject } from 'react';
 
 const BRAND_NAME = 'COPO CHEIO';
 const VIDEO_URL =
@@ -7,6 +8,12 @@ const VIDEO_URL =
 
 // Troque pelo link do WhatsApp (ex.: https://wa.me/55DDDNUMERO) quando estiver disponível.
 const ORDER_HREF = '#contato';
+
+// Where the hand in the background video sits, as fractions of the video frame.
+// On desktop the cup is drawn over it so the hand never shows.
+const HAND_IN_VIDEO = { centerX: 0.498, cupTop: 0.26, cupSize: 0.82 };
+// Horizontal centre of the cup inside bebida.png (the image has transparent side margins).
+const CUP_CENTER_IN_IMAGE = 0.51;
 
 const NAV_LINKS = ['Início', 'Bebidas', 'Ofertas', 'Sobre', 'Contato'];
 // Hidden on tablet so the pill never collides with the logo; everything shows from lg up.
@@ -33,6 +40,50 @@ const MOTION_STYLES = `
   .cc-float, .cc-glow { animation: none; }
 }
 `;
+
+type CupBox = { left: number; top: number; size: number };
+
+// Mirrors the video's object-cover/object-left framing to find where the hand is rendered,
+// and returns the box the cup must occupy to cover it. Null when the layout can't host the
+// cup there (mobile, tablets and portrait windows), which keeps the regular placement.
+function useCupOverHand(rootRef: RefObject<HTMLDivElement | null>, videoRef: RefObject<HTMLVideoElement | null>) {
+  const [box, setBox] = useState<CupBox | null>(null);
+
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    const video = videoRef.current;
+    if (!root || !video) return;
+
+    const update = () => {
+      const { width, height } = root.getBoundingClientRect();
+      if (width < 1024 || width / height < 1.2) {
+        setBox(null);
+        return;
+      }
+      const aspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
+      const renderedHeight = Math.max(height, width / aspect);
+      const renderedWidth = renderedHeight * aspect;
+      const offsetY = (height - renderedHeight) / 2;
+      const size = renderedHeight * HAND_IN_VIDEO.cupSize;
+      setBox({
+        left: renderedWidth * HAND_IN_VIDEO.centerX - size * CUP_CENTER_IN_IMAGE,
+        top: offsetY + renderedHeight * HAND_IN_VIDEO.cupTop,
+        size,
+      });
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(root);
+    video.addEventListener('loadedmetadata', update);
+    return () => {
+      observer.disconnect();
+      video.removeEventListener('loadedmetadata', update);
+    };
+  }, [rootRef, videoRef]);
+
+  return box;
+}
 
 function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
   return (
@@ -84,13 +135,19 @@ function InfoChip({
 }
 
 export default function App() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const cupBox = useCupOverHand(rootRef, videoRef);
+  const overHand = cupBox !== null;
+
   return (
-    <div id="inicio" className="relative min-h-screen overflow-hidden bg-black">
+    <div ref={rootRef} id="inicio" className="relative min-h-screen overflow-hidden bg-black">
       <style>{MOTION_STYLES}</style>
 
-      {/* Background video */}
+      {/* Background video, left-aligned so on portrait screens its hand falls outside the frame */}
       <video
-        className="absolute inset-0 w-full h-full object-cover"
+        ref={videoRef}
+        className="absolute inset-0 w-full h-full object-cover object-left"
         src={VIDEO_URL}
         autoPlay
         muted
@@ -177,9 +234,28 @@ export default function App() {
           </div>
         </nav>
 
-        {/* Product: in-flow above the copy on mobile/tablet, floating bottom-right on desktop */}
-        <div className="flex justify-center px-6 pt-4 sm:pt-8 lg:pointer-events-none lg:absolute lg:inset-0 lg:block lg:p-0">
-          <div className="relative aspect-square w-[min(64vw,29vh)] sm:w-[min(60vw,40vh)] lg:absolute lg:right-[-5%] lg:bottom-[-5%] lg:w-[min(64vh,46vw)] xl:w-[min(84vh,50vw)]">
+        {/* Product: over the video's hand on desktop, in-flow above the copy on mobile/tablet */}
+        <div
+          className={
+            overHand
+              ? 'pointer-events-none absolute inset-0'
+              : 'flex justify-center px-6 pt-4 sm:pt-8 lg:pointer-events-none lg:absolute lg:inset-0 lg:block lg:p-0'
+          }
+        >
+          <div
+            className={
+              overHand
+                ? 'absolute aspect-square'
+                : 'relative aspect-square w-[min(64vw,29vh)] sm:w-[min(60vw,40vh)] lg:absolute lg:right-[-5%] lg:bottom-[-5%] lg:w-[min(64vh,46vw)] xl:w-[min(84vh,50vw)]'
+            }
+            style={cupBox ? { left: cupBox.left, top: cupBox.top, width: cupBox.size } : undefined}
+          >
+            {overHand && (
+              <div
+                aria-hidden="true"
+                className="absolute inset-x-[22%] bottom-[-8%] top-[24%] rounded-full bg-[#050505]/60 blur-3xl"
+              />
+            )}
             <div
               aria-hidden="true"
               className="absolute inset-x-[18%] inset-y-[10%] rounded-full bg-[#145CFF]/45 blur-[70px] cc-glow lg:blur-[100px]"
@@ -204,19 +280,29 @@ export default function App() {
               />
             </picture>
 
-            <IceCube className="left-[8%] top-[18%] h-9 w-9 opacity-70 sm:h-11 sm:w-11 lg:left-[20%] lg:top-[4%] lg:h-12 lg:w-12 xl:left-[8%] xl:top-[16%] xl:h-14 xl:w-14" delay="-2s" />
-            <IceCube className="bottom-[22%] right-[10%] h-7 w-7 opacity-60 sm:h-9 sm:w-9 lg:bottom-[16%] lg:left-[16%] lg:right-auto lg:h-10 lg:w-10" delay="-4s" />
-            <IceCube className="right-[24%] top-[6%] hidden h-8 w-8 opacity-50 lg:block" delay="-1s" />
+            {overHand ? (
+              <>
+                <IceCube className="left-[24%] top-[8%] h-12 w-12 opacity-70 xl:h-14 xl:w-14" delay="-2s" />
+                <IceCube className="right-[10%] top-[12%] h-9 w-9 opacity-50" delay="-1s" />
+                <IceCube className="bottom-[14%] left-[20%] h-10 w-10 opacity-60" delay="-4s" />
+              </>
+            ) : (
+              <>
+                <IceCube className="left-[8%] top-[18%] h-9 w-9 opacity-70 sm:h-11 sm:w-11 lg:left-[20%] lg:top-[4%] lg:h-12 lg:w-12 xl:left-[8%] xl:top-[16%] xl:h-14 xl:w-14" delay="-2s" />
+                <IceCube className="bottom-[22%] right-[10%] h-7 w-7 opacity-60 sm:h-9 sm:w-9 lg:bottom-[16%] lg:left-[16%] lg:right-auto lg:h-10 lg:w-10" delay="-4s" />
+                <IceCube className="right-[24%] top-[6%] hidden h-8 w-8 opacity-50 lg:block" delay="-1s" />
+              </>
+            )}
 
             <InfoChip
-              className="left-[-6%] top-[36%]"
+              className={overHand ? 'right-[-16%] top-[30%]' : 'left-[-6%] top-[36%]'}
               style={{ animationDelay: '-3s' }}
               icon={<Snowflake className="h-4 w-4" aria-hidden="true" />}
               title="Trincando de gelada"
               subtitle="Direto do freezer"
             />
             <InfoChip
-              className="bottom-[26%] right-[18%]"
+              className={overHand ? 'bottom-[30%] right-[-8%]' : 'bottom-[26%] right-[18%]'}
               style={{ animationDelay: '-5s' }}
               icon={<Motorbike className="h-4 w-4" aria-hidden="true" />}
               title="Entrega rápida"
@@ -233,7 +319,7 @@ export default function App() {
               alt={`${BRAND_NAME} – Disk Bebidas`}
               width={112}
               height={112}
-              className="mb-6 hidden h-24 w-24 rounded-full object-contain ring-1 ring-[#145CFF]/40 shadow-[0_0_50px_-4px_rgba(20,92,255,0.65)] sm:block lg:h-28 lg:w-28"
+              className="mb-6 hidden h-24 w-24 rounded-full object-contain ring-1 ring-[#145CFF]/40 shadow-[0_0_50px_-4px_rgba(20,92,255,0.65)] sm:block lg:h-28 lg:w-28 [@media(max-height:700px)]:!hidden"
             />
 
             <div className="inline-flex items-center gap-2 bg-[#145CFF]/90 border border-blue-300/30 rounded-full px-3.5 py-2 backdrop-blur-md shadow-[0_0_24px_rgba(20,92,255,0.45)]">
@@ -246,7 +332,7 @@ export default function App() {
               </span>
             </div>
 
-            <h1 className="mt-4 sm:mt-5 text-4xl sm:text-5xl lg:text-6xl leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
+            <h1 className="mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
               Sua{' '}
               <span className="text-[#145CFF] [text-shadow:0_0_24px_rgba(20,92,255,0.65),0_0_60px_rgba(20,92,255,0.35)]">
                 bebida gelada
@@ -254,7 +340,7 @@ export default function App() {
               chega até você.
             </h1>
 
-            <p className="mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md">
+            <p className="mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md lg:max-w-sm">
               Bebidas bem geladas, variedade e rapidez para deixar qualquer momento muito melhor.
             </p>
 
