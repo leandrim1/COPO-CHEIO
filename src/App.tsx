@@ -9,8 +9,10 @@ const VIDEO_URL =
 // Troque pelo link do WhatsApp (ex.: https://wa.me/55DDDNUMERO) quando estiver disponível.
 const ORDER_HREF = '#contato';
 
-// Where the hand in the background video sits, as fractions of the video frame.
-// On desktop the cup is drawn over it so the hand never shows.
+// The background video shows a hand moving around the middle of the frame (≈39–60% of its
+// width, from the bottom almost to the top). That vertical band of the video is masked out,
+// with a margin, and on desktop the cup sits in it. Values are fractions of the video frame.
+const HAND_BAND = { start: 0.3, end: 0.7, fade: 0.07 };
 const HAND_IN_VIDEO = { centerX: 0.498, cupTop: 0.26, cupSize: 0.82 };
 // Horizontal centre of the cup inside bebida.png (the image has transparent side margins).
 const CUP_CENTER_IN_IMAGE = 0.51;
@@ -42,12 +44,17 @@ const MOTION_STYLES = `
 `;
 
 type CupBox = { left: number; top: number; size: number };
+type VideoFraming = { handMask?: string; cupBox: CupBox | null };
 
-// Mirrors the video's object-cover/object-left framing to find where the hand is rendered,
-// and returns the box the cup must occupy to cover it. Null when the layout can't host the
-// cup there (mobile, tablets and portrait windows), which keeps the regular placement.
-function useCupOverHand(rootRef: RefObject<HTMLDivElement | null>, videoRef: RefObject<HTMLVideoElement | null>) {
-  const [box, setBox] = useState<CupBox | null>(null);
+// Mirrors the video's object-cover/object-left framing to find where the hand is rendered.
+// Returns the mask that hides it and the box the cup occupies over it; cupBox is null when
+// the layout can't host the cup there (mobile, tablets and portrait windows), which keeps
+// the regular placement.
+function useVideoFraming(
+  rootRef: RefObject<HTMLDivElement | null>,
+  videoRef: RefObject<HTMLVideoElement | null>,
+) {
+  const [framing, setFraming] = useState<VideoFraming>({ cupBox: null });
 
   useLayoutEffect(() => {
     const root = rootRef.current;
@@ -56,19 +63,28 @@ function useCupOverHand(rootRef: RefObject<HTMLDivElement | null>, videoRef: Ref
 
     const update = () => {
       const { width, height } = root.getBoundingClientRect();
-      if (width < 1024 || width / height < 1.2) {
-        setBox(null);
-        return;
-      }
       const aspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9;
       const renderedHeight = Math.max(height, width / aspect);
+      // object-left keeps the frame's left edge at x = 0, so band positions are plain offsets.
       const renderedWidth = renderedHeight * aspect;
+      const bandStart = renderedWidth * HAND_BAND.start;
+      const bandEnd = renderedWidth * HAND_BAND.end;
+      const fade = renderedWidth * HAND_BAND.fade;
+      const handMask = `linear-gradient(to right, #000 ${bandStart - fade}px, transparent ${bandStart}px, transparent ${bandEnd}px, #000 ${bandEnd + fade}px)`;
+
+      if (width < 1024 || width / height < 1.2) {
+        setFraming({ handMask, cupBox: null });
+        return;
+      }
       const offsetY = (height - renderedHeight) / 2;
       const size = renderedHeight * HAND_IN_VIDEO.cupSize;
-      setBox({
-        left: renderedWidth * HAND_IN_VIDEO.centerX - size * CUP_CENTER_IN_IMAGE,
-        top: offsetY + renderedHeight * HAND_IN_VIDEO.cupTop,
-        size,
+      setFraming({
+        handMask,
+        cupBox: {
+          left: renderedWidth * HAND_IN_VIDEO.centerX - size * CUP_CENTER_IN_IMAGE,
+          top: offsetY + renderedHeight * HAND_IN_VIDEO.cupTop,
+          size,
+        },
       });
     };
 
@@ -82,7 +98,7 @@ function useCupOverHand(rootRef: RefObject<HTMLDivElement | null>, videoRef: Ref
     };
   }, [rootRef, videoRef]);
 
-  return box;
+  return framing;
 }
 
 function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
@@ -137,17 +153,18 @@ function InfoChip({
 export default function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const cupBox = useCupOverHand(rootRef, videoRef);
+  const { handMask, cupBox } = useVideoFraming(rootRef, videoRef);
   const overHand = cupBox !== null;
 
   return (
     <div ref={rootRef} id="inicio" className="relative min-h-screen overflow-hidden bg-black">
       <style>{MOTION_STYLES}</style>
 
-      {/* Background video, left-aligned so on portrait screens its hand falls outside the frame */}
+      {/* Background video: left-aligned so phones show a hand-free part, with the hand's band masked out */}
       <video
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover object-left"
+        style={{ maskImage: handMask, WebkitMaskImage: handMask }}
         src={VIDEO_URL}
         autoPlay
         muted
@@ -250,12 +267,6 @@ export default function App() {
             }
             style={cupBox ? { left: cupBox.left, top: cupBox.top, width: cupBox.size } : undefined}
           >
-            {overHand && (
-              <div
-                aria-hidden="true"
-                className="absolute inset-x-[22%] bottom-[-8%] top-[24%] rounded-full bg-[#050505]/60 blur-3xl"
-              />
-            )}
             <div
               aria-hidden="true"
               className="absolute inset-x-[18%] inset-y-[10%] rounded-full bg-[#145CFF]/45 blur-[70px] cc-glow lg:blur-[100px]"
