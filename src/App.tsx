@@ -13,7 +13,10 @@ const ORDER_HREF = '#contato';
 // width, from the bottom almost to the top). That vertical band of the video is masked out,
 // with a margin, and on desktop the cup sits in it. Values are fractions of the video frame.
 const HAND_BAND = { start: 0.3, end: 0.7, fade: 0.07 };
-const HAND_IN_VIDEO = { centerX: 0.498, cupTop: 0.26, cupSize: 0.82 };
+const HAND_IN_VIDEO = { centerX: 0.498, cupSize: 0.82 };
+// On desktop the whole cup must stay visible: it is fitted between the nav and the bottom edge
+// (px kept clear above and below, the bottom one also leaves room for the floating animation).
+const CUP_MARGIN = { top: 100, bottom: 28 };
 // Horizontal centre of the cup inside bebida.png (the image has transparent side margins).
 const CUP_CENTER_IN_IMAGE = 0.51;
 
@@ -76,13 +79,13 @@ function useVideoFraming(
         setFraming({ handMask, cupBox: null });
         return;
       }
-      const offsetY = (height - renderedHeight) / 2;
-      const size = renderedHeight * HAND_IN_VIDEO.cupSize;
+      const available = height - CUP_MARGIN.top - CUP_MARGIN.bottom;
+      const size = Math.min(renderedHeight * HAND_IN_VIDEO.cupSize, available);
       setFraming({
         handMask,
         cupBox: {
           left: renderedWidth * HAND_IN_VIDEO.centerX - size * CUP_CENTER_IN_IMAGE,
-          top: offsetY + renderedHeight * HAND_IN_VIDEO.cupTop,
+          top: CUP_MARGIN.top + (available - size) / 2,
           size,
         },
       });
@@ -136,7 +139,7 @@ function InfoChip({
 }) {
   return (
     <div
-      className={`absolute hidden items-center gap-3 rounded-2xl border border-white/15 bg-[#080A0F]/60 px-3.5 py-2.5 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl cc-float xl:flex ${className}`}
+      className={`absolute hidden w-max items-center gap-3 rounded-2xl border border-white/15 bg-[#080A0F]/60 px-3.5 py-2.5 shadow-[0_12px_40px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl cc-float xl:flex ${className}`}
       style={style}
     >
       <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#145CFF] text-white shadow-[0_0_18px_rgba(20,92,255,0.7)]">
@@ -306,14 +309,14 @@ export default function App() {
             )}
 
             <InfoChip
-              className={overHand ? 'right-[-16%] top-[30%]' : 'left-[-6%] top-[36%]'}
+              className={overHand ? 'left-[78%] top-[30%]' : 'left-[-6%] top-[36%]'}
               style={{ animationDelay: '-3s' }}
               icon={<Snowflake className="h-4 w-4" aria-hidden="true" />}
               title="Trincando de gelada"
               subtitle="Direto do freezer"
             />
             <InfoChip
-              className={overHand ? 'bottom-[30%] right-[-8%]' : 'bottom-[26%] right-[18%]'}
+              className={overHand ? 'bottom-[30%] left-[76%]' : 'bottom-[26%] right-[18%]'}
               style={{ animationDelay: '-5s' }}
               icon={<Motorbike className="h-4 w-4" aria-hidden="true" />}
               title="Entrega rápida"
@@ -343,7 +346,7 @@ export default function App() {
               </span>
             </div>
 
-            <h1 className="mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
+            <h1 className="mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl [@media(max-height:700px)]:lg:!text-[3rem] leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
               Sua{' '}
               <span className="text-[#145CFF] [text-shadow:0_0_24px_rgba(20,92,255,0.65),0_0_60px_rgba(20,92,255,0.35)]">
                 bebida gelada
