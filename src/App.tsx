@@ -11,18 +11,21 @@ const ORDER_HREF = '#contato';
 
 // The background video shows a hand moving around the middle of the frame (≈39–60% of its
 // width, from the bottom almost to the top). That vertical band of the video is masked out,
-// with a margin, and on desktop the cup sits in it. Values are fractions of the video frame.
+// with a margin. Values are fractions of the video frame.
 const HAND_BAND = { start: 0.3, end: 0.7, fade: 0.07 };
-const HAND_IN_VIDEO = { centerX: 0.498, cupSize: 0.82 };
+// Largest the cup box gets on desktop, as a fraction of the video's rendered height.
+const CUP_MAX_SIZE = 0.82;
 // On desktop the whole cup must stay visible: it is fitted between the nav and the bottom edge
 // (px kept clear above and below; the bottom one also holds the carousel dots and the float animation).
 const CUP_MARGIN = { top: 100, bottom: 36 };
 // Horizontal centre of a drink inside its image: every image has the product centred.
 const CUP_CENTER_IN_IMAGE = 0.5;
-// The widest a product gets, as a fraction of its image, and the x (px) the hero copy needs
-// kept clear (its left padding plus its max width, with some air).
+// The widest a product gets, as a fraction of its image. On desktop the drink is centred in the
+// space the hero copy leaves free: from COPY_RIGHT_EDGE (px: its left padding plus its max width,
+// with some air) to CUP_RIGHT_MARGIN (px) short of the right edge.
 const CUP_CONTENT_WIDTH = 0.58;
 const COPY_RIGHT_EDGE = 520;
+const CUP_RIGHT_MARGIN = 56;
 
 // Drinks shown in rotation. Each image is a transparent 1100×1100 canvas with the product centred,
 // resting on the same baseline and scaled to the same height, so they swap in place at the same size.
@@ -98,10 +101,13 @@ function useVideoFraming(
         return;
       }
       const available = Math.min(height, innerHeight) - CUP_MARGIN.top - CUP_MARGIN.bottom;
-      const size = Math.min(renderedHeight * HAND_IN_VIDEO.cupSize, available);
-      // Sits where the hand was, but on narrow or short screens slides right just enough
-      // for the widest drink to stay clear of the hero copy.
-      const centerX = Math.max(renderedWidth * HAND_IN_VIDEO.centerX, COPY_RIGHT_EDGE + (size * CUP_CONTENT_WIDTH) / 2);
+      const size = Math.min(renderedHeight * CUP_MAX_SIZE, available);
+      // Centred between the hero copy and the right edge, so the drink balances the text instead
+      // of leaving the right side empty; never closer to the copy than the widest drink needs.
+      const centerX = Math.max(
+        (COPY_RIGHT_EDGE + innerWidth - CUP_RIGHT_MARGIN) / 2,
+        COPY_RIGHT_EDGE + (size * CUP_CONTENT_WIDTH) / 2,
+      );
       setFraming({
         handMask,
         cupBox: {
@@ -383,7 +389,7 @@ export default function App() {
               <>
                 <IceCube className="left-[7%] top-[10%] h-12 w-12 opacity-70 xl:h-14 xl:w-14" delay="-2s" />
                 <IceCube className="right-[6%] top-[14%] h-9 w-9 opacity-50" delay="-1s" />
-                <IceCube className="bottom-[12%] right-[8%] h-10 w-10 opacity-60" delay="-4s" />
+                <IceCube className="bottom-[12%] right-[12%] h-10 w-10 opacity-60" delay="-4s" />
               </>
             ) : (
               <>
