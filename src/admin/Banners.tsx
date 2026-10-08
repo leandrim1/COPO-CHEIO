@@ -1,9 +1,9 @@
 import { ArrowDown, ArrowUp, Image as ImageIcon, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { friendlyError } from '../lib/supabase';
+import { api, friendlyError } from '../lib/api';
 import type { Banner } from '../lib/types';
-import { admin, commitImage, emptyImage, removeImages } from './client';
+import { commitImage, discardImages, emptyImage } from './client';
 import type { ImageValue } from './client';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, IconButton, ImageInput, Modal, PageHeader, Skeleton, Switch, useConfirm, useToast } from './ui';
 
@@ -26,8 +26,8 @@ const toDraft = (b?: Banner): Draft => ({
   button_text: b?.button_text ?? '',
   link: b?.link ?? '/bebidas',
   active: b?.active ?? true,
-  desktop: emptyImage(b?.image_desktop_url ?? null, b?.image_desktop_path ?? null),
-  mobile: emptyImage(b?.image_mobile_url ?? null, b?.image_mobile_path ?? null),
+  desktop: emptyImage(b?.image_desktop_url ?? null),
+  mobile: emptyImage(b?.image_mobile_url ?? null),
   original: b,
 });
 
@@ -41,13 +41,13 @@ export default function BannersPage() {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const { data, error: err } = await admin.from('banners').select('*').order('position').order('created_at');
-    if (err) {
+    try {
+      const data = await api.get<{ banners: Banner[] }>('/api/admin/banners');
+      setError(false);
+      setBanners(data.banners);
+    } catch {
       setError(true);
-      return;
     }
-    setError(false);
-    setBanners(data as Banner[]);
   }, []);
 
   useEffect(() => {
@@ -75,9 +75,9 @@ export default function BannersPage() {
     const uploaded: string[] = [];
     try {
       const desktop = await commitImage(draft.desktop, 'banners', 1600);
-      if (desktop.uploaded) uploaded.push(desktop.path!);
+      if (desktop.uploaded) uploaded.push(desktop.url!);
       const mobile = await commitImage(draft.mobile, 'banners', 1000);
-      if (mobile.uploaded) uploaded.push(mobile.path!);
+      if (mobile.uploaded) uploaded.push(mobile.url!);
       const row = {
         title: draft.title.trim() || null,
         subtitle: draft.subtitle.trim() || null,
@@ -85,23 +85,16 @@ export default function BannersPage() {
         link: link || null,
         active: draft.active,
         image_desktop_url: desktop.url,
-        image_desktop_path: desktop.url ? desktop.path : null,
         image_mobile_url: mobile.url,
-        image_mobile_path: mobile.url ? mobile.path : null,
       };
-      const position = banners?.length ? Math.max(...banners.map((b) => b.position)) + 1 : 0;
-      const { error: err } = draft.id ? await admin.from('banners').update(row).eq('id', draft.id) : await admin.from('banners').insert({ ...row, position });
-      if (err) throw err;
-      const o = draft.original;
-      await removeImages([
-        o?.image_desktop_path && o.image_desktop_path !== row.image_desktop_path ? o.image_desktop_path : null,
-        o?.image_mobile_path && o.image_mobile_path !== row.image_mobile_path ? o.image_mobile_path : null,
-      ]);
+      // O servidor apaga do Blob as imagens antigas que ficaram sem uso.
+      if (draft.id) await api.patch(`/api/admin/banners/${draft.id}`, row);
+      else await api.post('/api/admin/banners', row);
       toast.success(draft.id ? 'Banner salvo.' : 'Banner criado.', row.active ? 'Já aparece na página Bebidas.' : 'Está inativo.');
       setDraft(null);
       void load();
     } catch (err) {
-      await removeImages(uploaded);
+      await discardImages(uploaded);
       setFormError(friendlyError(err, err instanceof Error ? err.message : 'Não foi possível salvar o banner.'));
     } finally {
       setSaving(false);
@@ -110,11 +103,13 @@ export default function BannersPage() {
 
   const toggle = async (b: Banner, active: boolean) => {
     setBanners((list) => list?.map((x) => (x.id === b.id ? { ...x, active } : x)) ?? null);
-    const { error: err } = await admin.from('banners').update({ active }).eq('id', b.id);
-    if (err) {
+    try {
+      await api.patch(`/api/admin/banners/${b.id}`, { active });
+      toast.success(active ? 'Banner ativado.' : 'Banner desativado.');
+    } catch {
       setBanners((list) => list?.map((x) => (x.id === b.id ? b : x)) ?? null);
       toast.error('Não foi possível atualizar o banner.');
-    } else toast.success(active ? 'Banner ativado.' : 'Banner desativado.');
+    }
   };
 
   const move = async (index: number, delta: -1 | 1) => {
@@ -123,10 +118,10 @@ export default function BannersPage() {
     if (j < 0 || j >= banners.length) return;
     const next = [...banners];
     [next[index], next[j]] = [next[j], next[index]];
-    const reordered = next.map((b, i) => ({ ...b, position: i }));
-    setBanners(reordered);
-    const results = await Promise.all(reordered.map((b) => admin.from('banners').update({ position: b.position }).eq('id', b.id)));
-    if (results.some((r) => r.error)) {
+    setBanners(next.map((b, i) => ({ ...b, position: i })));
+    try {
+      await api.put('/api/admin/banners/order', { ids: next.map((b) => b.id) });
+    } catch {
       toast.error('Não foi possível reordenar.');
       void load();
     }
@@ -135,14 +130,13 @@ export default function BannersPage() {
   const remove = async (b: Banner) => {
     const ok = await confirm({ title: 'Excluir este banner?', description: b.title ? `“${b.title}” sai do site.` : 'O banner sai do site.', confirmLabel: 'Excluir banner' });
     if (!ok) return;
-    const { error: err } = await admin.from('banners').delete().eq('id', b.id);
-    if (err) {
+    try {
+      await api.delete(`/api/admin/banners/${b.id}`);
+      toast.success('Banner excluído.');
+      void load();
+    } catch {
       toast.error('Não foi possível excluir o banner.');
-      return;
     }
-    await removeImages([b.image_desktop_path, b.image_mobile_path]);
-    toast.success('Banner excluído.');
-    void load();
   };
 
   return (

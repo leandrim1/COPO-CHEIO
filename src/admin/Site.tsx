@@ -1,10 +1,10 @@
 import { ArrowLeft, ArrowRight, ExternalLink, ImagePlus, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
+import { api, friendlyError } from '../lib/api';
 import { DEFAULT_HERO } from '../lib/defaults';
-import { friendlyError } from '../lib/supabase';
 import type { HeroSettings, SiteSettings, StoreSettings } from '../lib/types';
-import { ACCEPTED_IMAGES, admin, checkImageFile, commitImage, emptyImage, pathFromUrl, removeImages, uploadImage } from './client';
+import { ACCEPTED_IMAGES, checkImageFile, commitImage, discardImages, emptyImage, uploadImage } from './client';
 import type { ImageValue } from './client';
 import { Button, Card, ErrorState, Field, INPUT, IconButton, ImageInput, PageHeader, Spinner, Switch, cx, useToast } from './ui';
 
@@ -77,7 +77,7 @@ function useDraft<T>(initial: T) {
 function IdentitySection({ data }: { data: Data }) {
   const toast = useToast();
   const { draft, set, dirty, commit } = useDraft({ name: data.store.store_name, tagline: data.store.tagline });
-  const [savedLogo, setSavedLogo] = useState(emptyImage(data.site.logo_url, data.site.logo_path));
+  const [savedLogo, setSavedLogo] = useState(emptyImage(data.site.logo_url));
   const [logo, setLogo] = useState<ImageValue>(savedLogo);
   const [saving, setSaving] = useState(false);
   const logoChanged = Boolean(logo.file) || logo.url !== savedLogo.url;
@@ -89,22 +89,18 @@ function IdentitySection({ data }: { data: Data }) {
       return;
     }
     setSaving(true);
+    let image: Awaited<ReturnType<typeof commitImage>> | null = null;
     try {
-      const image = await commitImage(logo, 'brand', 600);
-      const [a, b] = await Promise.all([
-        admin.from('store_settings').update({ store_name: draft.name.trim(), tagline: draft.tagline.trim() }).eq('id', 1),
-        admin.from('site_settings').update({ logo_url: image.url, logo_path: image.url ? image.path : null }).eq('id', 1),
-      ]);
-      if (a.error || b.error) {
-        if (image.uploaded) await removeImages([image.path]);
-        throw a.error ?? b.error;
-      }
-      if (savedLogo.path && savedLogo.path !== image.path) await removeImages([savedLogo.path]);
+      image = await commitImage(logo, 'site', 600);
+      // Nome no Neon (store_settings) e logo (URL do Blob) em site_settings; o servidor apaga a logo antiga.
+      await api.patch('/api/admin/store', { store_name: draft.name.trim(), tagline: draft.tagline.trim() });
+      await api.patch('/api/admin/site', { logo_url: image.url });
       commit({ name: draft.name.trim(), tagline: draft.tagline.trim() });
-      setSavedLogo(emptyImage(image.url, image.path));
-      setLogo(emptyImage(image.url, image.path));
+      setSavedLogo(emptyImage(image.url));
+      setLogo(emptyImage(image.url));
       toast.success('Identidade salva.', 'O site já mostra a mudança.');
     } catch (err) {
+      if (image?.uploaded) await discardImages([image.url]);
       toast.error('Não foi possível salvar.', friendlyError(err, err instanceof Error ? err.message : ''));
     } finally {
       setSaving(false);
@@ -186,7 +182,7 @@ function HeroSection({ data }: { data: Data }) {
       for (const image of images) {
         if (image.file) {
           const result = await uploadImage(image.file, 'hero', 1400);
-          uploaded.push(result.path);
+          uploaded.push(result.url);
           urls.push(result.url);
         } else urls.push(image.url);
       }
@@ -197,15 +193,14 @@ function HeroSection({ data }: { data: Data }) {
         subtitle: draft.subtitle.trim() || null,
         images: urls,
       };
-      const { error } = await admin.from('hero_settings').update(row).eq('id', 1);
-      if (error) throw error;
-      await removeImages(savedImages.filter((url) => !urls.includes(url)).map(pathFromUrl));
+      // O servidor apaga do Blob as imagens que saíram da lista.
+      await api.patch('/api/admin/hero', row);
       commit(draft);
       setSavedImages(urls);
       setImages(urls.map((url) => ({ url, key: url })));
       toast.success('Hero salvo.', 'O site já mostra os novos textos.');
     } catch (err) {
-      await removeImages(uploaded);
+      await discardImages(uploaded);
       toast.error('Não foi possível salvar o Hero.', friendlyError(err, err instanceof Error ? err.message : ''));
     } finally {
       setSaving(false);
@@ -353,12 +348,14 @@ function SiteTextsSection({ data }: { data: Data }) {
       cta_subtitle: clean(draft.cta_subtitle),
       cta_button: draft.cta_button.trim(),
     };
-    const { error } = await admin.from('site_settings').update(row).eq('id', 1);
-    setSaving(false);
-    if (error) {
+    try {
+      await api.patch('/api/admin/site', row);
+    } catch (error) {
+      setSaving(false);
       toast.error('Não foi possível salvar os textos.', friendlyError(error, ''));
       return;
     }
+    setSaving(false);
     commit(draft);
     toast.success('Textos salvos.', 'O site já mostra a mudança.');
   };
@@ -400,7 +397,7 @@ function SeoSection({ data }: { data: Data }) {
   const toast = useToast();
   const s = data.site;
   const { draft, set, dirty, commit } = useDraft({ seo_title: s.seo_title, seo_description: s.seo_description ?? '' });
-  const [saved, setSaved] = useState({ og: emptyImage(s.og_image_url, s.og_image_path), favicon: emptyImage(s.favicon_url, s.favicon_path) });
+  const [saved, setSaved] = useState({ og: emptyImage(s.og_image_url), favicon: emptyImage(s.favicon_url) });
   const [og, setOg] = useState<ImageValue>(saved.og);
   const [favicon, setFavicon] = useState<ImageValue>(saved.favicon);
   const [saving, setSaving] = useState(false);
@@ -415,31 +412,24 @@ function SeoSection({ data }: { data: Data }) {
     setSaving(true);
     const uploaded: string[] = [];
     try {
-      const ogImage = await commitImage(og, 'seo', 1200);
-      if (ogImage.uploaded) uploaded.push(ogImage.path!);
-      const icon = await commitImage(favicon, 'seo', 512);
-      if (icon.uploaded) uploaded.push(icon.path!);
-      const { error } = await admin
-        .from('site_settings')
-        .update({
-          seo_title: draft.seo_title.trim(),
-          seo_description: draft.seo_description.trim() || null,
-          og_image_url: ogImage.url,
-          og_image_path: ogImage.url ? ogImage.path : null,
-          favicon_url: icon.url,
-          favicon_path: icon.url ? icon.path : null,
-        })
-        .eq('id', 1);
-      if (error) throw error;
-      await removeImages([saved.og.path !== ogImage.path ? saved.og.path : null, saved.favicon.path !== icon.path ? saved.favicon.path : null]);
+      const ogImage = await commitImage(og, 'site', 1200);
+      if (ogImage.uploaded) uploaded.push(ogImage.url!);
+      const icon = await commitImage(favicon, 'site', 512);
+      if (icon.uploaded) uploaded.push(icon.url!);
+      await api.patch('/api/admin/site', {
+        seo_title: draft.seo_title.trim(),
+        seo_description: draft.seo_description.trim() || null,
+        og_image_url: ogImage.url,
+        favicon_url: icon.url,
+      });
       commit(draft);
-      const next = { og: emptyImage(ogImage.url, ogImage.path), favicon: emptyImage(icon.url, icon.path) };
+      const next = { og: emptyImage(ogImage.url), favicon: emptyImage(icon.url) };
       setSaved(next);
       setOg(next.og);
       setFavicon(next.favicon);
       toast.success('SEO salvo.');
     } catch (err) {
-      await removeImages(uploaded);
+      await discardImages(uploaded);
       toast.error('Não foi possível salvar o SEO.', friendlyError(err, err instanceof Error ? err.message : ''));
     } finally {
       setSaving(false);
@@ -476,18 +466,10 @@ export default function SitePage() {
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
-    void (async () => {
-      const [store, site, hero] = await Promise.all([
-        admin.from('store_settings').select('*').eq('id', 1).single(),
-        admin.from('site_settings').select('*').eq('id', 1).single(),
-        admin.from('hero_settings').select('*').eq('id', 1).single(),
-      ]);
-      if (store.error || site.error || hero.error) {
-        setError(true);
-        return;
-      }
-      setData({ store: store.data as StoreSettings, site: site.data as SiteSettings, hero: hero.data as HeroSettings });
-    })();
+    api
+      .get<Data>('/api/admin/settings')
+      .then(({ store, site, hero }) => setData({ store, site, hero }))
+      .catch(() => setError(true));
   }, [version]);
 
   if (error) return <ErrorState message="Não foi possível carregar o conteúdo do site." onRetry={() => (setError(false), setVersion((v) => v + 1))} />;

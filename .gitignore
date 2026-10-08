@@ -4,3 +4,9 @@ dist-ssr
 *.local
 *.tsbuildinfo
 .DS_Store
+
+# Variáveis de ambiente e vínculo local com a Vercel (segredos: nunca no Git)
+.env
+.env.*
+!.env.example
+.vercel

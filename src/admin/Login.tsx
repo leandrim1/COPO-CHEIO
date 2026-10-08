@@ -1,11 +1,12 @@
 import { Eye, EyeOff, LoaderCircle, Lock, Mail } from 'lucide-react';
 import { useState } from 'react';
 import type { FormEvent } from 'react';
+import { api, friendlyError } from '../lib/api';
 import { navigate } from '../lib/router';
-import { admin } from './client';
+import type { AdminAccount } from '../lib/types';
 import { INPUT, cx } from './ui';
 
-export default function LoginPage({ checking }: { checking: boolean }) {
+export default function LoginPage({ onLogin }: { onLogin: (user: AdminAccount) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -20,27 +21,14 @@ export default function LoginPage({ checking }: { checking: boolean }) {
       return;
     }
     setBusy(true);
-    const { data, error: authError } = await admin.auth.signInWithPassword({ email: email.trim(), password });
-    if (authError || !data.user) {
+    try {
+      const { admin } = await api.post<{ admin: AdminAccount }>('/api/auth/login', { email: email.trim(), password });
+      onLogin(admin);
+      navigate('/admin/dashboard', { replace: true });
+    } catch (err) {
       setBusy(false);
-      setError(
-        /invalid login credentials/i.test(authError?.message ?? '')
-          ? 'E-mail ou senha incorretos.'
-          : /fetch|network/i.test(authError?.message ?? '')
-            ? 'Sem conexão com o servidor. Tente de novo.'
-            : 'Não foi possível entrar. Tente de novo.',
-      );
-      return;
+      setError(friendlyError(err, 'Não foi possível entrar. Tente de novo.'));
     }
-    // Só administradores ativos entram; qualquer outra conta é desconectada na hora.
-    const { data: row } = await admin.from('admin_users').select('active').eq('user_id', data.user.id).maybeSingle();
-    if (!row?.active) {
-      await admin.auth.signOut();
-      setBusy(false);
-      setError('Esta conta não tem acesso ao painel.');
-      return;
-    }
-    navigate('/admin/dashboard', { replace: true });
   };
 
   return (
@@ -109,10 +97,10 @@ export default function LoginPage({ checking }: { checking: boolean }) {
           )}
           <button
             type="submit"
-            disabled={busy || checking}
+            disabled={busy}
             className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#145CFF] text-[15px] font-bold shadow-[0_12px_30px_-10px_rgba(20,92,255,0.95)] transition-colors hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-60"
           >
-            {(busy || checking) && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+            {busy && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
             Entrar
           </button>
         </form>

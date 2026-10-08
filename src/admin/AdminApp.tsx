@@ -1,4 +1,3 @@
-import type { Session } from '@supabase/supabase-js';
 import {
   Boxes,
   ExternalLink,
@@ -17,10 +16,10 @@ import {
 } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import { ApiError, api, setUnauthorizedHandler } from '../lib/api';
 import { money } from '../lib/format';
 import { navigate } from '../lib/router';
-import type { AdminUser, Order } from '../lib/types';
-import { admin, supabaseConfigured } from './client';
+import type { AdminAccount } from '../lib/types';
 import { ConfirmProvider, IconButton, Spinner, ToastProvider, cx, useToast } from './ui';
 import BannersPage from './Banners';
 import CategoriesPage from './Categories';
@@ -34,7 +33,7 @@ import StockPage from './Stock';
 
 // ---- Sessão e administrador logado ------------------------------------------------------------
 
-type AdminSession = { session: Session; user: AdminUser };
+type AdminSession = { user: AdminAccount; logout: () => Promise<void> };
 const AdminContext = createContext<AdminSession | null>(null);
 export const useAdmin = () => {
   const value = useContext(AdminContext);
@@ -42,7 +41,7 @@ export const useAdmin = () => {
   return value;
 };
 
-// ---- Pedidos em tempo real (Supabase Realtime) ------------------------------------------------
+// ---- Pedidos ao vivo (polling) -----------------------------------------------------------------
 
 type LiveOrders = {
   // Muda a cada pedido novo ou alterado: as telas recarregam quando ele muda.
@@ -87,9 +86,21 @@ export function playOrderChime() {
   });
 }
 
+type LiveResponse = {
+  new_orders: { id: string; order_number: number; customer_name: string; total: number; created_at: string }[];
+  latest: number;
+  pending: number;
+  rev: string;
+};
+
+// Polling inteligente: pergunta ao servidor a cada poucos segundos com a aba aberta (e mais devagar com a
+// aba em segundo plano), pede só o que chegou depois do último pedido visto, e confere de novo na hora em
+// que a pessoa volta para a aba.
+const POLL_VISIBLE_MS = 8_000;
+const POLL_HIDDEN_MS = 30_000;
+
 function LiveOrdersProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
-  const { session } = useAdmin();
   const [version, setVersion] = useState(0);
   const [newCount, setNewCount] = useState(0);
   const [connected, setConnected] = useState(false);
@@ -112,11 +123,6 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const countNew = useCallback(async () => {
-    const { count } = await admin.from('orders').select('id', { count: 'exact', head: true }).eq('order_status', 'new');
-    setNewCount(count ?? 0);
-  }, []);
-
   useEffect(() => {
     const unlock = () => unlockAudio();
     window.addEventListener('pointerdown', unlock, { once: true });
@@ -128,42 +134,73 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    void countNew();
-    admin.realtime.setAuth(session.access_token);
-    const channel = admin
-      .channel('painel-pedidos')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
-        const order = payload.new as Order;
-        setVersion((v) => v + 1);
-        void countNew();
-        if (soundRef.current) playOrderChime();
+    let alive = true;
+    let timer: number | undefined;
+    let after: number | null = null; // maior número de pedido já visto
+    let rev: string | null = null;
+
+    const announce = (orders: LiveResponse['new_orders']) => {
+      if (soundRef.current) playOrderChime();
+      if (orders.length > 3) {
+        toast.push({
+          kind: 'order',
+          title: 'NOVOS PEDIDOS',
+          description: `${orders.length} pedidos novos chegaram`,
+          action: { label: 'Ver pedidos', onClick: () => navigate('/admin/pedidos?status=new') },
+        });
+        return;
+      }
+      for (const order of orders) {
         toast.push({
           kind: 'order',
           title: 'NOVO PEDIDO',
-          description: `Pedido #${order.order_number} recebido\n${money(Number(order.total))}`,
+          description: `Pedido #${order.order_number} recebido\n${money(order.total)}`,
           action: { label: 'Ver pedido', onClick: () => navigate(`/admin/pedidos/${order.order_number}`) },
         });
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, () => {
-        setVersion((v) => v + 1);
-        void countNew();
-      })
-      .subscribe((status) => setConnected(status === 'SUBSCRIBED'));
-
-    // Ao voltar para a aba, confere se algo mudou enquanto ela estava em segundo plano.
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') {
-        setVersion((v) => v + 1);
-        void countNew();
       }
     };
+
+    const poll = async () => {
+      try {
+        const data = await api.get<LiveResponse>(`/api/admin/live${after === null ? '' : `?after=${after}`}`);
+        if (!alive) return;
+        setConnected(true);
+        setNewCount(data.pending);
+        if (after === null) {
+          // Primeira leitura: só marca o ponto de partida (pedidos antigos não viram aviso).
+          after = data.latest;
+        } else if (data.new_orders.length) {
+          after = Math.max(...data.new_orders.map((o) => o.order_number));
+          announce(data.new_orders);
+        }
+        if (rev !== null && data.rev !== rev) setVersion((v) => v + 1);
+        rev = data.rev;
+      } catch {
+        if (alive) setConnected(false);
+      }
+    };
+
+    const schedule = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(async () => {
+        await poll();
+        if (alive) schedule();
+      }, document.visibilityState === 'visible' ? POLL_VISIBLE_MS : POLL_HIDDEN_MS);
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      void poll().then(() => alive && schedule());
+    };
+
+    void poll().then(() => alive && schedule());
     document.addEventListener('visibilitychange', onVisible);
     return () => {
+      alive = false;
+      window.clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
-      void admin.removeChannel(channel);
     };
-    // A sessão é renovada sozinha; o canal não precisa ser recriado a cada token.
-  }, [countNew]);
+  }, [toast]);
 
   // Título da aba com os pedidos novos: "(2) Pedidos – Painel".
   useEffect(() => {
@@ -248,6 +285,7 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate?: () =
 function Layout({ pathname, title, children }: { pathname: string; title: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const { sound, setSound, connected } = useLiveOrders();
+  const { logout } = useAdmin();
   const toast = useToast();
 
   useEffect(() => setOpen(false), [pathname]);
@@ -257,11 +295,6 @@ function Layout({ pathname, title, children }: { pathname: string; title: string
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
-
-  const logout = async () => {
-    await admin.auth.signOut();
-    navigate('/admin/login', { replace: true });
-  };
 
   return (
     <div className="min-h-[100dvh] bg-[#07090E] text-white">
@@ -294,10 +327,10 @@ function Layout({ pathname, title, children }: { pathname: string; title: string
           <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white/80">{title}</p>
           <span
             className={cx('hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 sm:inline-flex', connected ? 'text-emerald-300 ring-emerald-400/30' : 'text-white/45 ring-white/15')}
-            title={connected ? 'Recebendo pedidos em tempo real' : 'Reconectando...'}
+            title={connected ? 'Pedidos novos aparecem sozinhos, sem recarregar' : 'Sem conexão com o servidor. Tentando de novo...'}
           >
             <span className={cx('h-1.5 w-1.5 rounded-full', connected ? 'animate-pulse bg-emerald-400' : 'bg-white/40')} aria-hidden="true" />
-            {connected ? 'Ao vivo' : 'Conectando'}
+            {connected ? 'Ao vivo' : 'Sem conexão'}
           </span>
           <IconButton
             label={sound ? 'Desligar som de novos pedidos' : 'Ligar som de novos pedidos'}
@@ -360,99 +393,84 @@ function FullScreen({ children }: { children: ReactNode }) {
   return <div className="grid min-h-[100dvh] place-items-center bg-[#07090E] px-4 text-white">{children}</div>;
 }
 
-function NotConfigured() {
+function NotConfigured({ error }: { error: ApiError }) {
+  const missing = error.missing ?? [];
   return (
     <FullScreen>
       <div className="max-w-lg rounded-3xl border border-white/10 bg-[#0C1018] p-8">
-        <h1 className="text-xl font-black">Conecte o Supabase</h1>
-        <p className="mt-2 text-sm text-white/65">
-          O painel precisa das variáveis <code className="text-[#8FB1FF]">VITE_SUPABASE_URL</code> e <code className="text-[#8FB1FF]">VITE_SUPABASE_ANON_KEY</code>. Veja
-          o passo a passo no README do projeto.
-        </p>
+        <h1 className="text-xl font-black">{missing.length ? 'Falta configurar o servidor' : 'O servidor não respondeu'}</h1>
+        {missing.length ? (
+          <p className="mt-2 text-sm text-white/65">
+            A variável{missing.length > 1 ? 's' : ''} {missing.map((name, i) => (
+              <span key={name}>
+                {i > 0 && ', '}
+                <code className="text-[#8FB1FF]">{name}</code>
+              </span>
+            ))}{' '}
+            não {missing.length > 1 ? 'foram encontradas' : 'foi encontrada'} neste ambiente. Conecte o banco <strong className="text-white">copocheio-db</strong> (Neon) e o
+            armazenamento <strong className="text-white">copocheio-uploads</strong> (Blob) ao projeto na Vercel e faça um novo deploy.
+          </p>
+        ) : (
+          <p className="mt-2 text-sm text-white/65">{error.message}</p>
+        )}
       </div>
     </FullScreen>
   );
 }
 
-function NoAccess({ email }: { email?: string }) {
-  return (
-    <FullScreen>
-      <div className="max-w-md rounded-3xl border border-white/10 bg-[#0C1018] p-8 text-center">
-        <h1 className="text-xl font-black">Sem acesso ao painel</h1>
-        <p className="mt-2 text-sm text-white/65">A conta {email ? <strong className="text-white">{email}</strong> : ''} não é um administrador ativo da loja.</p>
-        <button
-          type="button"
-          onClick={() => void admin.auth.signOut().then(() => navigate('/admin/login', { replace: true }))}
-          className="mt-6 rounded-xl bg-[#145CFF] px-5 py-2.5 text-sm font-bold hover:bg-[#2563FF]"
-        >
-          Entrar com outra conta
-        </button>
-      </div>
-    </FullScreen>
-  );
-}
+type AuthState = { status: 'loading' } | { status: 'out' } | { status: 'in'; user: AdminAccount } | { status: 'error'; error: ApiError };
 
 export default function AdminApp({ pathname }: { pathname: string }) {
-  const [session, setSession] = useState<Session | null | undefined>(undefined);
-  const [adminUser, setAdminUser] = useState<AdminUser | null | undefined>(undefined);
-  const userId = session?.user.id;
+  const [auth, setAuth] = useState<AuthState>({ status: 'loading' });
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
-    void admin.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data } = admin.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => data.subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!userId) {
-      setAdminUser(session === null ? null : undefined);
-      return;
-    }
     let alive = true;
-    setAdminUser(undefined);
-    void admin
-      .from('admin_users')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (alive) setAdminUser(data && (data as AdminUser).active ? (data as AdminUser) : null);
-      });
+    api
+      .get<{ admin: AdminAccount | null }>('/api/auth/me')
+      .then((data) => alive && setAuth(data.admin ? { status: 'in', user: data.admin } : { status: 'out' }))
+      .catch((error: unknown) => alive && setAuth({ status: 'error', error: error instanceof ApiError ? error : new ApiError(0, 'Não foi possível falar com o servidor.') }));
+    // Sessão vencida ou encerrada em outro aparelho: volta para o login.
+    setUnauthorizedHandler(() => setAuth({ status: 'out' }));
     return () => {
       alive = false;
+      setUnauthorizedHandler(null);
     };
-  }, [userId]);
+  }, []);
+
+  const logout = useCallback(async () => {
+    await api.post('/api/auth/logout').catch(() => undefined);
+    setAuth({ status: 'out' });
+    navigate('/admin/login', { replace: true });
+  }, []);
 
   const isLogin = pathname === '/admin/login';
   const current = route(pathname);
+  const signedIn = auth.status === 'in';
 
   // Redirecionamentos: sem sessão → login; logado no login → dashboard; caminho desconhecido → dashboard.
   useEffect(() => {
-    if (!supabaseConfigured || session === undefined) return;
-    if (!session && !isLogin) navigate('/admin/login', { replace: true });
-    else if (session && adminUser && (isLogin || !current)) navigate('/admin/dashboard', { replace: true });
-  }, [session, adminUser, isLogin, current]);
+    if (auth.status === 'out' && !isLogin) navigate('/admin/login', { replace: true });
+    else if (signedIn && (isLogin || !current)) navigate('/admin/dashboard', { replace: true });
+  }, [auth.status, signedIn, isLogin, current]);
 
   useEffect(() => {
     document.title = 'Painel – COPO CHEIO';
     document.documentElement.style.colorScheme = 'dark';
   }, []);
 
-  if (!supabaseConfigured) return <NotConfigured />;
-  if (session === undefined) return <FullScreen><Spinner label="Carregando o painel" /></FullScreen>;
-  if (isLogin && !(session && adminUser)) {
+  if (auth.status === 'error') return <NotConfigured error={auth.error} />;
+  if (auth.status === 'loading') return <FullScreen><Spinner label="Carregando o painel" /></FullScreen>;
+  if (auth.status === 'out') {
     return (
       <ToastProvider>
-        <LoginPage checking={Boolean(session) && adminUser === undefined} />
+        <LoginPage onLogin={(user) => setAuth({ status: 'in', user })} />
       </ToastProvider>
     );
   }
-  if (!session || adminUser === undefined || !current) return <FullScreen><Spinner label="Carregando o painel" /></FullScreen>;
-  if (adminUser === null) return <NoAccess email={session.user.email} />;
+  if (isLogin || !current) return <FullScreen><Spinner label="Carregando o painel" /></FullScreen>;
 
   return (
-    <AdminContext.Provider value={{ session, user: adminUser }}>
+    <AdminContext.Provider value={{ user: auth.user, logout }}>
       <ToastProvider>
         <ConfirmProvider>
           <LiveOrdersProvider>

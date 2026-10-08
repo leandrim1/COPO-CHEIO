@@ -1,8 +1,8 @@
--- COPO CHEIO – Disk Bebidas
--- 5/5 · Conteúdo inicial: exatamente os textos e dados que o site já mostrava.
+-- COPO CHEIO – Disk Bebidas · Neon PostgreSQL (copocheio-db)
+-- 3/3 · Conteúdo inicial: exatamente os textos e dados que o site já mostrava.
 -- Depois disso tudo é editado pelo painel (/admin). Nenhum produto, preço ou categoria é criado aqui.
 
-insert into public.store_settings (
+insert into store_settings (
   id, store_name, tagline, whatsapp, instagram, address,
   opening_hours, delivery_enabled, pickup_enabled, delivery_fee, min_order, delivery_time
 ) values (
@@ -19,8 +19,9 @@ insert into public.store_settings (
   true, true, 5.00, 0, '30 a 45 min'
 )
 on conflict (id) do nothing;
+-- statement-breakpoint
 
-insert into public.site_settings (
+insert into site_settings (
   id, bebidas_title, bebidas_highlight, bebidas_subtitle, featured_title, featured_limit,
   contato_title, contato_highlight, contato_subtitle,
   cta_title, cta_highlight, cta_subtitle, cta_button,
@@ -37,8 +38,9 @@ insert into public.site_settings (
   'COPO CHEIO – Disk Bebidas. Bebidas bem geladas, variedade e entrega rápida na sua casa.'
 )
 on conflict (id) do nothing;
+-- statement-breakpoint
 
-insert into public.hero_settings (
+insert into hero_settings (
   id, title, title_highlight, subtitle, primary_button_text, secondary_button_text,
   show_secondary_button, badge_text, show_badge, images
 ) values (
@@ -50,3 +52,10 @@ insert into public.hero_settings (
   '[]'::jsonb
 )
 on conflict (id) do nothing;
+-- statement-breakpoint
+
+insert into payment_methods (code, label, enabled, position) values
+  ('pix', 'PIX', true, 0),
+  ('cash', 'Dinheiro', true, 1),
+  ('card', 'Cartão na entrega', true, 2)
+on conflict (code) do nothing;

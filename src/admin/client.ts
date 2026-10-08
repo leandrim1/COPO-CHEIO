@@ -1,31 +1,20 @@
-import { createClient } from '@supabase/supabase-js';
-import { MEDIA_BUCKET, SUPABASE_KEY, SUPABASE_URL, supabaseConfigured } from '../lib/supabase';
+import { api } from '../lib/api';
 
-// Cliente do painel: guarda a sessão do administrador no navegador. Ele usa a mesma chave pública
-// do site; o que o administrador pode fazer é decidido pelas policies (RLS) do banco.
-export const admin = createClient(SUPABASE_URL || 'http://localhost', SUPABASE_KEY || 'missing', {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'copocheio-admin' },
-});
+// ---- Imagens (Vercel Blob, via servidor) -------------------------------------------------------
+// O navegador manda o arquivo para /api/admin/upload; o servidor grava no Blob e devolve a URL pública,
+// que depois é salva no Neon junto com o produto/banner/configuração. Nada de token no navegador.
 
-export { supabaseConfigured };
+export type ImageFolder = 'products' | 'banners' | 'hero' | 'site';
 
-// ---- Imagens (Supabase Storage, bucket "media") -----------------------------------------------
-
-export type ImageValue = { url: string | null; path: string | null; file?: File | null };
-export const emptyImage = (url: string | null = null, path: string | null = null): ImageValue => ({ url, path, file: null });
-
-const PUBLIC_PREFIX = `/storage/v1/object/public/${MEDIA_BUCKET}/`;
-
-// Caminho no bucket a partir do link público (para apagar arquivos antigos).
-export function pathFromUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const at = url.indexOf(PUBLIC_PREFIX);
-  return at >= 0 ? decodeURIComponent(url.slice(at + PUBLIC_PREFIX.length).split('?')[0]) : null;
-}
+// `file` = imagem escolhida que ainda não foi enviada (o envio acontece ao salvar).
+export type ImageValue = { url: string | null; file?: File | null };
+export const emptyImage = (url: string | null = null): ImageValue => ({ url, file: null });
 
 const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // limite do corpo de uma função na Vercel é 4,5 MB
 const RASTER = ['image/png', 'image/jpeg', 'image/webp'];
-export const ACCEPTED_IMAGES = 'image/png,image/jpeg,image/webp,image/gif';
+const ACCEPTED = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+export const ACCEPTED_IMAGES = ACCEPTED.join(',');
 
 // Fotos grandes do celular viram WebP de até `maxSide` px (transparência preservada).
 async function optimize(file: File, maxSide: number): Promise<Blob> {
@@ -43,40 +32,28 @@ async function optimize(file: File, maxSide: number): Promise<Blob> {
   return blob && blob.size < file.size ? blob : file;
 }
 
-const EXT: Record<string, string> = {
-  'image/webp': 'webp',
-  'image/png': 'png',
-  'image/jpeg': 'jpg',
-  'image/gif': 'gif',
-  'image/x-icon': 'ico',
-  'image/vnd.microsoft.icon': 'ico',
-};
-
 export function checkImageFile(file: File): string | null {
-  if (!Object.keys(EXT).includes(file.type)) return 'Use uma imagem PNG, JPG, WebP ou GIF.';
+  if (!ACCEPTED.includes(file.type)) return 'Use uma imagem PNG, JPG, WebP ou GIF.';
   if (file.size > MAX_INPUT_BYTES) return 'A imagem passa de 10 MB. Escolha uma menor.';
   return null;
 }
 
-export async function uploadImage(file: File, folder: string, maxSide = 1600): Promise<{ url: string; path: string }> {
+export async function uploadImage(file: File, folder: ImageFolder, maxSide = 1600): Promise<{ url: string }> {
   const problem = checkImageFile(file);
   if (problem) throw new Error(problem);
   const blob = await optimize(file, maxSide);
-  if (blob.size > 5 * 1024 * 1024) throw new Error('A imagem ficou maior que 5 MB. Escolha uma menor.');
-  const type = blob.type || file.type;
-  const path = `${folder}/${crypto.randomUUID()}.${EXT[type] ?? 'img'}`;
-  const { error } = await admin.storage.from(MEDIA_BUCKET).upload(path, blob, { contentType: type, cacheControl: '31536000', upsert: false });
-  if (error) throw new Error('Não foi possível enviar a imagem.');
-  return { url: admin.storage.from(MEDIA_BUCKET).getPublicUrl(path).data.publicUrl, path };
+  if (blob.size > MAX_UPLOAD_BYTES) throw new Error('A imagem ficou maior que 4 MB. Escolha uma menor.');
+  return api.upload<{ url: string }>(`/api/admin/upload?folder=${folder}`, blob);
 }
 
-export async function removeImages(paths: (string | null | undefined)[]) {
-  const list = paths.filter((p): p is string => Boolean(p));
-  if (list.length) await admin.storage.from(MEDIA_BUCKET).remove(list);
+// Descarta no servidor imagens enviadas que acabaram não sendo usadas (ex.: o formulário falhou ao
+// salvar). O servidor só apaga o que nenhum produto, banner ou configuração usa.
+export async function discardImages(urls: (string | null | undefined)[]) {
+  await Promise.all(urls.filter((u): u is string => Boolean(u)).map((url) => api.delete('/api/admin/upload', { url }).catch(() => undefined)));
 }
 
-// Envia a imagem nova (se houver) antes de salvar. Devolve o que gravar no banco.
-export async function commitImage(value: ImageValue, folder: string, maxSide?: number) {
-  if (value.file) return { ...(await uploadImage(value.file, folder, maxSide)), uploaded: true };
-  return { url: value.url, path: value.path ?? pathFromUrl(value.url), uploaded: false };
+// Envia a imagem nova (se houver) antes de salvar. Devolve a URL a gravar no banco.
+export async function commitImage(value: ImageValue, folder: ImageFolder, maxSide?: number): Promise<{ url: string | null; uploaded: boolean }> {
+  if (value.file) return { url: (await uploadImage(value.file, folder, maxSide)).url, uploaded: true };
+  return { url: value.url, uploaded: false };
 }

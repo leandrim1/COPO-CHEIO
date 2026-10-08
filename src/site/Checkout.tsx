@@ -17,10 +17,10 @@ import {
 } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
+import { ApiError, api, friendlyError } from '../lib/api';
 import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, addressLines, formatTime, maskPhone, money, onlyDigits, parseMoney, statusLabel } from '../lib/format';
 import { nextOpening } from '../lib/hours';
 import { navigate } from '../lib/router';
-import { db, friendlyError } from '../lib/supabase';
 import type { DeliveryType, OrderStatus, PaymentMethod, PublicOrder, StoreSettings } from '../lib/types';
 import { fullAddress, storeWhatsappUrl, useShop } from './data';
 import { BLUE_BUTTON, CartLineItem, FIELD, Footer, GHOST_BUTTON, Price, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
@@ -197,7 +197,7 @@ function loadCustomer(): Partial<Customer> {
 }
 
 export function CheckoutPage() {
-  const { store, zones, cart, isOpen, fresh, refresh } = useShop();
+  const { store, zones, payments, cart, isOpen, fresh, refresh } = useShop();
   const { lines, total: subtotal, setQty, clear, unavailable } = cart;
   const [form, setForm] = useState<Customer>(() => {
     const saved = loadCustomer();
@@ -223,7 +223,8 @@ export function CheckoutPage() {
 
   // Só oferece o que a loja aceita agora.
   const deliveryOptions = (['delivery', 'pickup'] as DeliveryType[]).filter((d) => (d === 'delivery' ? store.delivery_enabled : store.pickup_enabled));
-  const paymentOptions = (['pix', 'cash', 'card'] as PaymentMethod[]).filter((p) => store[`${p}_enabled` as const]);
+  const paymentOptions: PaymentMethod[] = payments.map((p) => p.code);
+  const pixKey = payments.find((p) => p.code === 'pix')?.details ?? null;
   const delivery = deliveryOptions.includes(form.delivery) ? form.delivery : deliveryOptions[0];
   const payment = paymentOptions.includes(form.payment) ? form.payment : paymentOptions[0];
 
@@ -286,10 +287,6 @@ export function CheckoutPage() {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
     }
-    if (!db) {
-      setSubmitError('Os pedidos pelo site ainda não estão ativos. Fale com a loja pelo WhatsApp.');
-      return;
-    }
     setSending(true);
     try {
       localStorage.setItem(
@@ -300,8 +297,9 @@ export function CheckoutPage() {
       /* modo privado */
     }
     const change = payment === 'cash' && form.change.trim() ? parseMoney(form.change) : null;
-    const { data, error } = await db.rpc('create_order', {
-      payload: {
+    let order: PublicOrder;
+    try {
+      ({ order } = await api.post<{ order: PublicOrder }>('/api/orders', {
         customer_name: form.name.trim(),
         customer_phone: onlyDigits(form.phone),
         customer_email: form.email.trim() || null,
@@ -315,16 +313,15 @@ export function CheckoutPage() {
         change_for: change === null ? null : change.toFixed(2),
         notes: form.notes.trim(),
         items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty })),
-      },
-    });
-    setSending(false);
-    if (error || !data) {
+      }));
+    } catch (error) {
+      setSending(false);
       setSubmitError(friendlyError(error, 'Não foi possível enviar o pedido. Tente de novo em instantes.'));
       // Preço, estoque ou horário podem ter mudado: atualiza o cardápio.
       void refresh();
       return;
     }
-    const order = data as PublicOrder;
+    setSending(false);
     orderCache.set(order.token, order);
     clear();
     navigate(`/pedido/${order.token}`);
@@ -459,7 +456,7 @@ export function CheckoutPage() {
                   onChange={() => set('payment', p)}
                   icon={p === 'pix' ? <QrCode className="h-5 w-5" aria-hidden="true" /> : p === 'cash' ? <Banknote className="h-5 w-5" aria-hidden="true" /> : <CreditCard className="h-5 w-5" aria-hidden="true" />}
                   title={PAYMENT_LABEL[p]}
-                  subtitle={p === 'card' ? (delivery === 'delivery' ? 'Na entrega' : 'Na retirada') : p === 'pix' ? (store.pix_key ? 'Chave na confirmação' : 'Combine pelo WhatsApp') : undefined}
+                  subtitle={p === 'card' ? (delivery === 'delivery' ? 'Na entrega' : 'Na retirada') : p === 'pix' ? (pixKey ? 'Chave na confirmação' : 'Combine pelo WhatsApp') : undefined}
                 />
               ))}
             </div>
@@ -599,7 +596,8 @@ function StatusSteps({ order }: { order: PublicOrder }) {
 }
 
 export function OrderPage({ token }: { token: string }) {
-  const { store } = useShop();
+  const { store, payments } = useShop();
+  const pixKey = payments.find((p) => p.code === 'pix')?.details ?? null;
   const [order, setOrder] = useState<PublicOrder | null>(() => orderCache.get(token) ?? null);
   const [state, setState] = useState<'loading' | 'ok' | 'missing' | 'error'>(() => (orderCache.has(token) ? 'ok' : 'loading'));
   const [copied, setCopied] = useState(false);
@@ -607,17 +605,15 @@ export function OrderPage({ token }: { token: string }) {
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      if (!db) {
-        setState('error');
-        return;
-      }
-      const { data, error } = await db.rpc('get_public_order', { token });
-      if (!alive) return;
-      if (error) setState((s) => (s === 'ok' ? s : 'error'));
-      else if (!data) setState('missing');
-      else {
-        setOrder(data as PublicOrder);
+      try {
+        const { order: fresh } = await api.get<{ order: PublicOrder }>(`/api/orders/${token}`);
+        if (!alive) return;
+        setOrder(fresh);
         setState('ok');
+      } catch (error) {
+        if (!alive) return;
+        if (error instanceof ApiError && error.status === 404) setState('missing');
+        else setState((s) => (s === 'ok' ? s : 'error'));
       }
     };
     void load();
@@ -666,7 +662,7 @@ export function OrderPage({ token }: { token: string }) {
   }
 
   const message = orderWhatsappMessage(store, order);
-  const showPix = order.payment_method === 'pix' && store.pix_key && order.payment_status !== 'paid' && order.order_status !== 'cancelled';
+  const showPix = order.payment_method === 'pix' && pixKey && order.payment_status !== 'paid' && order.order_status !== 'cancelled';
   const live = !FINAL.includes(order.order_status);
 
   return (
@@ -767,11 +763,11 @@ export function OrderPage({ token }: { token: string }) {
               <div className="mt-3 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 p-3">
                 <p className="text-xs text-white/60">Chave PIX</p>
                 <div className="mt-1 flex items-center gap-2">
-                  <code className="min-w-0 flex-1 break-all text-sm font-bold text-white">{store.pix_key}</code>
+                  <code className="min-w-0 flex-1 break-all text-sm font-bold text-white">{pixKey}</code>
                   <button
                     type="button"
                     onClick={() => {
-                      void navigator.clipboard?.writeText(store.pix_key ?? '').then(() => setCopied(true));
+                      void navigator.clipboard?.writeText(pixKey ?? '').then(() => setCopied(true));
                       window.setTimeout(() => setCopied(false), 2000);
                     }}
                     className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#145CFF] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"

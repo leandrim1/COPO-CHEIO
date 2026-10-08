@@ -1,20 +1,22 @@
--- COPO CHEIO – Disk Bebidas
--- 3/5 · Pedidos (criação, consulta pelo cliente, status e histórico), estoque, painel e equipe.
+-- COPO CHEIO – Disk Bebidas · Neon PostgreSQL (copocheio-db)
+-- 2/3 · Regras de pedido, estoque, status e dashboard.
+--
+-- Estas funções rodam dentro do banco para que as operações importantes sejam atômicas (pedidos
+-- simultâneos não vendem o mesmo estoque) e para que o preço venha SEMPRE do banco.
+-- Só o servidor (/api) se conecta ao Neon, então só ele as chama.
 
 -- ---------------------------------------------------------------------------------------------
 -- Loja aberta agora? (horário no fuso da loja; "início = fim" significa 24 horas;
 -- fim antes do início atravessa a meia-noite, ex.: 18:00 às 02:00)
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.store_open_now()
+create or replace function store_open_now()
 returns boolean
 language plpgsql
 stable
-security definer
-set search_path = ''
 as $$
 declare
-  s public.store_settings;
+  s store_settings;
   local_now timestamp;
   t time;
   days constant text[] := array['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -22,7 +24,7 @@ declare
   d jsonb;
   y jsonb;
 begin
-  select * into s from public.store_settings where id = 1;
+  select * into s from store_settings where id = 1;
   if not found or s.orders_paused then
     return false;
   end if;
@@ -50,17 +52,16 @@ begin
     and t < (y ->> 'end')::time;
 end;
 $$;
+-- statement-breakpoint
 
 -- ---------------------------------------------------------------------------------------------
 -- Pedido visto pelo cliente (página /pedido/:id). Só com o código secreto do link.
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.get_public_order(token uuid)
+create or replace function get_public_order(token uuid)
 returns jsonb
 language sql
 stable
-security definer
-set search_path = ''
 as $$
   select jsonb_build_object(
     'token', o.public_token,
@@ -89,42 +90,41 @@ as $$
         'unit_price', i.unit_price,
         'total_price', i.total_price
       ) order by i.created_at, i.product_name)
-      from public.order_items i
+      from order_items i
       where i.order_id = o.id
     ), '[]'::jsonb),
     'history', coalesce((
       select jsonb_agg(jsonb_build_object('status', h.to_status, 'at', h.created_at) order by h.created_at)
-      from public.order_status_history h
+      from order_status_history h
       where h.order_id = o.id
     ), '[]'::jsonb)
   )
-  from public.orders o
+  from orders o
   where o.public_token = token;
 $$;
+-- statement-breakpoint
+
+create or replace function format_brl(value numeric)
+returns text
+language sql
+immutable
+as $$
+  select 'R$ ' || replace(to_char(value, 'FM999999990.00'), '.', ',');
+$$;
+-- statement-breakpoint
 
 -- ---------------------------------------------------------------------------------------------
 -- Criar pedido (site público). Preços, estoque, taxa e regras da loja são conferidos aqui:
 -- o navegador só manda o que o cliente escolheu.
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.format_brl(value numeric)
-returns text
-language sql
-immutable
-set search_path = ''
-as $$
-  select 'R$ ' || replace(to_char(value, 'FM999999990.00'), '.', ',');
-$$;
-
-create or replace function public.create_order(payload jsonb)
+create or replace function create_order(payload jsonb)
 returns jsonb
 language plpgsql
 volatile
-security definer
-set search_path = ''
 as $$
 declare
-  s public.store_settings;
+  s store_settings;
   v_name text := btrim(coalesce(payload ->> 'customer_name', ''));
   v_phone text := regexp_replace(coalesce(payload ->> 'customer_phone', ''), '\D', '', 'g');
   v_email text := nullif(lower(btrim(coalesce(payload ->> 'customer_email', ''))), '');
@@ -142,22 +142,22 @@ declare
   v_subtotal numeric(10, 2) := 0;
   v_total numeric(10, 2);
   v_item record;
-  v_product public.products;
+  v_product products;
   v_unit numeric(10, 2);
   v_ids uuid[] := '{}';
   v_names text[] := '{}';
   v_qtys integer[] := '{}';
   v_units numeric[] := '{}';
-  v_order public.orders;
+  v_order orders;
 begin
-  select * into s from public.store_settings where id = 1;
+  select * into s from store_settings where id = 1;
   if not found then
     raise exception 'A loja ainda não foi configurada.' using errcode = 'P0001';
   end if;
   if s.orders_paused then
     raise exception 'A loja não está recebendo pedidos agora. Tente novamente mais tarde.' using errcode = 'P0001';
   end if;
-  if not public.store_open_now() then
+  if not store_open_now() then
     raise exception 'Estamos fechados agora. Confira nosso horário de funcionamento.' using errcode = 'P0001';
   end if;
 
@@ -198,9 +198,7 @@ begin
   end if;
 
   -- Pagamento
-  if not ((v_payment = 'pix' and s.pix_enabled)
-       or (v_payment = 'cash' and s.cash_enabled)
-       or (v_payment = 'card' and s.card_enabled)) then
+  if not exists (select 1 from payment_methods m where m.code = v_payment and m.enabled) then
     raise exception 'Escolha uma forma de pagamento disponível.' using errcode = 'P0001';
   end if;
   if v_notes is not null and char_length(v_notes) > 500 then
@@ -208,7 +206,7 @@ begin
   end if;
 
   -- Proteção contra envios repetidos
-  if (select count(*) from public.orders o
+  if (select count(*) from orders o
       where o.customer_phone = v_phone and o.created_at > now() - interval '10 minutes') >= 5 then
     raise exception 'Muitos pedidos em pouco tempo. Aguarde alguns minutos ou fale com a loja pelo WhatsApp.'
       using errcode = 'P0001';
@@ -237,10 +235,10 @@ begin
       raise exception 'Quantidade inválida no pedido.' using errcode = 'P0001';
     end if;
 
-    select * into v_product from public.products p where p.id = v_item.product_id for update;
+    select * into v_product from products p where p.id = v_item.product_id for update;
     if not found or not v_product.active or (
       v_product.category_id is not null
-      and not exists (select 1 from public.categories c where c.id = v_product.category_id and c.active)
+      and not exists (select 1 from categories c where c.id = v_product.category_id and c.active)
     ) then
       raise exception 'Um produto do seu pedido não está mais disponível. Atualize a página.' using errcode = 'P0001';
     end if;
@@ -259,15 +257,15 @@ begin
     v_units := v_units || v_unit;
 
     if v_product.stock is not null then
-      update public.products set stock = stock - v_item.qty where id = v_product.id;
+      update products set stock = stock - v_item.qty where id = v_product.id;
     end if;
   end loop;
 
   -- Taxa de entrega: por bairro (quando há bairros cadastrados) ou taxa única.
   if v_type = 'delivery' then
-    if exists (select 1 from public.delivery_zones z where z.active) then
+    if exists (select 1 from delivery_zones z where z.active) then
       select z.fee into v_fee
-      from public.delivery_zones z
+      from delivery_zones z
       where z.active and lower(btrim(z.name)) = lower(v_neighborhood);
       if not found then
         raise exception 'Ainda não entregamos no bairro %. Escolha um bairro da lista ou retire na loja.', v_neighborhood
@@ -277,7 +275,7 @@ begin
       v_fee := s.delivery_fee;
     end if;
     if v_subtotal < s.min_order then
-      raise exception 'O pedido mínimo para entrega é %.', public.format_brl(s.min_order) using errcode = 'P0001';
+      raise exception 'O pedido mínimo para entrega é %.', format_brl(s.min_order) using errcode = 'P0001';
     end if;
   end if;
 
@@ -289,12 +287,12 @@ begin
     end if;
     v_change := replace(v_change_text, ',', '.')::numeric;
     if v_change < v_total then
-      raise exception 'O troco precisa ser para um valor igual ou maior que o total (%).', public.format_brl(v_total)
+      raise exception 'O troco precisa ser para um valor igual ou maior que o total (%).', format_brl(v_total)
         using errcode = 'P0001';
     end if;
   end if;
 
-  insert into public.orders (
+  insert into orders (
     customer_name, customer_phone, customer_email, delivery_type,
     address, address_number, neighborhood, complement, reference, notes,
     subtotal, delivery_fee, discount, total, payment_method, change_for
@@ -305,100 +303,91 @@ begin
   )
   returning * into v_order;
 
-  insert into public.order_items (order_id, product_id, product_name, quantity, unit_price, total_price)
+  insert into order_items (order_id, product_id, product_name, quantity, unit_price, total_price)
   select v_order.id, x.id, x.name, x.qty, x.unit, x.unit * x.qty
   from unnest(v_ids, v_names, v_qtys, v_units) as x (id, name, qty, unit);
 
-  return public.get_public_order(v_order.public_token);
+  insert into order_status_history (order_id, from_status, to_status, changed_by_name)
+  values (v_order.id, null, v_order.order_status, 'Cliente (site)');
+
+  return get_public_order(v_order.public_token);
 end;
 $$;
+-- statement-breakpoint
 
 -- ---------------------------------------------------------------------------------------------
--- Status do pedido: histórico (quem mudou e quando), estoque devolvido no cancelamento.
+-- Status do pedido (feito pelo painel): histórico com o nome de quem mudou e estoque devolvido ao cancelar.
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.orders_guard_status()
-returns trigger
+create or replace function admin_set_order_status(p_order uuid, p_status text, p_admin uuid)
+returns orders
 language plpgsql
-set search_path = ''
-as $$
-begin
-  if old.order_status = 'cancelled' and new.order_status <> 'cancelled' then
-    raise exception 'Este pedido foi cancelado e não pode ser reaberto.' using errcode = 'P0001';
-  end if;
-  return new;
-end;
-$$;
-
-create trigger orders_guard_status before update of order_status on public.orders
-  for each row execute function public.orders_guard_status();
-
-create or replace function public.orders_log_status()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
 as $$
 declare
+  v_old orders;
+  v_new orders;
   v_name text;
 begin
-  if tg_op = 'INSERT' then
-    insert into public.order_status_history (order_id, from_status, to_status, changed_by_name)
-    values (new.id, null, new.order_status, 'Cliente (site)');
-    return new;
+  if p_status not in ('new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled') then
+    raise exception 'Status inválido.' using errcode = 'P0001';
   end if;
 
-  if new.order_status is distinct from old.order_status then
-    select a.name into v_name from public.admin_users a where a.user_id = (select auth.uid());
-    insert into public.order_status_history (order_id, from_status, to_status, changed_by, changed_by_name)
-    values (new.id, old.order_status, new.order_status, (select auth.uid()), coalesce(v_name, 'Sistema'));
-
-    if new.order_status = 'cancelled' then
-      update public.products p
-      set stock = p.stock + i.qty
-      from (
-        select product_id, sum(quantity)::integer as qty
-        from public.order_items
-        where order_id = new.id and product_id is not null
-        group by product_id
-      ) i
-      where p.id = i.product_id and p.stock is not null;
-    end if;
+  select * into v_old from orders where id = p_order for update;
+  if not found then
+    raise exception 'Pedido não encontrado.' using errcode = 'P0001';
   end if;
-  return new;
+  if v_old.order_status = p_status then
+    return v_old;
+  end if;
+  if v_old.order_status = 'cancelled' then
+    raise exception 'Este pedido foi cancelado e não pode ser reaberto.' using errcode = 'P0001';
+  end if;
+
+  select a.name into v_name from admins a where a.id = p_admin;
+
+  update orders set order_status = p_status where id = p_order returning * into v_new;
+
+  insert into order_status_history (order_id, from_status, to_status, changed_by, changed_by_name)
+  values (p_order, v_old.order_status, p_status, p_admin, coalesce(v_name, 'Sistema'));
+
+  if p_status = 'cancelled' then
+    update products p
+    set stock = p.stock + i.qty
+    from (
+      select product_id, sum(quantity)::integer as qty
+      from order_items
+      where order_id = p_order and product_id is not null
+      group by product_id
+    ) i
+    where p.id = i.product_id and p.stock is not null;
+  end if;
+
+  return v_new;
 end;
 $$;
 
-create trigger orders_log_status_insert after insert on public.orders
-  for each row execute function public.orders_log_status();
-create trigger orders_log_status_update after update of order_status on public.orders
-  for each row execute function public.orders_log_status();
+-- statement-breakpoint
 
 -- ---------------------------------------------------------------------------------------------
 -- Estoque: + adicionar / − retirar (atômico, não deixa ficar negativo)
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.adjust_stock(p_product uuid, p_delta integer)
+create or replace function adjust_stock(p_product uuid, p_delta integer)
 returns integer
 language plpgsql
-security invoker
-set search_path = ''
 as $$
 declare
   v_stock integer;
 begin
-  if not public.is_admin() then
-    raise exception 'Sem permissão.' using errcode = '42501';
-  end if;
   if p_delta = 0 or abs(p_delta) > 100000 then
     raise exception 'Quantidade inválida.' using errcode = 'P0001';
   end if;
-  update public.products
+  update products
   set stock = coalesce(stock, 0) + p_delta
   where id = p_product and coalesce(stock, 0) + p_delta >= 0
   returning stock into v_stock;
   if not found then
-    if exists (select 1 from public.products where id = p_product) then
+    if exists (select 1 from products where id = p_product) then
       raise exception 'Não dá para retirar mais do que o estoque atual.' using errcode = 'P0001';
     end if;
     raise exception 'Produto não encontrado.' using errcode = 'P0001';
@@ -407,17 +396,17 @@ begin
 end;
 $$;
 
+-- statement-breakpoint
+
 -- ---------------------------------------------------------------------------------------------
 -- Dashboard: números do dia/semana/mês, séries para os gráficos e produtos mais vendidos.
 -- Faturamento = pedidos não cancelados. Datas no fuso da loja.
 -- ---------------------------------------------------------------------------------------------
 
-create or replace function public.admin_dashboard(p_days integer default 7)
+create or replace function admin_dashboard(p_days integer default 7)
 returns jsonb
 language plpgsql
 stable
-security definer
-set search_path = ''
 as $$
 declare
   tz text;
@@ -432,14 +421,11 @@ declare
   v_series jsonb;
   v_top jsonb;
 begin
-  if not public.is_admin() then
-    raise exception 'Sem permissão.' using errcode = '42501';
-  end if;
   if p_days is null or p_days not in (1, 7, 30) then
     p_days := 7;
   end if;
 
-  select s.timezone into tz from public.store_settings s where s.id = 1;
+  select s.timezone into tz from store_settings s where s.id = 1;
   tz := coalesce(tz, 'America/Sao_Paulo');
   now_local := now() at time zone tz;
   today_local := date_trunc('day', now_local);
@@ -460,7 +446,7 @@ begin
     'revenue_week', coalesce(sum(o.total) filter (where o.created_at >= week_start and o.order_status <> 'cancelled'), 0),
     'revenue_month', coalesce(sum(o.total) filter (where o.created_at >= month_start and o.order_status <> 'cancelled'), 0)
   ) into v_cards
-  from public.orders o
+  from orders o
   where o.created_at >= least(week_start, month_start)
      or o.order_status in ('new', 'confirmed', 'preparing', 'out_for_delivery');
 
@@ -470,7 +456,7 @@ begin
     'revenue', coalesce(sum(o.total), 0),
     'average_ticket', coalesce(round(avg(o.total), 2), 0)
   ) into v_range
-  from public.orders o
+  from orders o
   where o.created_at >= range_start and o.order_status <> 'cancelled';
 
   select coalesce(jsonb_agg(jsonb_build_object(
@@ -485,7 +471,7 @@ begin
       case when p_days = 1 then today_local + interval '23 hours' else today_local end,
       case when p_days = 1 then interval '1 hour' else interval '1 day' end
     ) as g (bucket)
-    left join public.orders o
+    left join orders o
       on o.created_at >= range_start
       and o.order_status <> 'cancelled'
       and date_trunc(case when p_days = 1 then 'hour' else 'day' end, o.created_at at time zone tz) = g.bucket
@@ -498,8 +484,8 @@ begin
       (array_agg(i.product_name order by o.created_at desc))[1] as name,
       sum(i.quantity)::integer as quantity,
       sum(i.total_price) as revenue
-    from public.order_items i
-    join public.orders o on o.id = i.order_id
+    from order_items i
+    join orders o on o.id = i.order_id
     where o.created_at >= range_start and o.order_status <> 'cancelled'
     group by coalesce(i.product_id::text, i.product_name)
     order by quantity desc, revenue desc
@@ -515,64 +501,3 @@ begin
   );
 end;
 $$;
-
--- ---------------------------------------------------------------------------------------------
--- Equipe: o owner adiciona um administrador pelo e-mail de uma conta já criada no Supabase Auth.
--- ---------------------------------------------------------------------------------------------
-
-create or replace function public.add_admin(p_email text, p_name text, p_role text default 'admin')
-returns public.admin_users
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_user uuid;
-  v_row public.admin_users;
-begin
-  if not public.is_owner() then
-    raise exception 'Só o owner pode adicionar administradores.' using errcode = '42501';
-  end if;
-  if p_role not in ('owner', 'admin') then
-    raise exception 'Função inválida.' using errcode = 'P0001';
-  end if;
-  if char_length(btrim(coalesce(p_name, ''))) = 0 then
-    raise exception 'Informe o nome.' using errcode = 'P0001';
-  end if;
-  select u.id into v_user from auth.users u where lower(u.email) = lower(btrim(p_email));
-  if not found then
-    raise exception 'Nenhuma conta com esse e-mail. Crie o usuário em Authentication → Users no Supabase e tente de novo.'
-      using errcode = 'P0001';
-  end if;
-  insert into public.admin_users (user_id, name, email, role, active)
-  values (v_user, btrim(p_name), lower(btrim(p_email)), p_role, true)
-  on conflict (user_id) do update set name = excluded.name, role = excluded.role, active = true
-  returning * into v_row;
-  return v_row;
-end;
-$$;
-
--- ---------------------------------------------------------------------------------------------
--- Quem pode chamar cada função pela API
--- ---------------------------------------------------------------------------------------------
-
-revoke execute on function
-  public.store_open_now(),
-  public.get_public_order(uuid),
-  public.format_brl(numeric),
-  public.create_order(jsonb),
-  public.orders_guard_status(),
-  public.orders_log_status(),
-  public.adjust_stock(uuid, integer),
-  public.admin_dashboard(integer),
-  public.add_admin(text, text, text)
-from public, anon, authenticated;
-
-grant execute on function public.store_open_now() to anon, authenticated;
-grant execute on function public.get_public_order(uuid) to anon, authenticated;
-grant execute on function public.create_order(jsonb) to anon, authenticated;
-grant execute on function public.adjust_stock(uuid, integer) to authenticated;
-grant execute on function public.admin_dashboard(integer) to authenticated;
-grant execute on function public.add_admin(text, text, text) to authenticated;
--- Usada na validação de store_settings quando um administrador salva o horário.
-grant execute on function public.valid_opening_hours(jsonb) to authenticated;

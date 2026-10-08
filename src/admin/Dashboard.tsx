@@ -1,11 +1,11 @@
 import { ArrowRight, Bike, CheckCircle2, ChefHat, Clock3, Inbox, PackageCheck, ShoppingBag } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import { api } from '../lib/api';
 import { DELIVERY_LABEL, money, timeAgo } from '../lib/format';
 import type { Order } from '../lib/types';
 import { useLiveOrders } from './AdminApp';
 import { BarList, ColumnChart } from './Charts';
-import { admin } from './client';
 import { Card, EmptyState, ErrorState, PageHeader, Skeleton, StatusBadge, cx } from './ui';
 
 type Dashboard = {
@@ -25,6 +25,7 @@ type Dashboard = {
   range: { days: number; orders: number; revenue: number; average_ticket: number };
   series: { bucket: string; orders: number; revenue: number }[];
   top_products: { name: string; quantity: number; revenue: number }[];
+  recent: Order[];
 };
 
 const RANGES = [
@@ -74,18 +75,16 @@ export default function DashboardPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [dash, orders] = await Promise.all([
-      admin.rpc('admin_dashboard', { p_days: days }),
-      admin.from('orders').select('*').order('created_at', { ascending: false }).limit(8),
-    ]);
-    setLoading(false);
-    if (dash.error || orders.error) {
+    try {
+      const dash = await api.get<Dashboard>(`/api/admin/dashboard?days=${days}`);
+      setError(false);
+      setData(dash);
+      setRecent(dash.recent);
+    } catch {
       setError(true);
-      return;
+    } finally {
+      setLoading(false);
     }
-    setError(false);
-    setData(dash.data as Dashboard);
-    setRecent(orders.data as Order[]);
   }, [days]);
 
   useEffect(() => {

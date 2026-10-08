@@ -1,26 +1,15 @@
 import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { api, friendlyError } from '../lib/api';
 import { money, moneyInput, normalizeText, parseMoney } from '../lib/format';
 import { navigate } from '../lib/router';
-import { MEDIA_BUCKET, friendlyError } from '../lib/supabase';
 import type { Category, ProductRecord } from '../lib/types';
-import { admin, commitImage, emptyImage, removeImages } from './client';
+import { commitImage, discardImages, emptyImage } from './client';
 import type { ImageValue } from './client';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, ImageInput, Modal, PageHeader, Skeleton, Spinner, Switch, cx, useConfirm, useToast } from './ui';
 
-const PRODUCT_FOLDER = 'products';
-
 export const isSoldOut = (p: Pick<ProductRecord, 'sold_out' | 'stock'>) => p.sold_out || (p.stock !== null && p.stock <= 0);
-
-// Remove a imagem do Storage se nenhum outro produto usa o mesmo arquivo.
-async function releaseImage(path: string | null, exceptId?: string) {
-  if (!path) return;
-  let query = admin.from('products').select('id', { count: 'exact', head: true }).eq('image_path', path);
-  if (exceptId) query = query.neq('id', exceptId);
-  const { count } = await query;
-  if (!count) await removeImages([path]);
-}
 
 function sortProducts(products: ProductRecord[], categories: Category[]) {
   const pos = new Map(categories.map((c) => [c.id, c.position]));
@@ -100,54 +89,26 @@ function useProductActions(reload: () => void) {
       confirmLabel: 'Excluir produto',
     });
     if (!ok) return false;
-    const { error } = await admin.from('products').delete().eq('id', p.id);
-    if (error) {
+    try {
+      // O servidor também apaga a foto do Blob quando nenhum outro produto a usa.
+      await api.delete(`/api/admin/products/${p.id}`);
+    } catch (error) {
       toast.error('Não foi possível excluir o produto.', friendlyError(error, ''));
       return false;
     }
-    await releaseImage(p.image_path);
     toast.success('Produto excluído com sucesso.');
     reload();
     return true;
   };
 
   const duplicate = async (p: ProductRecord) => {
-    let image_url = p.image_url;
-    let image_path: string | null = null;
-    if (p.image_path) {
-      const copyPath = `${PRODUCT_FOLDER}/${crypto.randomUUID()}.${p.image_path.split('.').pop()}`;
-      const { error } = await admin.storage.from(MEDIA_BUCKET).copy(p.image_path, copyPath);
-      if (!error) {
-        image_path = copyPath;
-        image_url = admin.storage.from(MEDIA_BUCKET).getPublicUrl(copyPath).data.publicUrl;
-      }
-    }
-    const { data, error } = await admin
-      .from('products')
-      .insert({
-        category_id: p.category_id,
-        name: `${p.name} (cópia)`.slice(0, 80),
-        description: p.description,
-        price: p.price,
-        promo_price: p.promo_price,
-        image_url,
-        image_path,
-        sku: null,
-        stock: p.stock,
-        featured: false,
-        active: false,
-        sold_out: p.sold_out,
-        position: p.position + 1,
-      })
-      .select('id')
-      .single();
-    if (error) {
-      await removeImages([image_path]);
+    try {
+      const { product } = await api.post<{ product: ProductRecord }>(`/api/admin/products/${p.id}/duplicate`);
+      toast.success('Produto duplicado.', 'A cópia está desativada: revise e ative quando quiser.');
+      navigate(`/admin/produtos/${product.id}`);
+    } catch (error) {
       toast.error('Não foi possível duplicar o produto.', friendlyError(error, ''));
-      return;
     }
-    toast.success('Produto duplicado.', 'A cópia está desativada: revise e ative quando quiser.');
-    navigate(`/admin/produtos/${data.id}`);
   };
 
   return { remove, duplicate };
@@ -209,52 +170,27 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
     if (!preview || 'error' in preview) return;
     setBusy(true);
     setError('');
-    const { data: cats } = await admin.from('categories').select('*');
-    const categories = new Map(((cats ?? []) as Category[]).map((c) => [normalizeText(c.name.trim()), c]));
-    let position = categories.size;
-    for (const name of new Set(preview.rows.map((r) => r.category))) {
-      const key = normalizeText(name.trim());
-      if (categories.has(key) || name === 'Outros') continue;
-      const { data, error: err } = await admin.from('categories').insert({ name, position: position++ }).select().single();
-      if (err) {
-        setBusy(false);
-        setError(friendlyError(err, `Não foi possível criar a categoria ${name}.`));
-        return;
-      }
-      categories.set(key, data as Category);
-    }
-    const { data: existing } = await admin.from('products').select('name,category_id');
-    const seen = new Set(((existing ?? []) as { name: string; category_id: string | null }[]).map((p) => `${normalizeText(p.name)}|${p.category_id ?? ''}`));
-    const rows = preview.rows
-      .map((r, i) => {
-        const category = r.category === 'Outros' ? null : (categories.get(normalizeText(r.category.trim())) ?? null);
-        return {
+    try {
+      const result = await api.post<{ created: number; existing: number }>('/api/admin/products/import', {
+        rows: preview.rows.map((r) => ({
           name: r.name,
           price: r.price,
+          category: r.category === 'Outros' ? null : r.category,
           description: r.description,
-          image_url: r.image,
-          category_id: category?.id ?? null,
+          image: r.image,
           featured: r.featured,
           sold_out: r.soldOut,
-          active: true,
-          position: i,
-        };
-      })
-      .filter((r) => !seen.has(`${normalizeText(r.name)}|${r.category_id ?? ''}`));
-    const ignored = preview.rows.length - rows.length;
-    if (rows.length) {
-      const { error: err } = await admin.from('products').insert(rows);
-      if (err) {
-        setBusy(false);
-        setError(friendlyError(err, 'Não foi possível importar os produtos.'));
-        return;
-      }
+        })),
+      });
+      toast.success(`${result.created} produto(s) importado(s).`, result.existing ? `${result.existing} já existiam e foram mantidos.` : undefined);
+      setText('');
+      onDone();
+      onClose();
+    } catch (err) {
+      setError(friendlyError(err, 'Não foi possível importar os produtos.'));
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
-    toast.success(`${rows.length} produto(s) importado(s).`, ignored ? `${ignored} já existiam e foram mantidos.` : undefined);
-    setText('');
-    onDone();
-    onClose();
   };
 
   return (
@@ -328,19 +264,15 @@ export function ProductsPage() {
   const [importing, setImporting] = useState(false);
 
   const load = useCallback(async () => {
-    const [p, c, s] = await Promise.all([
-      admin.from('products').select('*'),
-      admin.from('categories').select('*').order('position').order('name'),
-      admin.from('site_settings').select('featured_limit').eq('id', 1).single(),
-    ]);
-    if (p.error || c.error) {
+    try {
+      const data = await api.get<{ products: ProductRecord[]; categories: Category[]; featured_limit: number }>('/api/admin/products');
+      setError(false);
+      setCategories(data.categories);
+      setProducts(sortProducts(data.products, data.categories));
+      setFeaturedLimit(data.featured_limit);
+    } catch {
       setError(true);
-      return;
     }
-    setError(false);
-    setCategories(c.data as Category[]);
-    setProducts(sortProducts(p.data as ProductRecord[], c.data as Category[]));
-    if (s.data) setFeaturedLimit(s.data.featured_limit);
   }, []);
 
   useEffect(() => {
@@ -352,14 +284,14 @@ export function ProductsPage() {
 
   const patch = async (p: ProductRecord, change: Partial<ProductRecord>, message: string) => {
     setProducts((list) => list?.map((x) => (x.id === p.id ? { ...x, ...change } : x)) ?? null);
-    const { data, error: err } = await admin.from('products').update(change).eq('id', p.id).select().single();
-    if (err) {
+    try {
+      const { product } = await api.patch<{ product: ProductRecord }>(`/api/admin/products/${p.id}`, change);
+      setProducts((list) => list?.map((x) => (x.id === p.id ? product : x)) ?? null);
+      toast.success(message);
+    } catch (err) {
       setProducts((list) => list?.map((x) => (x.id === p.id ? p : x)) ?? null);
       toast.error('Não foi possível salvar o produto.', friendlyError(err, ''));
-      return;
     }
-    setProducts((list) => list?.map((x) => (x.id === p.id ? (data as ProductRecord) : x)) ?? null);
-    toast.success(message);
   };
 
   const featuredCount = products?.filter((p) => p.featured && p.active).length ?? 0;
@@ -623,18 +555,22 @@ export function ProductFormPage({ id }: { id: string }) {
   useEffect(() => {
     let alive = true;
     void (async () => {
-      const [c, p] = await Promise.all([
-        admin.from('categories').select('*').order('position').order('name'),
-        isNew ? Promise.resolve(null) : admin.from('products').select('*').eq('id', id).maybeSingle(),
-      ]);
+      let categories: Category[] = [];
+      let product: ProductRecord | null = null;
+      try {
+        if (isNew) categories = (await api.get<{ categories: Category[] }>('/api/admin/categories')).categories;
+        else ({ categories, product } = await api.get<{ categories: Category[]; product: ProductRecord }>(`/api/admin/products/${id}`));
+      } catch {
+        if (alive) setMissing(true);
+        return;
+      }
       if (!alive) return;
-      setCategories((c.data ?? []) as Category[]);
+      setCategories(categories);
       if (isNew) {
-        const first = (c.data ?? [])[0] as Category | undefined;
+        const first = categories[0];
         setForm((f) => (f && !f.category_id && first ? { ...f, category_id: first.id } : f));
         return;
       }
-      const product = p?.data as ProductRecord | null;
       if (!product) {
         setMissing(true);
         return;
@@ -653,7 +589,7 @@ export function ProductFormPage({ id }: { id: string }) {
         active: product.active,
         sold_out: product.sold_out,
         position: String(product.position),
-        image: emptyImage(product.image_url, product.image_path),
+        image: emptyImage(product.image_url),
       });
     })();
     return () => {
@@ -677,19 +613,15 @@ export function ProductFormPage({ id }: { id: string }) {
   const createCategory = async () => {
     const name = newCategory?.trim();
     if (!name) return;
-    const { data, error } = await admin
-      .from('categories')
-      .insert({ name, position: categories.length ? Math.max(...categories.map((c) => c.position)) + 1 : 0 })
-      .select()
-      .single();
-    if (error) {
+    try {
+      const { category } = await api.post<{ category: Category }>('/api/admin/categories', { name });
+      setCategories((list) => [...list, category]);
+      set('category_id', category.id);
+      setNewCategory(null);
+      toast.success('Categoria criada.');
+    } catch (error) {
       toast.error('Não foi possível criar a categoria.', friendlyError(error, ''));
-      return;
     }
-    setCategories((list) => [...list, data as Category]);
-    set('category_id', (data as Category).id);
-    setNewCategory(null);
-    toast.success('Categoria criada.');
   };
 
   const submit = async (e: FormEvent) => {
@@ -713,10 +645,10 @@ export function ProductFormPage({ id }: { id: string }) {
     setSaving(true);
     let image: Awaited<ReturnType<typeof commitImage>>;
     try {
-      image = await commitImage(form.image, PRODUCT_FOLDER, 1200);
+      image = await commitImage(form.image, 'products', 1200);
     } catch (err) {
       setSaving(false);
-      toast.error('Não foi possível enviar a imagem.', err instanceof Error ? err.message : '');
+      toast.error('Não foi possível enviar a imagem.', friendlyError(err, err instanceof Error ? err.message : ''));
       return;
     }
     const row = {
@@ -732,16 +664,18 @@ export function ProductFormPage({ id }: { id: string }) {
       sold_out: form.sold_out,
       position,
       image_url: image.url,
-      image_path: image.url ? image.path : null,
     };
-    const result = isNew ? await admin.from('products').insert(row).select().single() : await admin.from('products').update(row).eq('id', id).select().single();
-    setSaving(false);
-    if (result.error) {
-      if (image.uploaded) await removeImages([image.path]);
-      toast.error('Não foi possível salvar o produto.', friendlyError(result.error, ''));
+    try {
+      // A URL do Blob fica no Neon; o servidor apaga do Blob a foto antiga que ficou sem uso.
+      if (isNew) await api.post('/api/admin/products', row);
+      else await api.patch(`/api/admin/products/${id}`, row);
+    } catch (err) {
+      setSaving(false);
+      if (image.uploaded) await discardImages([image.url]);
+      toast.error('Não foi possível salvar o produto.', friendlyError(err, ''));
       return;
     }
-    if (original?.image_path && original.image_path !== row.image_path) await releaseImage(original.image_path, id);
+    setSaving(false);
     toast.success(isNew ? 'Produto cadastrado.' : 'Produto salvo.', row.active ? 'Já está no site.' : 'Está desativado: não aparece no site.');
     navigate('/admin/produtos');
   };

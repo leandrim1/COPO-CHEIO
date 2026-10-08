@@ -1,7 +1,7 @@
-import type { HeroSettings, SiteSettings, StoreSettings } from './types';
+import type { HeroSettings, PaymentOption, SiteSettings, StoreSettings } from './types';
 
-// O mesmo conteúdo inicial da migration 20261008120400_initial_content.sql. Só aparece enquanto os
-// dados do Supabase não chegaram (ou se o Supabase não estiver configurado): o painel é a fonte.
+// O mesmo conteúdo inicial de db/migrations/0003_initial_content.sql. Só aparece enquanto os dados do
+// banco não chegaram (ou se a API estiver fora do ar): o painel é a fonte.
 
 const weekday = { open: true, start: '09:00', end: '23:00' };
 const closed = { open: false, start: '09:00', end: '23:00' };
@@ -23,15 +23,10 @@ export const DEFAULT_STORE: StoreSettings = {
   delivery_fee: 5,
   min_order: 0,
   delivery_time: '30 a 45 min',
-  pix_enabled: true,
-  cash_enabled: true,
-  card_enabled: true,
-  pix_key: null,
 };
 
 export const DEFAULT_SITE: SiteSettings = {
   logo_url: null,
-  logo_path: null,
   bebidas_title: 'Bebidas para deixar seu momento ainda melhor',
   bebidas_highlight: 'ainda melhor',
   bebidas_subtitle: 'Escolha sua bebida favorita. A gente entrega gelada e rapidinho na sua casa.',
@@ -47,9 +42,7 @@ export const DEFAULT_SITE: SiteSettings = {
   seo_title: 'COPO CHEIO – Disk Bebidas',
   seo_description: 'COPO CHEIO – Disk Bebidas. Bebidas bem geladas, variedade e entrega rápida na sua casa.',
   og_image_url: null,
-  og_image_path: null,
   favicon_url: null,
-  favicon_path: null,
 };
 
 export const DEFAULT_HERO: HeroSettings = {
@@ -63,5 +56,11 @@ export const DEFAULT_HERO: HeroSettings = {
   show_badge: true,
   images: [],
 };
+
+export const DEFAULT_PAYMENTS: PaymentOption[] = [
+  { code: 'pix', label: 'PIX', details: null },
+  { code: 'cash', label: 'Dinheiro', details: null },
+  { code: 'card', label: 'Cartão na entrega', details: null },
+];
 
 export const DEFAULT_LOGO = '/logo.png';

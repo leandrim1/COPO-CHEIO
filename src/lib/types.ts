@@ -1,4 +1,4 @@
-// Formato das tabelas do Supabase (ver supabase/migrations).
+// Formato dos dados que a API devolve (tabelas do Neon: ver db/migrations).
 
 export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export type DayHours = { open: boolean; start: string; end: string };
@@ -21,16 +21,11 @@ export type StoreSettings = {
   delivery_fee: number;
   min_order: number;
   delivery_time: string | null;
-  pix_enabled: boolean;
-  cash_enabled: boolean;
-  card_enabled: boolean;
-  pix_key: string | null;
   updated_at?: string;
 };
 
 export type SiteSettings = {
   logo_url: string | null;
-  logo_path: string | null;
   bebidas_title: string;
   bebidas_highlight: string | null;
   bebidas_subtitle: string | null;
@@ -46,9 +41,7 @@ export type SiteSettings = {
   seo_title: string;
   seo_description: string | null;
   og_image_url: string | null;
-  og_image_path: string | null;
   favicon_url: string | null;
-  favicon_path: string | null;
   updated_at?: string;
 };
 
@@ -81,7 +74,6 @@ export type ProductRecord = {
   price: number;
   promo_price: number | null;
   image_url: string | null;
-  image_path: string | null;
   sku: string | null;
   stock: number | null;
   featured: boolean;
@@ -97,9 +89,7 @@ export type Banner = {
   title: string | null;
   subtitle: string | null;
   image_desktop_url: string | null;
-  image_desktop_path?: string | null;
   image_mobile_url: string | null;
-  image_mobile_path?: string | null;
   button_text: string | null;
   link: string | null;
   active: boolean;
@@ -164,17 +154,26 @@ export type StatusChange = {
   created_at: string;
 };
 
-export type AdminUser = {
+// Forma de pagamento como o site mostra (só as ativas) e como o painel edita.
+export type PaymentOption = {
+  code: PaymentMethod;
+  label: string;
+  // PIX: a chave que o cliente vê depois do pedido.
+  details: string | null;
+  enabled?: boolean;
+};
+
+export type AdminAccount = {
   id: string;
-  user_id: string;
   name: string;
   email: string;
   role: 'owner' | 'admin';
   active: boolean;
+  last_login_at: string | null;
   created_at: string;
 };
 
-// O pedido como o cliente vê (função get_public_order / create_order).
+// O pedido como o cliente vê (POST /api/orders e GET /api/orders/:token).
 export type PublicOrder = {
   token: string;
   order_number: number;

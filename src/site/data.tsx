@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
+import { api } from '../lib/api';
+import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
 import { isOpenNow } from '../lib/hours';
-import { db } from '../lib/supabase';
-import type { Banner, Category, DeliveryZone, HeroSettings, SiteSettings, StoreSettings } from '../lib/types';
+import type { Banner, Category, DeliveryZone, HeroSettings, PaymentOption, SiteSettings, StoreSettings } from '../lib/types';
 
-// Produto como o site mostra (vem das tabelas products + categories do Supabase).
+// Produto como o site mostra (vem de GET /api/products: tabelas products + categories do Neon).
 export type Product = {
   id: string;
   name: string;
@@ -30,10 +30,11 @@ type ShopData = {
   products: Product[];
   banners: Banner[];
   zones: DeliveryZone[];
+  payments: PaymentOption[];
 };
 
-const CACHE_KEY = 'copocheio:site-v1';
-const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], zones: [] };
+const CACHE_KEY = 'copocheio:site-v2';
+const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], zones: [], payments: DEFAULT_PAYMENTS };
 
 function readCache(): ShopData | null {
   try {
@@ -43,8 +44,6 @@ function readCache(): ShopData | null {
     return null;
   }
 }
-
-const PRODUCT_COLUMNS = 'id,category_id,name,description,price,promo_price,image_url,featured,sold_out,position';
 
 type ProductRowFromDb = {
   id: string;
@@ -88,34 +87,22 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
 }
 
 async function fetchShop(): Promise<ShopData> {
-  if (!db) throw new Error('Supabase não configurado');
-  const [store, site, hero, categories, products, banners, zones] = await Promise.all([
-    db.from('store_settings').select('*').eq('id', 1).single(),
-    db.from('site_settings').select('*').eq('id', 1).single(),
-    db.from('hero_settings').select('*').eq('id', 1).single(),
-    db.from('categories').select('id,name,position,active').eq('active', true).order('position').order('name'),
-    db.from('products').select(PRODUCT_COLUMNS).eq('active', true).order('position').order('name'),
-    db
-      .from('banners')
-      .select('id,title,subtitle,image_desktop_url,image_mobile_url,button_text,link,position,active')
-      .eq('active', true)
-      .order('position'),
-    db.from('delivery_zones').select('id,name,fee,position,active').eq('active', true).order('position').order('name'),
+  const [catalog, content] = await Promise.all([
+    api.get<{ categories: Category[]; products: ProductRowFromDb[] }>('/api/products'),
+    api.get<{ store: StoreSettings; site: SiteSettings; hero: HeroSettings; banners: Banner[]; zones: DeliveryZone[]; payments: PaymentOption[] }>('/api/site'),
   ]);
-  const failed = [store, site, hero, categories, products, banners, zones].find((r) => r.error);
-  if (failed?.error) throw failed.error;
-  const cats = (categories.data ?? []) as Category[];
-  const visibleCategories = new Set(cats.map((c) => c.id));
+  const visibleCategories = new Set(catalog.categories.map((c) => c.id));
   return {
-    store: { ...DEFAULT_STORE, ...(store.data as StoreSettings), delivery_fee: Number(store.data!.delivery_fee), min_order: Number(store.data!.min_order) },
-    site: { ...DEFAULT_SITE, ...(site.data as SiteSettings) },
-    hero: { ...DEFAULT_HERO, ...(hero.data as HeroSettings) },
+    store: { ...DEFAULT_STORE, ...content.store },
+    site: { ...DEFAULT_SITE, ...content.site },
+    hero: { ...DEFAULT_HERO, ...content.hero },
     products: toProducts(
-      ((products.data ?? []) as ProductRowFromDb[]).filter((p) => !p.category_id || visibleCategories.has(p.category_id)),
-      cats,
+      catalog.products.filter((p) => !p.category_id || visibleCategories.has(p.category_id)),
+      catalog.categories,
     ),
-    banners: (banners.data ?? []) as Banner[],
-    zones: ((zones.data ?? []) as DeliveryZone[]).map((z) => ({ ...z, fee: Number(z.fee) })),
+    banners: content.banners,
+    zones: content.zones,
+    payments: content.payments.length ? content.payments : DEFAULT_PAYMENTS,
   };
 }
 
@@ -129,10 +116,6 @@ function useShopData() {
   const lastFetch = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!db) {
-      setState((s) => ({ ...s, fresh: true, failed: true }));
-      return;
-    }
     lastFetch.current = Date.now();
     try {
       const data = await fetchShop();
@@ -230,7 +213,7 @@ function useCart(products: Product[], ready: boolean) {
 // ---- Contexto ---------------------------------------------------------------------------------
 
 type Shop = ShopData & {
-  // ready: o cardápio já veio do Supabase (ou da cópia salva) e pode ser mostrado.
+  // ready: o cardápio já veio da API (ou da cópia salva) e pode ser mostrado.
   ready: boolean;
   fresh: boolean;
   failed: boolean;

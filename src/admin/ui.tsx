@@ -521,7 +521,7 @@ export function ImageInput({
           {preview ? 'Trocar imagem' : 'Enviar imagem'}
         </Button>
         {preview && (
-          <Button size="sm" variant="danger-ghost" icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => onChange({ url: null, path: value.path, file: null })}>
+          <Button size="sm" variant="danger-ghost" icon={<Trash2 className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => onChange({ url: null, file: null })}>
             Remover
           </Button>
         )}

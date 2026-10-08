@@ -1,5 +1,6 @@
 import { ArrowLeft, ChevronRight, Inbox, MessageCircle, Phone, Printer, Search, User } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ApiError, api, friendlyError } from '../lib/api';
 import {
   DELIVERY_LABEL,
   PAYMENT_LABEL,
@@ -10,16 +11,13 @@ import {
   formatDateTime,
   formatPhone,
   money,
-  onlyDigits,
   statusLabel,
   timeAgo,
   whatsappTo,
 } from '../lib/format';
 import { navigate } from '../lib/router';
-import { friendlyError } from '../lib/supabase';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, StatusChange } from '../lib/types';
 import { useLiveOrders } from './AdminApp';
-import { admin } from './client';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Spinner, StatusBadge, cx, useConfirm, useToast } from './ui';
 
 const FILTERS: { value: OrderStatus | 'all'; label: string }[] = [
@@ -48,9 +46,14 @@ function nextStatus(o: Order): { status: OrderStatus; label: string } | null {
   return { status: next, label: labels[next] };
 }
 
-export async function changeStatus(order: Pick<Order, 'id' | 'order_number'>, status: OrderStatus) {
-  const { error } = await admin.from('orders').update({ order_status: status }).eq('id', order.id);
-  return error;
+// Devolve o erro (ou null quando deu certo). O servidor grava o histórico com o nome de quem mudou.
+export async function changeStatus(order: Pick<Order, 'id' | 'order_number'>, status: OrderStatus): Promise<unknown> {
+  try {
+    await api.patch(`/api/admin/orders/${order.id}`, { status });
+    return null;
+  } catch (error) {
+    return error;
+  }
 }
 
 // ---- Lista (/admin/pedidos) --------------------------------------------------------------------
@@ -79,32 +82,18 @@ export function OrdersPage() {
   useEffect(() => setLimit(PAGE), [filter, term]);
 
   const load = useCallback(async () => {
-    let request = admin.from('orders').select('*').order('created_at', { ascending: false }).limit(limit + 1);
-    if (filter !== 'all') request = request.eq('order_status', filter);
-    if (term) {
-      const digits = onlyDigits(term);
-      const safe = term.replace(/[,()%*\\]/g, ' ').trim();
-      const parts: string[] = [];
-      if (digits && /^#?\d+$/.test(term)) parts.push(`order_number.eq.${digits}`);
-      if (digits.length >= 3) parts.push(`customer_phone.ilike.%${digits}%`);
-      if (safe && !/^#?\d+$/.test(term)) parts.push(`customer_name.ilike.%${safe}%`);
-      if (parts.length) request = request.or(parts.join(','));
-    }
-    const [list, ...statusCounts] = await Promise.all([
-      request,
-      ...STATUS_FLOW.concat('cancelled').map((s) => admin.from('orders').select('id', { count: 'exact', head: true }).eq('order_status', s)),
-    ]);
-    if (list.error) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (filter !== 'all') params.set('status', filter);
+    if (term) params.set('q', term);
+    try {
+      const data = await api.get<{ orders: Order[]; has_more: boolean; counts: Partial<Record<OrderStatus, number>> }>(`/api/admin/orders?${params}`);
+      setError(false);
+      setHasMore(data.has_more);
+      setOrders(data.orders);
+      setCounts(data.counts);
+    } catch {
       setError(true);
-      return;
     }
-    setError(false);
-    const rows = list.data as Order[];
-    setHasMore(rows.length > limit);
-    setOrders(rows.slice(0, limit));
-    const next: Partial<Record<OrderStatus, number>> = {};
-    STATUS_FLOW.concat('cancelled').forEach((s, i) => (next[s] = statusCounts[i].count ?? 0));
-    setCounts(next);
   }, [filter, term, limit]);
 
   useEffect(() => {
@@ -320,29 +309,20 @@ export function OrderDetailPage({ number }: { number: string }) {
   const [error, setError] = useState(false);
 
   const load = useCallback(async () => {
-    const n = Number(number);
-    if (!Number.isInteger(n)) {
+    if (!/^\d+$/.test(number)) {
       setOrder(null);
       return;
     }
-    const { data, error: err } = await admin.from('orders').select('*').eq('order_number', n).maybeSingle();
-    if (err) {
-      setError(true);
-      return;
+    try {
+      const data = await api.get<{ order: Order; items: OrderItem[]; history: StatusChange[] }>(`/api/admin/orders/${number}`);
+      setError(false);
+      setOrder(data.order);
+      setItems(data.items);
+      setHistory(data.history);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) setOrder(null);
+      else setError(true);
     }
-    setError(false);
-    if (!data) {
-      setOrder(null);
-      return;
-    }
-    const o = data as Order;
-    const [it, hi] = await Promise.all([
-      admin.from('order_items').select('*').eq('order_id', o.id).order('created_at'),
-      admin.from('order_status_history').select('*').eq('order_id', o.id).order('created_at'),
-    ]);
-    setOrder(o);
-    setItems((it.data ?? []) as OrderItem[]);
-    setHistory((hi.data ?? []) as StatusChange[]);
   }, [number]);
 
   useEffect(() => {
@@ -373,9 +353,12 @@ export function OrderDetailPage({ number }: { number: string }) {
   const setPayment = async (payment_status: PaymentStatus) => {
     if (!order) return;
     setBusy('payment');
-    const { error: err } = await admin.from('orders').update({ payment_status }).eq('id', order.id);
+    const err = await api.patch(`/api/admin/orders/${order.id}`, { payment_status }).then(
+      () => null,
+      (e: unknown) => e,
+    );
     setBusy(null);
-    if (err) toast.error('Não foi possível atualizar o pagamento.');
+    if (err) toast.error('Não foi possível atualizar o pagamento.', friendlyError(err, ''));
     else {
       setOrder({ ...order, payment_status });
       toast.success('Pagamento atualizado.', PAYMENT_STATUS_LABEL[payment_status]);

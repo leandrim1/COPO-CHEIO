@@ -1,9 +1,8 @@
 import { Boxes, Minus, Plus, Search } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
+import { api, friendlyError } from '../lib/api';
 import { normalizeText } from '../lib/format';
-import { friendlyError } from '../lib/supabase';
 import type { Category, ProductRecord } from '../lib/types';
-import { admin } from './client';
 import { isSoldOut } from './Products';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, IconButton, PageHeader, Skeleton, cx, useToast } from './ui';
 
@@ -16,36 +15,34 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
   const [busy, setBusy] = useState(false);
   const soldOut = isSoldOut(product);
 
-  const refresh = async () => {
-    const { data } = await admin.from('products').select('*').eq('id', product.id).single();
-    if (data) onChanged(data as ProductRecord);
-  };
-
   const adjust = async (delta: number) => {
     if (!Number.isInteger(delta) || delta === 0) {
       toast.error('Informe uma quantidade inteira.');
       return;
     }
     setBusy(true);
-    const { data, error } = await admin.rpc('adjust_stock', { p_product: product.id, p_delta: delta });
-    setBusy(false);
-    if (error) {
+    try {
+      const { product: updated } = await api.post<{ product: ProductRecord }>(`/api/admin/products/${product.id}/stock`, { delta });
+      setAmount('');
+      onChanged(updated);
+      toast.success(delta > 0 ? `+${delta} em ${product.name}` : `${delta} em ${product.name}`, `Estoque atual: ${updated.stock}`);
+    } catch (error) {
       toast.error('Não foi possível atualizar o estoque.', friendlyError(error, ''));
-      return;
+    } finally {
+      setBusy(false);
     }
-    setAmount('');
-    toast.success(delta > 0 ? `+${delta} em ${product.name}` : `${delta} em ${product.name}`, `Estoque atual: ${data}`);
-    void refresh();
   };
 
   const update = async (change: Partial<ProductRecord>, message: string) => {
     setBusy(true);
-    const { data, error } = await admin.from('products').update(change).eq('id', product.id).select().single();
-    setBusy(false);
-    if (error) toast.error('Não foi possível salvar.', friendlyError(error, ''));
-    else {
-      onChanged(data as ProductRecord);
+    try {
+      const { product: updated } = await api.patch<{ product: ProductRecord }>(`/api/admin/products/${product.id}`, change);
+      onChanged(updated);
       toast.success(message);
+    } catch (error) {
+      toast.error('Não foi possível salvar.', friendlyError(error, ''));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -132,14 +129,14 @@ export default function StockPage() {
   const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
-    const [p, c] = await Promise.all([admin.from('products').select('*').order('name'), admin.from('categories').select('*')]);
-    if (p.error) {
+    try {
+      const data = await api.get<{ products: ProductRecord[]; categories: Category[] }>('/api/admin/products');
+      setError(false);
+      setProducts(data.products);
+      setCategories(new Map(data.categories.map((cat) => [cat.id, cat])));
+    } catch {
       setError(true);
-      return;
     }
-    setError(false);
-    setProducts(p.data as ProductRecord[]);
-    setCategories(new Map(((c.data ?? []) as Category[]).map((cat) => [cat.id, cat])));
   }, []);
 
   useEffect(() => {
