@@ -46,6 +46,34 @@ const toAnchor = (label: string) =>
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()}`;
 
+// Mobile-first fit: in portrait the page is exactly one visible screen tall (dvh follows the browser's
+// address bar, vh does not) and cannot be scrolled; the cup area takes whatever height is left and the
+// cup is sized to it with container units (the vh line is the fallback for older browsers). Landscape
+// pages are not height-locked, so there the cup keeps a window-based size and the page may scroll.
+const VIEWPORT_STYLES = `
+.cc-screen { min-height: 100vh; min-height: 100dvh; }
+.cc-cup-area { container-type: size; }
+.cc-cup-box { width: clamp(6rem, calc(100vh - 32rem), 76vw); width: min(86cqw, 100cqh); }
+@media (min-width: 640px) {
+  .cc-cup-box { width: min(60vw, 38vh); width: min(60cqw, 100cqh); }
+}
+@media (orientation: portrait) {
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+  .cc-screen { height: 100vh; height: 100dvh; }
+}
+@media (orientation: landscape) {
+  .cc-cup-area { container-type: normal; min-height: calc(min(60vw, 38vh) + 3.5rem); }
+  .cc-cup-box { width: min(60vw, 38vh); }
+}
+@media (max-width: 639px) and (max-height: 760px) {
+  .cc-copy { padding-bottom: 1.25rem; }
+  .cc-h1 { margin-top: 0.75rem; font-size: 1.875rem; }
+  .cc-lead { margin-top: 0.75rem; font-size: 13px; line-height: 1.45; }
+  .cc-cta { margin-top: 1rem; flex-direction: row; gap: 0.5rem; }
+  .cc-cta > a { flex: 1 1 0; padding-inline: 0.75rem; }
+}
+`;
+
 const MOTION_STYLES = `
 @keyframes cc-float {
   0%, 100% { transform: translate3d(0, 0, 0); }
@@ -266,8 +294,8 @@ export default function App() {
   const overHand = cupBox !== null;
 
   return (
-    <div ref={rootRef} id="inicio" className="relative min-h-screen overflow-hidden bg-black">
-      <style>{MOTION_STYLES}</style>
+    <div ref={rootRef} id="inicio" className="cc-screen relative overflow-hidden bg-black">
+      <style>{MOTION_STYLES}{VIEWPORT_STYLES}</style>
 
       {/* Background video: left-aligned so phones show a hand-free part, with the hand's band masked out */}
       <video
@@ -305,7 +333,7 @@ export default function App() {
       </div>
 
       {/* Foreground */}
-      <div className="relative z-10 flex flex-col min-h-screen">
+      <div className="cc-screen relative z-10 flex flex-col">
         <nav
           aria-label="Navegação principal"
           className="flex items-center justify-between pt-4 sm:pt-6 px-4 sm:px-8 lg:px-12"
@@ -365,14 +393,14 @@ export default function App() {
           className={
             overHand
               ? 'pointer-events-none absolute inset-0 z-10'
-              : 'flex justify-center px-6 pb-6 pt-4 sm:pt-8'
+              : 'cc-cup-area flex min-h-0 flex-1 items-center justify-center px-6 pb-6 pt-4 sm:pt-8'
           }
         >
           <div
             className={
               overHand
                 ? 'absolute aspect-square'
-                : 'relative aspect-square w-[clamp(8rem,calc(100vh-32rem),76vw)] sm:w-[min(60vw,38vh)]'
+                : 'cc-cup-box relative aspect-square'
             }
             style={cupBox ? { left: cupBox.left, top: cupBox.top, width: cupBox.size } : undefined}
           >
@@ -421,7 +449,9 @@ export default function App() {
         </div>
 
         {/* Hero copy */}
-        <main className="relative flex-1 flex items-end pb-10 sm:pb-16 lg:pb-20 px-6 sm:px-12 md:px-20 lg:px-28">
+        <main
+          className={`cc-copy relative flex items-end pb-10 sm:pb-16 lg:pb-20 px-6 sm:px-12 md:px-20 lg:px-28 ${overHand ? 'flex-1' : 'shrink-0'}`}
+        >
           <div className="max-w-xl">
             <img
               src="/logo.png"
@@ -441,7 +471,7 @@ export default function App() {
               </span>
             </div>
 
-            <h1 className="mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl [@media(max-height:700px)]:lg:!text-[3rem] leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
+            <h1 className="cc-h1 mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl [@media(max-height:700px)]:lg:!text-[3rem] leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
               Sua{' '}
               <span className="text-[#145CFF] [text-shadow:0_0_24px_rgba(20,92,255,0.65),0_0_60px_rgba(20,92,255,0.35)]">
                 bebida gelada
@@ -449,11 +479,11 @@ export default function App() {
               chega até você.
             </h1>
 
-            <p className="mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md lg:max-w-sm">
+            <p className="cc-lead mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md lg:max-w-sm">
               Bebidas bem geladas, variedade e rapidez para deixar qualquer momento muito melhor.
             </p>
 
-            <div className="mt-6 sm:mt-7 flex flex-col gap-3 sm:flex-row">
+            <div className="cc-cta mt-6 sm:mt-7 flex flex-col gap-3 sm:flex-row">
               <a
                 href={ORDER_HREF}
                 aria-label="Pedir agora pelo delivery"
