@@ -9,28 +9,46 @@ import {
   Motorbike,
   Navigation,
   Plus,
+  RefreshCw,
   Search,
   ShoppingBag,
   Snowflake,
+  TriangleAlert,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
+import { money, normalizeText } from './lib/format';
+import { hoursLines, nextOpening, openHoursSummary } from './lib/hours';
+import { useLinkInterception, usePathname } from './lib/router';
+import { CheckoutPage, OrderPage } from './site/Checkout';
+import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
+import type { Product } from './site/data';
+import {
+  BLUE_BUTTON,
+  BrandName,
+  CartLineItem,
+  Footer,
+  GHOST_BUTTON,
+  Highlight,
+  IceCube,
+  InstagramIcon,
+  NAV_HREF,
+  NAV_LINKS,
+  Price,
+  ProductImage,
+  ProductPrice,
+  SoldOutBadge,
+  WHATSAPP_BUTTON,
+  WhatsAppIcon,
+} from './site/ui';
+import type { Banner } from './lib/types';
 
-const BRAND_NAME = 'COPO CHEIO';
+// O painel administrativo só é baixado quando alguém abre /admin.
+const AdminApp = lazy(() => import('./admin/AdminApp'));
+
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260508_215831_c6a8989c-d716-4d8d-8745-e972a2eec711.mp4';
-
-// Dados da loja. Preencha aqui (ou pelas variáveis VITE_* do deploy): o que ficar vazio não aparece no site.
-const env = import.meta.env;
-const STORE = {
-  whatsapp: String(env.VITE_WHATSAPP ?? ''), // só números, com 55 + DDD. Ex.: 5511999999999
-  instagram: String(env.VITE_INSTAGRAM ?? 'copocheiodisk'),
-  address: String(env.VITE_ADDRESS ?? ''),
-  hours: String(env.VITE_HOURS ?? 'Segunda à Sexta - 09:00 às 23:00'),
-  deliveryTime: String(env.VITE_DELIVERY_TIME ?? '30 a 45 min'),
-  deliveryFee: String(env.VITE_DELIVERY_FEE ?? 'R$ 5,00'),
-};
 
 // "Pedir agora" leva ao pedido: a página Bebidas (ou à gaveta do pedido, se já houver itens).
 const ORDER_HREF = '/bebidas';
@@ -55,6 +73,7 @@ const CUP_RIGHT_MARGIN = 56;
 
 // Drinks shown in rotation. Each image is a transparent 1100×1100 canvas with the product centred,
 // resting on the same baseline and scaled to the same height, so they swap in place at the same size.
+// Images uploaded in the panel (Site → Hero) replace this list.
 const SLIDE_MS = 4500;
 const DRINKS = [
   { src: '/img/frozen-rosa.webp', alt: 'Frozen rosa com chantilly, calda de frutas vermelhas e picolé' },
@@ -62,7 +81,6 @@ const DRINKS = [
   { src: '/img/energetico-azul.webp', alt: 'Energético azul em copo com gelo' },
 ];
 
-const NAV_LINKS = ['Início', 'Bebidas', 'Contato'];
 // Hidden on tablet so the pill never collides with the logo; everything shows from lg up.
 const SECONDARY_LINKS = new Set(['Início']);
 
@@ -182,23 +200,24 @@ function useVideoFraming(
 
 // Stacks every drink in the same spot and cross-fades between them; the dots below pick one.
 // The rotation pauses while a mouse hovers the dots or a keyboard user is focused on them.
-function DrinkShowcase() {
+function DrinkShowcase({ drinks }: { drinks: { src: string; alt: string }[] }) {
   const [active, setActive] = useState(0);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const paused = hovered || focused;
+  const current = active < drinks.length ? active : 0;
 
   useEffect(() => {
-    if (paused) return;
-    const timer = window.setTimeout(() => setActive((i) => (i + 1) % DRINKS.length), SLIDE_MS);
+    if (paused || drinks.length < 2) return;
+    const timer = window.setTimeout(() => setActive((i) => (i + 1) % drinks.length), SLIDE_MS);
     return () => window.clearTimeout(timer);
-  }, [active, paused]);
+  }, [active, paused, drinks.length]);
 
   return (
     <>
       <div className="absolute inset-0 cc-float drop-shadow-[0_30px_50px_rgba(0,0,0,0.55)]">
-        {DRINKS.map((drink, i) => {
-          const isActive = i === active;
+        {drinks.map((drink, i) => {
+          const isActive = i === current;
           return (
             <img
               key={drink.src}
@@ -219,55 +238,40 @@ function DrinkShowcase() {
         })}
       </div>
 
-      <div
-        role="group"
-        aria-label="Escolher bebida"
-        onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
-        onFocus={(e) => setFocused(e.target.matches(':focus-visible'))}
-        onBlur={() => setFocused(false)}
-        className="pointer-events-auto absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 items-center"
-      >
-        {DRINKS.map((drink, i) => {
-          const isActive = i === active;
-          return (
-            <button
-              key={drink.src}
-              type="button"
-              onClick={() => setActive(i)}
-              aria-label={`Ver bebida ${i + 1} de ${DRINKS.length}`}
-              aria-current={isActive}
-              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              <span
-                className={`block h-2 rounded-full transition-all duration-300 ${
-                  isActive
-                    ? 'w-6 bg-[#145CFF] shadow-[0_0_10px_rgba(20,92,255,0.9)]'
-                    : 'w-2 bg-white/35 group-hover:bg-white/70'
-                }`}
-              />
-            </button>
-          );
-        })}
-      </div>
+      {drinks.length > 1 && (
+        <div
+          role="group"
+          aria-label="Escolher bebida"
+          onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
+          onPointerLeave={() => setHovered(false)}
+          onFocus={(e) => setFocused(e.target.matches(':focus-visible'))}
+          onBlur={() => setFocused(false)}
+          className="pointer-events-auto absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 items-center"
+        >
+          {drinks.map((drink, i) => {
+            const isActive = i === current;
+            return (
+              <button
+                key={drink.src}
+                type="button"
+                onClick={() => setActive(i)}
+                aria-label={`Ver bebida ${i + 1} de ${drinks.length}`}
+                aria-current={isActive}
+                className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <span
+                  className={`block h-2 rounded-full transition-all duration-300 ${
+                    isActive
+                      ? 'w-6 bg-[#145CFF] shadow-[0_0_10px_rgba(20,92,255,0.9)]'
+                      : 'w-2 bg-white/35 group-hover:bg-white/70'
+                  }`}
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
     </>
-  );
-}
-
-function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
-  return (
-    <div aria-hidden="true" className={`pointer-events-none absolute cc-float ${className}`} style={{ animationDelay: delay }}>
-      <div className="relative h-full w-full rotate-12">
-        <img
-          src="/gelo.webp"
-          alt=""
-          width={320}
-          height={320}
-          decoding="async"
-          className="h-full w-full object-contain drop-shadow-[0_8px_12px_rgba(20,92,255,0.5)]"
-        />
-      </div>
-    </div>
   );
 }
 
@@ -313,165 +317,6 @@ function InfoChip({
 /* Loja: produtos, pedido e seções abaixo do Hero                      */
 /* ------------------------------------------------------------------ */
 
-type Product = {
-  id: string;
-  name: string;
-  category: string;
-  price: number;
-  description?: string;
-  image?: string;
-  featured?: boolean;
-};
-
-const money = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format;
-const WHATSAPP_DIGITS = STORE.whatsapp.replace(/\D/g, '');
-// Sem número configurado o link abre o WhatsApp para a pessoa escolher o contato.
-const whatsappUrl = (text: string) => `https://wa.me/${WHATSAPP_DIGITS}?text=${encodeURIComponent(text)}`;
-const INSTAGRAM_HANDLE = STORE.instagram.replace(/^@/, '');
-const INSTAGRAM_URL = `https://instagram.com/${INSTAGRAM_HANDLE}`;
-const CART_KEY = 'copocheio:pedido';
-
-const WHATSAPP_BUTTON =
-  'inline-flex items-center justify-center gap-2.5 rounded-full bg-[#25D366] px-6 py-3.5 text-[15px] font-extrabold text-[#04210F] shadow-[0_16px_40px_-14px_rgba(37,211,102,0.8)] transition-all duration-200 hover:scale-[1.02] hover:bg-[#3DE07A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black';
-const GHOST_BUTTON =
-  'inline-flex items-center justify-center gap-2.5 rounded-full border border-white/25 bg-white/5 px-6 py-3.5 text-[15px] font-semibold text-white backdrop-blur-md transition-all duration-200 hover:border-white/50 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black';
-const BLUE_BUTTON =
-  'inline-flex items-center justify-center gap-2.5 rounded-full bg-[#145CFF] px-6 py-3.5 text-[15px] font-extrabold text-white shadow-[0_16px_40px_-14px_rgba(20,92,255,0.95)] transition-all duration-200 hover:scale-[1.02] hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black';
-
-function WhatsAppIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
-      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
-    </svg>
-  );
-}
-
-function InstagramIcon({ className = 'h-5 w-5' }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      className={className}
-    >
-      <rect x="3" y="3" width="18" height="18" rx="5" />
-      <circle cx="12" cy="12" r="4" />
-      <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-// ---- Produtos: lidos de /produtos.json (public/produtos.json) ----------------------------------
-
-function parseProducts(raw: unknown): Product[] {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set<string>();
-  const products: Product[] = [];
-  raw.forEach((item, index) => {
-    if (!item || typeof item !== 'object') return;
-    const p = item as Record<string, unknown>;
-    const name = typeof p.name === 'string' ? p.name.trim() : '';
-    const price = typeof p.price === 'number' ? p.price : Number(String(p.price ?? '').replace(/[^\d,.-]/g, '').replace(',', '.'));
-    if (!name || !Number.isFinite(price) || price < 0) return;
-    let id = typeof p.id === 'string' || typeof p.id === 'number' ? String(p.id) : `item-${index}`;
-    if (seen.has(id)) id = `${id}-${index}`;
-    seen.add(id);
-    const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
-    products.push({
-      id,
-      name,
-      price,
-      category: text(p.category) ?? 'Outros',
-      description: text(p.description),
-      image: text(p.image),
-      featured: p.featured === true,
-    });
-  });
-  return products;
-}
-
-function useProducts() {
-  const [state, setState] = useState<{ ready: boolean; products: Product[] }>({ ready: false, products: [] });
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/produtos.json', { signal: controller.signal, cache: 'no-cache' })
-      .then((response) => (response.ok ? response.json() : []))
-      .catch(() => [])
-      .then((raw) => {
-        if (!controller.signal.aborted) setState({ ready: true, products: parseProducts(raw) });
-      });
-    return () => controller.abort();
-  }, []);
-
-  return state;
-}
-
-// ---- Pedido: guardado no navegador e enviado pelo WhatsApp -------------------------------------
-
-type CartLine = { product: Product; qty: number };
-
-function loadCart(): Record<string, number> {
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(CART_KEY) ?? '{}');
-    const cart: Record<string, number> = {};
-    if (parsed && typeof parsed === 'object') {
-      for (const [id, qty] of Object.entries(parsed)) {
-        if (typeof qty === 'number' && Number.isInteger(qty) && qty > 0) cart[id] = Math.min(qty, 99);
-      }
-    }
-    return cart;
-  } catch {
-    return {};
-  }
-}
-
-function useCart(products: Product[], ready: boolean) {
-  const [cart, setCart] = useState<Record<string, number>>(loadCart);
-
-  // Once the catalog is known, drop anything that is no longer on it.
-  useEffect(() => {
-    if (!ready) return;
-    setCart((prev) => {
-      const known = new Set(products.map((p) => p.id));
-      const next: Record<string, number> = {};
-      for (const [id, qty] of Object.entries(prev)) if (known.has(id)) next[id] = qty;
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
-    });
-  }, [products, ready]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(CART_KEY, JSON.stringify(cart));
-    } catch {
-      /* private mode: the order simply isn't remembered */
-    }
-  }, [cart]);
-
-  const setQty = useCallback((id: string, qty: number) => {
-    setCart((prev) => {
-      const next = { ...prev };
-      if (qty <= 0) delete next[id];
-      else next[id] = Math.min(qty, 99);
-      return next;
-    });
-  }, []);
-  const clear = useCallback(() => setCart({}), []);
-
-  const lines: CartLine[] = useMemo(
-    () => products.filter((p) => (cart[p.id] ?? 0) > 0).map((product) => ({ product, qty: cart[product.id] })),
-    [products, cart],
-  );
-  const count = lines.reduce((sum, line) => sum + line.qty, 0);
-  const total = lines.reduce((sum, line) => sum + line.qty * line.product.price, 0);
-
-  return { cart, setQty, clear, lines, count, total };
-}
-
 function useOutOfView(ref: RefObject<HTMLElement | null>) {
   const [out, setOut] = useState(false);
   useEffect(() => {
@@ -488,7 +333,7 @@ function useOutOfView(ref: RefObject<HTMLElement | null>) {
 
 // ---- Peças visuais -----------------------------------------------------------------------------
 
-function SectionHeading({ id, eyebrow, title, subtitle }: { id: string; eyebrow: string; title: ReactNode; subtitle: string }) {
+function SectionHeading({ id, eyebrow, title, subtitle }: { id: string; eyebrow: string; title: ReactNode; subtitle?: string | null }) {
   return (
     <div className="mx-auto max-w-3xl text-center">
       <span className="inline-flex items-center gap-2 rounded-full border border-[#145CFF]/40 bg-[#145CFF]/15 px-3.5 py-1.5 text-[11px] font-semibold tracking-[0.18em] text-[#8FB1FF] backdrop-blur-md">
@@ -501,39 +346,8 @@ function SectionHeading({ id, eyebrow, title, subtitle }: { id: string; eyebrow:
       >
         {title}
       </h2>
-      <p className="mx-auto mt-4 max-w-xl text-balance text-[15px] leading-relaxed text-white/65 sm:text-base">{subtitle}</p>
+      {subtitle && <p className="mx-auto mt-4 max-w-xl text-balance text-[15px] leading-relaxed text-white/65 sm:text-base">{subtitle}</p>}
     </div>
-  );
-}
-
-function Price({ value, className = '' }: { value: number; className?: string }) {
-  const [symbol, ...rest] = money(value).split(/\s/);
-  return (
-    <span className={`inline-flex items-baseline gap-1 font-black tracking-tight text-white ${className}`}>
-      <span className="text-[0.55em] font-bold text-[#8FB1FF]">{symbol}</span>
-      <span>{rest.join(' ')}</span>
-    </span>
-  );
-}
-
-function ProductImage({ product, padding = 'p-3 sm:p-4' }: { product: Product; padding?: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!product.image || failed) {
-    return (
-      <div className="absolute inset-0 flex items-center justify-center text-[#2563FF]/60" aria-hidden="true">
-        <GlassWater className="h-1/3 w-1/3" strokeWidth={1.25} />
-      </div>
-    );
-  }
-  return (
-    <img
-      src={product.image}
-      alt={product.name}
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
-      className={`absolute inset-0 h-full w-full object-contain drop-shadow-[0_14px_18px_rgba(0,0,0,0.45)] transition-transform duration-500 ease-out group-hover:scale-105 motion-reduce:transform-none ${padding}`}
-    />
   );
 }
 
@@ -542,14 +356,25 @@ function AddControl({
   name,
   onChange,
   compact = false,
+  soldOut = false,
 }: {
   qty: number;
   name: string;
   onChange: (qty: number) => void;
   compact?: boolean;
+  soldOut?: boolean;
 }) {
   const focusRing =
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#050505]';
+  if (soldOut) {
+    return (
+      <span
+        className={`inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm font-bold text-white/45 ${compact ? 'h-10 px-4' : 'h-11 w-full'}`}
+      >
+        Esgotado
+      </span>
+    );
+  }
   if (qty === 0) {
     return (
       <button
@@ -603,9 +428,9 @@ function ProductDetails({ product, qty, onChange }: { product: Product; qty: num
         <p className="mt-1 line-clamp-2 text-xs leading-snug text-white/55 sm:text-[13px]">{product.description}</p>
       )}
       <div className="mt-auto pt-3">
-        <Price value={product.price} className="text-xl sm:text-2xl" />
+        <ProductPrice product={product} className="text-xl sm:text-2xl" />
         <div className="mt-2.5">
-          <AddControl qty={qty} name={product.name} onChange={onChange} />
+          <AddControl qty={qty} name={product.name} onChange={onChange} soldOut={product.soldOut} />
         </div>
       </div>
     </div>
@@ -654,49 +479,153 @@ function SkeletonRow() {
   );
 }
 
+// "Aberto agora" / "Fechado · Abre amanhã às 09:00"
+function OpenStatus() {
+  const { store, isOpen } = useShop();
+  const next = isOpen ? '' : store.orders_paused ? 'Pedidos pausados' : nextOpening(store.opening_hours, store.timezone);
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${
+        isOpen ? 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/30' : 'bg-white/5 text-white/60 ring-white/15'
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]' : 'bg-white/40'}`} />
+      {isOpen ? 'Aberto agora' : `Fechado${next ? ` · ${next}` : ''}`}
+    </span>
+  );
+}
+
+// ---- Banners (cadastrados no painel) -----------------------------------------------------------
+
+function BannerCarousel({ banners }: { banners: Banner[] }) {
+  const [active, setActive] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const current = active < banners.length ? active : 0;
+
+  useEffect(() => {
+    if (paused || banners.length < 2) return;
+    const timer = window.setTimeout(() => setActive((i) => (i + 1) % banners.length), 6000);
+    return () => window.clearTimeout(timer);
+  }, [active, paused, banners.length]);
+
+  if (banners.length === 0) return null;
+  return (
+    <section
+      aria-label="Promoções"
+      aria-roledescription="carrossel"
+      onPointerEnter={(e) => e.pointerType === 'mouse' && setPaused(true)}
+      onPointerLeave={() => setPaused(false)}
+      className="relative mt-6 aspect-[4/3] overflow-hidden rounded-[1.75rem] border border-white/10 bg-gradient-to-br from-[#145CFF]/40 via-[#0B1230] to-[#050505] shadow-[0_24px_60px_-30px_rgba(20,92,255,0.8)] sm:aspect-[21/8]"
+    >
+      {banners.map((banner, i) => {
+        const isActive = i === current;
+        const image = banner.image_desktop_url ?? banner.image_mobile_url;
+        const hasText = Boolean(banner.title || banner.subtitle || banner.button_text);
+        const external = banner.link?.startsWith('https://');
+        const content = (
+          <>
+            {image && (
+              <picture>
+                {banner.image_mobile_url && <source media="(max-width: 639px)" srcSet={banner.image_mobile_url} />}
+                <img
+                  src={image}
+                  alt={hasText ? '' : (banner.title ?? 'Promoção')}
+                  loading={i === 0 ? 'eager' : 'lazy'}
+                  decoding="async"
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              </picture>
+            )}
+            {hasText && (
+              <div className="absolute inset-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/30 to-transparent p-5 sm:justify-center sm:bg-gradient-to-r sm:from-black/75 sm:via-black/35 sm:p-8">
+                {banner.title && <h2 className="max-w-md text-balance text-2xl font-black leading-tight text-white sm:text-3xl">{banner.title}</h2>}
+                {banner.subtitle && <p className="mt-1.5 max-w-sm text-balance text-sm text-white/80 sm:text-[15px]">{banner.subtitle}</p>}
+                {banner.button_text && banner.link && (
+                  <span className="mt-4 inline-flex w-max items-center gap-2 rounded-full bg-[#145CFF] px-5 py-2.5 text-sm font-bold text-white shadow-[0_10px_30px_-10px_rgba(20,92,255,0.95)] transition-colors group-hover:bg-[#2563FF]">
+                    {banner.button_text}
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        );
+        const layer = `group absolute inset-0 transition-opacity duration-700 ${isActive ? 'opacity-100' : 'pointer-events-none opacity-0'}`;
+        return banner.link ? (
+          <a
+            key={banner.id}
+            href={banner.link}
+            target={external ? '_blank' : undefined}
+            rel={external ? 'noopener noreferrer' : undefined}
+            aria-hidden={!isActive}
+            tabIndex={isActive ? 0 : -1}
+            className={`${layer} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white`}
+          >
+            {content}
+          </a>
+        ) : (
+          <div key={banner.id} aria-hidden={!isActive} className={layer}>
+            {content}
+          </div>
+        );
+      })}
+      {banners.length > 1 && (
+        <div className="absolute bottom-2 right-3 flex items-center">
+          {banners.map((banner, i) => (
+            <button
+              key={banner.id}
+              type="button"
+              onClick={() => setActive(i)}
+              aria-label={`Ver promoção ${i + 1} de ${banners.length}`}
+              aria-current={i === current}
+              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              <span
+                className={`block h-1.5 rounded-full transition-all duration-300 ${i === current ? 'w-5 bg-white' : 'w-1.5 bg-white/45 group-hover:bg-white/80'}`}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 // ---- Página Bebidas (/bebidas) -----------------------------------------------------------------
 
-const norm = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-const categoryId = (name: string) => `cat-${norm(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
+const categoryId = (name: string) => `cat-${normalizeText(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
 
 function ProductRow({ product, qty, onChange }: { product: Product; qty: number; onChange: (qty: number) => void }) {
   return (
     <li className="group relative flex gap-3 rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.02] p-3.5 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-[#2563FF]/50 hover:shadow-[0_22px_50px_-24px_rgba(37,99,255,0.75)] motion-reduce:transform-none sm:gap-5 sm:p-4">
       <div className="flex min-w-0 flex-1 flex-col">
-        <h3 className="text-[15px] font-bold leading-snug text-white sm:text-base">{product.name}</h3>
+        <h3 className={`text-[15px] font-bold leading-snug sm:text-base ${product.soldOut ? 'text-white/60' : 'text-white'}`}>{product.name}</h3>
         {product.description && (
           <p className="mt-1 line-clamp-3 text-xs leading-snug text-white/55 sm:text-[13px]">{product.description}</p>
         )}
         <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-3">
-          <Price value={product.price} className="text-xl sm:text-2xl" />
-          <AddControl qty={qty} name={product.name} onChange={onChange} compact />
+          <ProductPrice product={product} className={`text-xl sm:text-2xl ${product.soldOut ? 'opacity-60' : ''}`} />
+          <AddControl qty={qty} name={product.name} onChange={onChange} compact soldOut={product.soldOut} />
         </div>
       </div>
       <div className="relative h-24 w-24 shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] sm:h-32 sm:w-32">
         <ProductImage product={product} padding="p-1.5" />
+        {product.soldOut && <SoldOutBadge className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />}
       </div>
     </li>
   );
 }
 
-function BebidasPage({
-  ready,
-  products,
-  cart,
-  setQty,
-}: {
-  ready: boolean;
-  products: Product[];
-  cart: Record<string, number>;
-  setQty: (id: string, qty: number) => void;
-}) {
+function BebidasPage() {
+  const { ready, fresh, failed, refresh, products, cart, store, site, banners, zones, logo } = useShop();
+  const { cart: quantities, setQty } = cart;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
   const chipsRef = useRef<HTMLDivElement>(null);
 
-  const term = norm(query.trim());
+  const term = normalizeText(query.trim());
   const matches = useMemo(
-    () => (term ? products.filter((p) => norm(`${p.name} ${p.description ?? ''} ${p.category}`).includes(term)) : products),
+    () => (term ? products.filter((p) => normalizeText(`${p.name} ${p.description ?? ''} ${p.category}`).includes(term)) : products),
     [products, term],
   );
   const groups = useMemo(() => {
@@ -708,7 +637,10 @@ function BebidasPage({
     }
     return Array.from(byCategory.entries());
   }, [matches]);
-  const featured = useMemo(() => (term ? [] : products.filter((p) => p.featured).slice(0, 4)), [products, term]);
+  const featured = useMemo(
+    () => (term ? [] : products.filter((p) => p.featured && !p.soldOut).slice(0, site.featured_limit)),
+    [products, term, site.featured_limit],
+  );
   const activeCategory = groups.some(([name]) => name === active) ? active : (groups[0]?.[0] ?? '');
 
   // Highlight the chip of the category being read.
@@ -739,15 +671,23 @@ function BebidasPage({
     document.getElementById(categoryId(name))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const fee = zones.length
+    ? `Entrega a partir de ${money(Math.min(...zones.map((z) => z.fee)))}`
+    : store.delivery_fee > 0
+      ? `Entrega ${money(store.delivery_fee)}`
+      : 'Entrega grátis';
   const info = [
-    STORE.deliveryTime && { icon: <Clock className="h-4 w-4" aria-hidden="true" />, text: STORE.deliveryTime },
-    STORE.deliveryFee && { icon: <Motorbike className="h-4 w-4" aria-hidden="true" />, text: `Entrega ${STORE.deliveryFee}` },
+    store.delivery_time && { icon: <Clock className="h-4 w-4" aria-hidden="true" />, text: store.delivery_time },
+    store.delivery_enabled && { icon: <Motorbike className="h-4 w-4" aria-hidden="true" />, text: fee },
+    !store.delivery_enabled && store.pickup_enabled && { icon: <ShoppingBag className="h-4 w-4" aria-hidden="true" />, text: 'Retirada na loja' },
   ].filter(Boolean) as { icon: ReactNode; text: string }[];
+  const hours = openHoursSummary(store.opening_hours);
+  const loadFailed = failed && products.length === 0;
 
   return (
     <div className="relative min-h-[100dvh] overflow-x-clip bg-[#050505]">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 top-1/3 h-96 w-96 rounded-full bg-[#145CFF]/12 blur-3xl cc-glow" />
+        <div className="absolute -left-40 top-1/3 h-96 w-96 rounded-full bg-[#145CFF]/[0.12] blur-3xl cc-glow" />
         <div className="absolute -right-40 top-2/3 h-96 w-96 rounded-full bg-[#2563FF]/10 blur-3xl cc-glow [animation-delay:2s]" />
       </div>
 
@@ -756,7 +696,7 @@ function BebidasPage({
           <div aria-hidden="true" className="pointer-events-none absolute inset-0">
             <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/30" />
             <div className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/20" />
-            <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/12" />
+            <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/[0.12]" />
             <div className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2563FF]/40 blur-3xl" />
             <IceCube className="left-[14%] top-[34%] h-10 w-10 opacity-60" delay="-2s" />
             <IceCube className="right-[13%] top-[24%] h-12 w-12 opacity-55" delay="-4s" />
@@ -773,41 +713,47 @@ function BebidasPage({
 
         <div className="px-4 sm:px-6">
           <img
-            src="/logo.png"
-            alt="COPO CHEIO – Disk Bebidas"
+            src={logo}
+            alt={`${store.store_name.toUpperCase()} – ${store.tagline}`}
             width={96}
             height={96}
             className="relative -mt-12 h-24 w-24 rounded-full object-contain shadow-[0_0_50px_-4px_rgba(20,92,255,0.8)] ring-4 ring-[#050505]"
           />
           <h1 className="mt-4 text-3xl font-black tracking-tight text-white">
-            COPO <span className="text-[#2563FF]">CHEIO</span>
+            <BrandName name={store.store_name} />
           </h1>
-          <p className="mt-0.5 text-sm font-medium text-white/60">Disk Bebidas</p>
-          {(info.length > 0 || STORE.hours) && (
-            <div className="mt-3 space-y-1.5">
-              {info.length > 0 && (
-                <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-white/80">
-                  {info.map((item) => (
-                    <li key={item.text} className="flex items-center gap-1.5">
-                      <span className="text-[#2563FF]">{item.icon}</span>
-                      {item.text}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {STORE.hours && <p className="text-xs text-white/50">{STORE.hours}</p>}
+          {store.tagline && <p className="mt-0.5 text-sm font-medium text-white/60">{store.tagline}</p>}
+          <div className="mt-3 space-y-1.5">
+            {info.length > 0 && (
+              <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-white/80">
+                {info.map((item) => (
+                  <li key={item.text} className="flex items-center gap-1.5">
+                    <span className="text-[#2563FF]">{item.icon}</span>
+                    {item.text}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              {fresh && <OpenStatus />}
+              {hours && <p className="text-xs text-white/50">{hours}</p>}
             </div>
-          )}
+          </div>
 
           <div className="mt-8">
             <h2 className="text-balance text-2xl font-black leading-tight tracking-tight text-white sm:text-3xl">
-              Bebidas para deixar seu momento{' '}
-              <span className="whitespace-nowrap text-[#145CFF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]">ainda melhor</span>
+              <Highlight
+                text={site.bebidas_title}
+                highlight={site.bebidas_highlight}
+                className="whitespace-nowrap text-[#145CFF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]"
+              />
             </h2>
-            <p className="mt-2 text-balance text-sm leading-relaxed text-white/65 sm:text-[15px]">
-              Escolha sua bebida favorita. A gente entrega gelada e rapidinho na sua casa.
-            </p>
+            {site.bebidas_subtitle && (
+              <p className="mt-2 text-balance text-sm leading-relaxed text-white/65 sm:text-[15px]">{site.bebidas_subtitle}</p>
+            )}
           </div>
+
+          <BannerCarousel banners={banners} />
 
           {ready && products.length > 0 && (
             <label className="relative mt-6 block">
@@ -855,7 +801,7 @@ function BebidasPage({
         )}
 
         <div className="px-4 pb-32 pt-2 sm:px-6">
-          {!ready && (
+          {!ready && !loadFailed && (
             <ul className="mt-6 space-y-3" aria-busy="true">
               {Array.from({ length: 5 }, (_, i) => (
                 <SkeletonRow key={i} />
@@ -863,7 +809,29 @@ function BebidasPage({
             </ul>
           )}
 
-          {ready && products.length === 0 && (
+          {loadFailed && (
+            <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12" role="alert">
+              <h3 className="text-xl font-black text-white">Não conseguimos carregar o cardápio</h3>
+              <p className="mx-auto mt-2 max-w-md text-white/65">Verifique sua conexão e tente de novo, ou fale com a gente pelo WhatsApp.</p>
+              <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+                <button type="button" onClick={() => void refresh()} className={GHOST_BUTTON}>
+                  <RefreshCw className="h-5 w-5" aria-hidden="true" />
+                  Tentar de novo
+                </button>
+                <a
+                  href={storeWhatsappUrl(store, `Olá, ${store.store_name}! Vim pelo site e gostaria de fazer um pedido.`)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={WHATSAPP_BUTTON}
+                >
+                  <WhatsAppIcon />
+                  Chamar no WhatsApp
+                </a>
+              </div>
+            </div>
+          )}
+
+          {ready && !loadFailed && products.length === 0 && (
             <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12">
               <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#145CFF]/15 text-[#2563FF] shadow-[0_0_40px_-8px_rgba(20,92,255,0.8)] ring-1 ring-[#145CFF]/40">
                 <GlassWater className="h-8 w-8" aria-hidden="true" />
@@ -873,7 +841,7 @@ function BebidasPage({
                 Em breve as bebidas aparecem por aqui. Enquanto isso, é só chamar no WhatsApp que a gente atende você.
               </p>
               <a
-                href={whatsappUrl('Olá, Copo Cheio! Vim pelo site e gostaria de fazer um pedido.')}
+                href={storeWhatsappUrl(store, `Olá, ${store.store_name}! Vim pelo site e gostaria de fazer um pedido.`)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={`${WHATSAPP_BUTTON} mt-7`}
@@ -894,14 +862,14 @@ function BebidasPage({
             <section aria-labelledby="favoritos" className="pt-8">
               <h2 id="favoritos" className="flex items-center gap-2 text-xl font-black tracking-tight text-white">
                 <Flame className="h-5 w-5 text-[#2563FF]" aria-hidden="true" />
-                Os favoritos da galera
+                {site.featured_title}
               </h2>
               <ul className="-mx-4 -mb-6 mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-10 [scrollbar-width:none] sm:-mx-6 sm:px-6 [&::-webkit-scrollbar]:hidden">
                 {featured.map((product) => (
                   <FeaturedCard
                     key={product.id}
                     product={product}
-                    qty={cart[product.id] ?? 0}
+                    qty={quantities[product.id] ?? 0}
                     onChange={(qty) => setQty(product.id, qty)}
                     className="w-[62%] shrink-0 snap-start sm:w-[44%]"
                   />
@@ -921,7 +889,7 @@ function BebidasPage({
                   <ProductRow
                     key={product.id}
                     product={product}
-                    qty={cart[product.id] ?? 0}
+                    qty={quantities[product.id] ?? 0}
                     onChange={(qty) => setQty(product.id, qty)}
                   />
                 ))}
@@ -934,48 +902,6 @@ function BebidasPage({
       <Footer />
     </div>
   );
-}
-
-// ---- Rotas: "/" (Home) e "/bebidas" ------------------------------------------------------------
-
-type Route = 'home' | 'bebidas';
-const routeOf = (pathname: string): Route => (pathname.replace(/\/+$/, '') === '/bebidas' ? 'bebidas' : 'home');
-const NAV_HREF: Record<string, string> = { Início: '/', Bebidas: '/bebidas', Contato: '/#contato' };
-
-// Two pages, no router library: internal links ("/", "/bebidas", "/#contato") swap the page without reloading.
-function useRoute(): Route {
-  const [path, setPath] = useState(() => window.location.pathname);
-
-  useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname);
-    const onClick = (e: globalThis.MouseEvent) => {
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const anchor = (e.target as Element | null)?.closest?.('a');
-      if (!anchor || anchor.target || anchor.hasAttribute('download')) return;
-      const url = new URL(anchor.href, window.location.href);
-      if (url.origin !== window.location.origin) return;
-      if (url.pathname === window.location.pathname) {
-        // Same page: "#section" links scroll natively; a plain link to this page goes to its top.
-        if (!url.hash && url.search === window.location.search) {
-          e.preventDefault();
-          window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-        return;
-      }
-      if (url.pathname.replace(/\/+$/, '') !== '' && routeOf(url.pathname) !== 'bebidas') return;
-      e.preventDefault();
-      window.history.pushState(null, '', url.pathname + url.search + url.hash);
-      setPath(url.pathname);
-    };
-    window.addEventListener('popstate', onPopState);
-    document.addEventListener('click', onClick);
-    return () => {
-      window.removeEventListener('popstate', onPopState);
-      document.removeEventListener('click', onClick);
-    };
-  }, []);
-
-  return routeOf(path);
 }
 
 // ---- Seção Contato -----------------------------------------------------------------------------
@@ -995,8 +921,13 @@ function ContactRow({ icon, title, children }: { icon: ReactNode; title: string;
 }
 
 function ContatoSection() {
-  const hello = 'Olá, Copo Cheio! Vim pelo site e gostaria de fazer um pedido.';
-  const directions = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(STORE.address)}`;
+  const { store, site, logo } = useShop();
+  const hello = `Olá, ${store.store_name}! Vim pelo site e gostaria de fazer um pedido.`;
+  const address = fullAddress(store);
+  const handle = instagramHandle(store);
+  const instagramUrl = `https://instagram.com/${handle}`;
+  const hours = hoursLines(store.opening_hours);
+  const directions = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
   const linkClass = 'font-semibold text-[#8FB1FF] underline-offset-4 transition-colors hover:text-white hover:underline';
 
   return (
@@ -1012,47 +943,50 @@ function ContatoSection() {
           id="contato-titulo"
           eyebrow="CONTATO"
           title={
-            <>
-              Fale com a{' '}
-              <span className="whitespace-nowrap text-[#145CFF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]">Copo Cheio</span>
-            </>
+            <Highlight
+              text={site.contato_title}
+              highlight={site.contato_highlight}
+              className="whitespace-nowrap text-[#145CFF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]"
+            />
           }
-          subtitle="Precisa de ajuda com seu pedido? Estamos prontos para atender você."
+          subtitle={site.contato_subtitle}
         />
 
         <div className="mt-12 grid gap-6 lg:mt-16 lg:grid-cols-2 lg:gap-8">
           <div className="flex flex-col gap-4 lg:justify-center">
             <ContactRow icon={<WhatsAppIcon className="h-6 w-6" />} title="WhatsApp">
               Faça seu pedido pelo WhatsApp.{' '}
-              <a href={whatsappUrl(hello)} target="_blank" rel="noopener noreferrer" className={linkClass}>
+              <a href={storeWhatsappUrl(store, hello)} target="_blank" rel="noopener noreferrer" className={linkClass}>
                 Chamar agora
               </a>
             </ContactRow>
-            <ContactRow icon={<InstagramIcon className="h-6 w-6" />} title="Instagram">
-              Acompanhe a Copo Cheio.{' '}
-              <a href={INSTAGRAM_URL} target="_blank" rel="noopener noreferrer" className={linkClass}>
-                @{INSTAGRAM_HANDLE}
-              </a>
-            </ContactRow>
-            {STORE.hours && (
-              <ContactRow icon={<Clock className="h-6 w-6" aria-hidden="true" />} title="Horário de atendimento">
-                <span className="whitespace-pre-line">{STORE.hours}</span>
+            {handle && (
+              <ContactRow icon={<InstagramIcon className="h-6 w-6" />} title="Instagram">
+                Acompanhe a {store.store_name}.{' '}
+                <a href={instagramUrl} target="_blank" rel="noopener noreferrer" className={linkClass}>
+                  @{handle}
+                </a>
               </ContactRow>
             )}
-            {STORE.address && (
+            {hours.length > 0 && (
+              <ContactRow icon={<Clock className="h-6 w-6" aria-hidden="true" />} title="Horário de atendimento">
+                <span className="whitespace-pre-line">{hours.join('\n')}</span>
+              </ContactRow>
+            )}
+            {address && (
               <ContactRow icon={<MapPin className="h-6 w-6" aria-hidden="true" />} title="Endereço">
-                {STORE.address}
+                {address}
               </ContactRow>
             )}
           </div>
 
           <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-gradient-to-br from-[#0C1B4D]/80 via-[#08112F]/80 to-[#060913] p-5 shadow-[0_30px_90px_-40px_rgba(20,92,255,0.8)] sm:p-7">
             <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-[#145CFF]/25 blur-3xl" />
-            {STORE.address ? (
+            {address ? (
               <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-white/10">
                 <iframe
-                  title="Mapa com a localização da Copo Cheio"
-                  src={`https://www.google.com/maps?q=${encodeURIComponent(STORE.address)}&output=embed`}
+                  title={`Mapa com a localização da ${store.store_name}`}
+                  src={`https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed`}
                   loading="lazy"
                   referrerPolicy="no-referrer-when-downgrade"
                   className="h-full w-full"
@@ -1063,7 +997,7 @@ function ContatoSection() {
                 <IceCube className="left-[9%] top-[12%] h-9 w-9 opacity-60" delay="-2s" />
                 <IceCube className="right-[9%] top-[16%] h-11 w-11 opacity-55" delay="-4s" />
                 <img
-                  src="/logo.png"
+                  src={logo}
                   alt=""
                   width={128}
                   height={128}
@@ -1078,14 +1012,14 @@ function ContatoSection() {
             )}
 
             <div className="relative mt-5 flex flex-col gap-3 sm:flex-row">
-              {STORE.address && (
+              {address && (
                 <a href={directions} target="_blank" rel="noopener noreferrer" className={`${GHOST_BUTTON} sm:flex-1`}>
                   <Navigation className="h-5 w-5" aria-hidden="true" />
                   Como chegar
                 </a>
               )}
               <a
-                href={whatsappUrl(hello)}
+                href={storeWhatsappUrl(store, hello)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={`${WHATSAPP_BUTTON} sm:flex-1`}
@@ -1095,24 +1029,26 @@ function ContatoSection() {
               </a>
             </div>
 
-            <a
-              href={INSTAGRAM_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group relative mt-4 flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 transition-all duration-200 hover:border-[#2563FF]/50 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-            >
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#145CFF] text-white shadow-[0_0_20px_rgba(20,92,255,0.6)]">
-                <InstagramIcon className="h-5 w-5" />
-              </span>
-              <span className="flex flex-col leading-tight">
-                <span className="text-sm font-bold text-white">Siga a Copo Cheio</span>
-                <span className="text-sm text-[#8FB1FF]">@{INSTAGRAM_HANDLE}</span>
-              </span>
-              <ArrowRight
-                className="ml-auto h-5 w-5 text-white/50 transition-all duration-200 group-hover:translate-x-1 group-hover:text-white"
-                aria-hidden="true"
-              />
-            </a>
+            {handle && (
+              <a
+                href={instagramUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group relative mt-4 flex items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 transition-all duration-200 hover:border-[#2563FF]/50 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#145CFF] text-white shadow-[0_0_20px_rgba(20,92,255,0.6)]">
+                  <InstagramIcon className="h-5 w-5" />
+                </span>
+                <span className="flex flex-col leading-tight">
+                  <span className="text-sm font-bold text-white">Siga a {store.store_name}</span>
+                  <span className="text-sm text-[#8FB1FF]">@{handle}</span>
+                </span>
+                <ArrowRight
+                  className="ml-auto h-5 w-5 text-white/50 transition-all duration-200 group-hover:translate-x-1 group-hover:text-white"
+                  aria-hidden="true"
+                />
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -1120,9 +1056,10 @@ function ContatoSection() {
   );
 }
 
-// ---- Chamada final e rodapé --------------------------------------------------------------------
+// ---- Chamada final -----------------------------------------------------------------------------
 
 function FinalCta({ onOrder }: { onOrder: (e: MouseEvent<HTMLAnchorElement>) => void }) {
+  const { site } = useShop();
   return (
     <section aria-labelledby="deu-sede" className="relative overflow-hidden bg-[#050505] px-5 pb-20 pt-4 sm:px-8 sm:pb-28 lg:px-12">
       <div className="relative mx-auto max-w-5xl overflow-hidden rounded-[2.25rem] border border-[#145CFF]/35 bg-gradient-to-br from-[#145CFF]/35 via-[#0B1230] to-[#050505] px-6 py-14 text-center shadow-[0_40px_120px_-50px_rgba(20,92,255,0.9)] sm:px-12 sm:py-20">
@@ -1134,18 +1071,20 @@ function FinalCta({ onOrder }: { onOrder: (e: MouseEvent<HTMLAnchorElement>) => 
           <IceCube className="right-[24%] top-[10%] hidden h-8 w-8 opacity-40 md:block" delay="-5s" />
         </div>
         <div className="relative">
-          <h2 id="deu-sede" className="text-5xl font-black tracking-tight text-white sm:text-6xl lg:text-7xl">
-            Deu <span className="text-[#2563FF] [text-shadow:0_0_36px_rgba(37,99,255,0.8)]">sede?</span>
+          <h2 id="deu-sede" className="text-balance text-5xl font-black tracking-tight text-white sm:text-6xl lg:text-7xl">
+            <Highlight
+              text={site.cta_title}
+              highlight={site.cta_highlight}
+              className="text-[#2563FF] [text-shadow:0_0_36px_rgba(37,99,255,0.8)]"
+            />
           </h2>
-          <p className="mx-auto mt-4 max-w-md text-base text-white/75 sm:text-lg">
-            Peça agora e receba sua bebida bem gelada.
-          </p>
+          {site.cta_subtitle && <p className="mx-auto mt-4 max-w-md text-base text-white/75 sm:text-lg">{site.cta_subtitle}</p>}
           <a
             href={ORDER_HREF}
             onClick={onOrder}
             className={`${BLUE_BUTTON} group mt-8 px-9 py-4 text-base tracking-wide`}
           >
-            PEDIR AGORA
+            {site.cta_button}
             <ArrowRight className="h-5 w-5 transition-transform duration-200 group-hover:translate-x-1" aria-hidden="true" />
           </a>
         </div>
@@ -1154,46 +1093,10 @@ function FinalCta({ onOrder }: { onOrder: (e: MouseEvent<HTMLAnchorElement>) => 
   );
 }
 
-function Footer() {
-  return (
-    <footer className="border-t border-white/10 bg-[#050505] py-10">
-      <div className="mx-auto flex max-w-7xl flex-col items-center gap-6 px-5 text-center sm:px-8 md:flex-row md:justify-between md:text-left lg:px-12">
-        <a href="#inicio" className="flex items-center gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
-          <img src="/logo.png" alt="" width={44} height={44} loading="lazy" className="h-11 w-11 rounded-full object-contain ring-1 ring-white/15" />
-          <span className="flex flex-col items-start leading-none">
-            <span className="text-lg font-black tracking-tight text-white">
-              COPO <span className="text-[#2563FF]">CHEIO</span>
-            </span>
-            <span className="mt-1 text-[10px] font-semibold tracking-[0.2em] text-white/50">DISK BEBIDAS</span>
-          </span>
-        </a>
-        <nav aria-label="Rodapé" className="flex items-center gap-6 text-sm font-medium text-white/65">
-          {NAV_LINKS.map((link) => (
-            <a key={link} href={NAV_HREF[link]} className="transition-colors hover:text-white">
-              {link}
-            </a>
-          ))}
-          <a
-            href={INSTAGRAM_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Instagram @${INSTAGRAM_HANDLE}`}
-            className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-white/75 transition-all hover:border-white/40 hover:text-white"
-          >
-            <InstagramIcon className="h-4 w-4" />
-          </a>
-        </nav>
-      </div>
-      <p className="mx-auto mt-8 max-w-7xl px-5 text-center text-xs text-white/40 sm:px-8 md:text-left lg:px-12">
-        © {new Date().getFullYear()} Copo Cheio Disk Bebidas. Todos os direitos reservados.
-      </p>
-    </footer>
-  );
-}
-
 // ---- Menu fixo (aparece depois do Hero), barra e gaveta do pedido ------------------------------
 
 function StickyNav({ visible, count, onOrder }: { visible: boolean; count: number; onOrder: (e: MouseEvent<HTMLAnchorElement>) => void }) {
+  const { store, logo } = useShop();
   return (
     <header
       aria-hidden={!visible}
@@ -1206,10 +1109,10 @@ function StickyNav({ visible, count, onOrder }: { visible: boolean; count: numbe
         aria-label="Navegação"
         className="flex w-full max-w-4xl items-center justify-between gap-3 rounded-full border border-white/15 bg-[#080A0F]/75 py-2 pl-2.5 pr-2 shadow-[0_10px_40px_-14px_rgba(20,92,255,0.6)] backdrop-blur-xl"
       >
-        <a href="#inicio" aria-label={`${BRAND_NAME} – início`} className="flex items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
-          <img src="/logo.png" alt="" width={36} height={36} className="h-9 w-9 rounded-full object-contain ring-1 ring-white/15" />
+        <a href="#inicio" aria-label={`${store.store_name.toUpperCase()} – início`} className="flex items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
+          <img src={logo} alt="" width={36} height={36} className="h-9 w-9 rounded-full object-contain ring-1 ring-white/15" />
           <span className="text-[15px] font-black tracking-tight text-white">
-            COPO <span className="text-[#2563FF]">CHEIO</span>
+            <BrandName name={store.store_name} />
           </span>
         </a>
         <div className="hidden items-center gap-7 md:flex">
@@ -1268,23 +1171,9 @@ function OrderBar({ show, count, total, onOpen }: { show: boolean; count: number
   );
 }
 
-function OrderDrawer({
-  open,
-  onClose,
-  lines,
-  total,
-  setQty,
-  onClear,
-}: {
-  open: boolean;
-  onClose: () => void;
-  lines: CartLine[];
-  total: number;
-  setQty: (id: string, qty: number) => void;
-  onClear: () => void;
-}) {
-  const [address, setAddress] = useState('');
-  const [notes, setNotes] = useState('');
+function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { cart } = useShop();
+  const { lines, total, setQty, clear, unavailable } = cart;
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -1303,19 +1192,6 @@ function OrderDrawer({
       previous?.focus?.();
     };
   }, [open, onClose]);
-
-  const message = [
-    'Olá, Copo Cheio! Quero fazer um pedido:',
-    '',
-    ...lines.map(({ product, qty }) => `${qty}x ${product.name} — ${money(product.price * qty)}`),
-    '',
-    `Total: ${money(total)}`,
-    ...(address.trim() ? ['', `Endereço de entrega: ${address.trim()}`] : []),
-    ...(notes.trim() ? [`Observações: ${notes.trim()}`] : []),
-  ].join('\n');
-
-  const field =
-    'w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white placeholder:text-white/35 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40';
 
   return (
     <div
@@ -1363,75 +1239,41 @@ function OrderDrawer({
         ) : (
           <>
             <ul className="flex-1 space-y-3 overflow-y-auto px-5 py-2 sm:px-6">
-              {lines.map(({ product, qty }) => (
-                <li key={product.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2.5">
-                  <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.4),transparent_75%)]">
-                    <ProductImage product={product} padding="p-1" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-sm font-bold leading-tight text-white">{product.name}</p>
-                    <p className="mt-1 text-sm font-semibold text-[#8FB1FF]">{money(product.price * qty)}</p>
-                  </div>
-                  <div className="flex items-center rounded-full border border-white/15 bg-black/20">
-                    <button
-                      type="button"
-                      onClick={() => setQty(product.id, qty - 1)}
-                      aria-label={qty === 1 ? `Remover ${product.name}` : `Diminuir ${product.name}`}
-                      className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      <Minus className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                    <span className="w-6 text-center text-sm font-bold tabular-nums text-white" aria-live="polite">
-                      {qty}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setQty(product.id, qty + 1)}
-                      aria-label={`Aumentar ${product.name}`}
-                      className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                    >
-                      <Plus className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                  </div>
-                </li>
+              {lines.map((line) => (
+                <CartLineItem key={line.product.id} line={line} setQty={setQty} />
               ))}
             </ul>
 
             <div className="space-y-3 border-t border-white/10 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 sm:px-6">
-              <input
-                type="text"
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Endereço de entrega (opcional)"
-                aria-label="Endereço de entrega"
-                autoComplete="street-address"
-                className={field}
-              />
-              <input
-                type="text"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Observações (opcional)"
-                aria-label="Observações do pedido"
-                className={field}
-              />
+              {unavailable.length > 0 && (
+                <p className="flex items-start gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-100" role="alert">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  Alguns itens esgotaram. Remova-os para continuar.
+                </p>
+              )}
               <div className="flex items-end justify-between pt-1">
                 <button
                   type="button"
-                  onClick={onClear}
+                  onClick={clear}
                   className="text-sm font-medium text-white/50 underline-offset-4 hover:text-white hover:underline"
                 >
                   Limpar pedido
                 </button>
                 <div className="text-right">
-                  <span className="block text-xs text-white/50">Total</span>
+                  <span className="block text-xs text-white/50">Subtotal</span>
                   <Price value={total} className="text-3xl" />
                 </div>
               </div>
-              <a href={whatsappUrl(message)} target="_blank" rel="noopener noreferrer" className={`${WHATSAPP_BUTTON} w-full py-4`}>
-                <WhatsAppIcon className="h-6 w-6" />
-                Enviar pedido pelo WhatsApp
-              </a>
+              {unavailable.length > 0 ? (
+                <span aria-disabled="true" className={`${BLUE_BUTTON} w-full cursor-not-allowed py-4 opacity-50`}>
+                  Finalizar pedido
+                </span>
+              ) : (
+                <a href="/checkout" onClick={onClose} className={`${BLUE_BUTTON} w-full py-4`}>
+                  Finalizar pedido
+                  <ArrowRight className="h-5 w-5" aria-hidden="true" />
+                </a>
+              )}
             </div>
           </>
         )}
@@ -1444,6 +1286,12 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const { handMask, cupBox } = useVideoFraming(rootRef, videoRef);
   const overHand = cupBox !== null;
+  const { store, hero, logo } = useShop();
+  const brand = `${store.store_name.toUpperCase()} – ${store.tagline}`;
+  const drinks = useMemo(
+    () => (hero.images.length ? hero.images.map((src) => ({ src, alt: `Bebida em destaque – ${store.store_name}` })) : DRINKS),
+    [hero.images, store.store_name],
+  );
 
   return (
     <div ref={rootRef} id="inicio" className="cc-screen relative overflow-hidden bg-black">
@@ -1491,11 +1339,11 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
         >
           <a
             href="#inicio"
-            aria-label={`${BRAND_NAME} – Disk Bebidas, página inicial`}
+            aria-label={`${brand}, página inicial`}
             className="flex items-center gap-2.5 sm:gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF] focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           >
             <img
-              src="/logo.png"
+              src={logo}
               alt=""
               width={48}
               height={48}
@@ -1503,11 +1351,13 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
             />
             <span className="flex flex-col items-start">
               <span className="whitespace-nowrap text-[15px] font-black leading-none tracking-tight text-white sm:text-xl">
-                COPO <span className="text-[#2563FF]">CHEIO</span>
+                <BrandName name={store.store_name} />
               </span>
-              <span className="mt-1 rounded bg-[#145CFF] px-1.5 py-0.5 text-[8px] font-bold leading-none tracking-[0.22em] text-white sm:text-[9px]">
-                DISK BEBIDAS
-              </span>
+              {store.tagline && (
+                <span className="mt-1 rounded bg-[#145CFF] px-1.5 py-0.5 text-[8px] font-bold leading-none tracking-[0.22em] text-white sm:text-[9px]">
+                  {store.tagline.toUpperCase()}
+                </span>
+              )}
             </span>
           </a>
 
@@ -1580,7 +1430,7 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
               </>
             )}
 
-            <DrinkShowcase />
+            <DrinkShowcase drinks={drinks} />
 
             <InfoChip
               className={overHand ? 'left-[82%] top-[30%]' : 'left-[-6%] top-[36%]'}
@@ -1605,55 +1455,61 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
         >
           <div className="max-w-xl">
             <img
-              src="/logo.png"
-              alt={`${BRAND_NAME} – Disk Bebidas`}
+              src={logo}
+              alt={brand}
               width={112}
               height={112}
               className="mb-6 hidden h-24 w-24 rounded-full object-contain ring-1 ring-[#145CFF]/40 shadow-[0_0_50px_-4px_rgba(20,92,255,0.65)] sm:block lg:h-28 lg:w-28 [@media(max-height:700px)]:!hidden"
             />
 
-            <div className="inline-flex items-center gap-2 bg-[#145CFF]/90 border border-blue-300/30 rounded-full px-3.5 py-2 backdrop-blur-md shadow-[0_0_24px_rgba(20,92,255,0.45)]">
-              <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70 motion-reduce:hidden" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#CFE0FF] shadow-[0_0_10px_2px_rgba(207,224,255,0.9)]" />
-              </span>
-              <span className="text-[11px] sm:text-[12px] font-semibold tracking-wide text-white">
-                GELADA • RÁPIDA • NA SUA CASA
-              </span>
-            </div>
+            {hero.show_badge && hero.badge_text && (
+              <div className="inline-flex items-center gap-2 bg-[#145CFF]/90 border border-blue-300/30 rounded-full px-3.5 py-2 backdrop-blur-md shadow-[0_0_24px_rgba(20,92,255,0.45)]">
+                <span className="relative flex h-2 w-2" aria-hidden="true">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white/70 motion-reduce:hidden" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-[#CFE0FF] shadow-[0_0_10px_2px_rgba(207,224,255,0.9)]" />
+                </span>
+                <span className="text-[11px] sm:text-[12px] font-semibold tracking-wide text-white">
+                  {hero.badge_text}
+                </span>
+              </div>
+            )}
 
             <h1 className="cc-h1 mt-4 sm:mt-5 lg:max-w-[26rem] text-4xl sm:text-5xl lg:text-6xl [@media(max-height:700px)]:lg:!text-[3rem] leading-[0.95] font-black text-white tracking-tight [text-shadow:0_4px_30px_rgba(0,0,0,0.45)]">
-              Sua{' '}
-              <span className="text-[#145CFF] [text-shadow:0_0_24px_rgba(20,92,255,0.65),0_0_60px_rgba(20,92,255,0.35)]">
-                bebida gelada
-              </span>{' '}
-              chega até você.
+              <Highlight
+                text={hero.title}
+                highlight={hero.title_highlight}
+                className="text-[#145CFF] [text-shadow:0_0_24px_rgba(20,92,255,0.65),0_0_60px_rgba(20,92,255,0.35)]"
+              />
             </h1>
 
-            <p className="cc-lead mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md lg:max-w-sm">
-              Bebidas bem geladas, variedade e rapidez para deixar qualquer momento muito melhor.
-            </p>
+            {hero.subtitle && (
+              <p className="cc-lead mt-4 sm:mt-5 text-[14px] sm:text-[16px] text-white/70 font-normal leading-relaxed max-w-md lg:max-w-sm">
+                {hero.subtitle}
+              </p>
+            )}
 
             <div className="cc-cta mt-6 sm:mt-7 flex flex-col gap-3 sm:flex-row">
               <a
                 href={ORDER_HREF}
-                aria-label="Pedir agora pelo delivery"
+                aria-label={`${hero.primary_button_text} pelo delivery`}
                 className="group inline-flex whitespace-nowrap items-center justify-center gap-2 text-[13px] sm:text-[14px] font-bold text-white bg-[#145CFF] rounded-full px-6 py-3 hover:bg-[#0B4FE0] hover:scale-[1.03] transition-all duration-200 shadow-[0_14px_36px_-12px_rgba(20,92,255,0.95)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
               >
-                Pedir agora
+                {hero.primary_button_text}
                 <ArrowRight
                   className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-1"
                   aria-hidden="true"
                 />
               </a>
-              <a
-                href="/bebidas"
-                aria-label="Ver bebidas disponíveis"
-                className="inline-flex whitespace-nowrap items-center justify-center gap-2 text-[13px] sm:text-[14px] font-semibold text-white border border-white/30 bg-white/5 backdrop-blur-md rounded-full px-6 py-3 hover:bg-white/10 hover:border-white/50 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
-              >
-                <GlassWater className="h-4 w-4 text-[#2563FF]" aria-hidden="true" />
-                Ver bebidas
-              </a>
+              {hero.show_secondary_button && (
+                <a
+                  href="/bebidas"
+                  aria-label={`${hero.secondary_button_text} disponíveis`}
+                  className="inline-flex whitespace-nowrap items-center justify-center gap-2 text-[13px] sm:text-[14px] font-semibold text-white border border-white/30 bg-white/5 backdrop-blur-md rounded-full px-6 py-3 hover:bg-white/10 hover:border-white/50 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+                >
+                  <GlassWater className="h-4 w-4 text-[#2563FF]" aria-hidden="true" />
+                  {hero.secondary_button_text}
+                </a>
+              )}
             </div>
           </div>
         </main>
@@ -1676,13 +1532,62 @@ function HomePage({ count, onOrder }: { count: number; onOrder: (e: MouseEvent<H
   );
 }
 
-export default function App() {
-  const route = useRoute();
-  const { ready, products } = useProducts();
-  const { cart, setQty, clear, lines, count, total } = useCart(products, ready);
+// ---- SEO: título, descrição, imagem de compartilhamento e favicon vindos do painel -------------
+
+function setMeta(attribute: 'name' | 'property', key: string, content: string | null | undefined) {
+  let tag = document.head.querySelector<HTMLMetaElement>(`meta[${attribute}="${key}"]`);
+  if (!content) {
+    tag?.remove();
+    return;
+  }
+  if (!tag) {
+    tag = document.createElement('meta');
+    tag.setAttribute(attribute, key);
+    document.head.appendChild(tag);
+  }
+  tag.content = content;
+}
+
+function useSeo(page: string) {
+  const { site, logo, fresh } = useShop();
+  useEffect(() => {
+    document.title = page ? `${page} – ${site.seo_title}` : site.seo_title;
+  }, [page, site.seo_title]);
+  useEffect(() => {
+    if (!fresh) return;
+    setMeta('name', 'description', site.seo_description);
+    setMeta('property', 'og:title', site.seo_title);
+    setMeta('property', 'og:description', site.seo_description);
+    setMeta('property', 'og:image', site.og_image_url || new URL(logo, window.location.origin).href);
+    setMeta('property', 'og:type', 'website');
+    const icon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (icon) icon.href = site.favicon_url || logo;
+  }, [fresh, site.seo_description, site.seo_title, site.og_image_url, site.favicon_url, logo]);
+}
+
+// ---- Site público ------------------------------------------------------------------------------
+
+type Page = { name: 'home' } | { name: 'bebidas' } | { name: 'checkout' } | { name: 'pedido'; token: string };
+
+function pageOf(pathname: string): Page {
+  if (pathname === '/bebidas') return { name: 'bebidas' };
+  if (pathname === '/checkout') return { name: 'checkout' };
+  const order = /^\/pedido\/([0-9a-f-]{36})$/i.exec(pathname);
+  if (order) return { name: 'pedido', token: order[1].toLowerCase() };
+  return { name: 'home' };
+}
+
+const PAGE_TITLE: Record<Page['name'], string> = { home: '', bebidas: 'Bebidas', checkout: 'Finalizar pedido', pedido: 'Seu pedido' };
+
+function PublicSite({ pathname }: { pathname: string }) {
+  const page = pageOf(pathname);
+  const { cart } = useShop();
+  const { count, total } = cart;
   const [orderOpen, setOrderOpen] = useState(false);
   const openOrder = useCallback(() => setOrderOpen(true), []);
   const closeOrder = useCallback(() => setOrderOpen(false), []);
+  useSeo(PAGE_TITLE[page.name]);
+
   // "Pedir agora": with items in the order it opens the order; otherwise the link goes to Bebidas.
   const startOrder = (e: MouseEvent<HTMLAnchorElement>) => {
     if (count > 0) {
@@ -1691,14 +1596,16 @@ export default function App() {
     }
   };
 
-  // New page: scroll to its #section (e.g. "/#contato") or to the top, and set the tab title.
+  // New page: scroll to its #section (e.g. "/#contato") or to the top.
   useEffect(() => {
     const id = decodeURIComponent(window.location.hash.slice(1));
     const target = id ? document.getElementById(id) : null;
     if (target) target.scrollIntoView({ behavior: 'instant' });
     else window.scrollTo({ top: 0, behavior: 'instant' });
-    document.title = route === 'bebidas' ? 'Bebidas – COPO CHEIO Disk Bebidas' : 'COPO CHEIO – Disk Bebidas';
-  }, [route]);
+    setOrderOpen(false);
+  }, [pathname]);
+
+  const showOrder = page.name === 'home' || page.name === 'bebidas';
 
   return (
     <>
@@ -1706,13 +1613,42 @@ export default function App() {
         {MOTION_STYLES}
         {VIEWPORT_STYLES}
       </style>
-      {route === 'bebidas' ? (
-        <BebidasPage ready={ready} products={products} cart={cart} setQty={setQty} />
-      ) : (
-        <HomePage count={count} onOrder={startOrder} />
+      {page.name === 'bebidas' && <BebidasPage />}
+      {page.name === 'checkout' && <CheckoutPage />}
+      {page.name === 'pedido' && <OrderPage token={page.token} />}
+      {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
+      {showOrder && (
+        <>
+          <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} />
+          <OrderDrawer open={orderOpen} onClose={closeOrder} />
+        </>
       )}
-      <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} />
-      <OrderDrawer open={orderOpen} onClose={closeOrder} lines={lines} total={total} setQty={setQty} onClear={clear} />
     </>
+  );
+}
+
+function AdminLoading() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#050505]" role="status" aria-label="Carregando o painel">
+      <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-[#2563FF]" />
+    </div>
+  );
+}
+
+export default function App() {
+  useLinkInterception();
+  const pathname = usePathname();
+
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) {
+    return (
+      <Suspense fallback={<AdminLoading />}>
+        <AdminApp pathname={pathname} />
+      </Suspense>
+    );
+  }
+  return (
+    <ShopProvider>
+      <PublicSite pathname={pathname} />
+    </ShopProvider>
   );
 }
