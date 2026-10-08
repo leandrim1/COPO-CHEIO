@@ -32,10 +32,7 @@ const CUP_RIGHT_MARGIN = 56;
 const SLIDE_MS = 4500;
 const DRINKS = [
   { src: '/bebidas/frozen-rosa.webp', alt: 'Frozen rosa com chantilly, calda de frutas vermelhas e picolé' },
-  { src: '/bebidas/drink-degrade.webp', alt: 'Drink em degradê de amarelo, verde e azul com gelo' },
-  { src: '/bebidas/drink-amarelo.webp', alt: 'Drink amarelo e verde com gelo em copo Copo Cheio' },
   { src: '/bebidas/frozen-chocolate.webp', alt: 'Copo cremoso com chocolate, maracujá e picolé de manga' },
-  { src: '/bebidas/licor-43.webp', alt: 'Garrafa de Licor 43 ao lado de um copo de drink amarelo com gelo' },
   { src: '/bebidas/energetico-azul.webp', alt: 'Energético azul em copo com gelo' },
 ];
 
