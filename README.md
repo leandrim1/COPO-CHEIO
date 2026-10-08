@@ -11,7 +11,7 @@ Site de delivery + painel administrativo da Copo Cheio.
                    SITE PÚBLICO  /  PAINEL /admin
                          │
                          ▼
-                 API  (Vercel Function: api/[...route].ts)
+                 API  (Vercel Function: api/index.ts)
                   /                         \
                  ▼                           ▼
         NEON  copocheio-db             VERCEL BLOB  copocheio-uploads
@@ -162,7 +162,7 @@ dashboard) são funções do banco chamadas só pelo servidor.
 ## Estrutura
 
 ```
-api/[...route].ts      função da Vercel: entrega /api/* para o servidor
+api/index.ts      função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, banco (Neon), imagens (Blob)
 db/migrations/         tabelas, funções e conteúdo inicial do Neon
 scripts/               migrate.mjs (migrations) · create-admin.mjs (primeiro administrador)

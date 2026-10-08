@@ -43,7 +43,7 @@ async function request<T>(method: string, path: string, body?: Json | Blob | Arr
   }
   if (!response.ok) {
     if (response.status === 401 && path.startsWith('/api/admin')) onUnauthorized?.();
-    throw new ApiError(response.status, data?.error ?? 'Não foi possível concluir. Tente de novo.', data?.code, data?.missing);
+    throw new ApiError(response.status, data?.error ?? `O servidor respondeu com erro ${response.status}. Tente de novo em instantes.`, data?.code, data?.missing);
   }
   return data as T;
 }
