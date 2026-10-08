@@ -210,9 +210,15 @@ function DrinkShowcase() {
 function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
   return (
     <div aria-hidden="true" className={`pointer-events-none absolute cc-float ${className}`} style={{ animationDelay: delay }}>
-      <div className="relative h-full w-full rotate-12 rounded-xl border border-white/25 bg-gradient-to-br from-white/30 via-white/5 to-[#145CFF]/20 shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_10px_30px_-8px_rgba(20,92,255,0.6)] backdrop-blur-[2px]">
-        <span className="absolute left-[18%] top-[14%] h-[34%] w-[14%] rounded-full bg-white/60 blur-[1px]" />
-        <span className="absolute bottom-[16%] right-[16%] h-[10%] w-[10%] rounded-full bg-white/40" />
+      <div className="relative h-full w-full rotate-12">
+        <img
+          src="/gelo.webp"
+          alt=""
+          width={320}
+          height={320}
+          decoding="async"
+          className="h-full w-full object-contain drop-shadow-[0_8px_12px_rgba(20,92,255,0.5)]"
+        />
       </div>
     </div>
   );
