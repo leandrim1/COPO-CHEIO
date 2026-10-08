@@ -1,5 +1,5 @@
 import { ArrowRight, GlassWater, Motorbike, Snowflake } from 'lucide-react';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode, RefObject } from 'react';
 
 const BRAND_NAME = 'COPO CHEIO';
@@ -15,10 +15,26 @@ const ORDER_HREF = '#contato';
 const HAND_BAND = { start: 0.3, end: 0.7, fade: 0.07 };
 const HAND_IN_VIDEO = { centerX: 0.498, cupSize: 0.82 };
 // On desktop the whole cup must stay visible: it is fitted between the nav and the bottom edge
-// (px kept clear above and below, the bottom one also leaves room for the floating animation).
-const CUP_MARGIN = { top: 100, bottom: 28 };
-// Horizontal centre of the cup inside bebida.png (the image has transparent side margins).
-const CUP_CENTER_IN_IMAGE = 0.51;
+// (px kept clear above and below; the bottom one also holds the carousel dots and the float animation).
+const CUP_MARGIN = { top: 100, bottom: 36 };
+// Horizontal centre of a drink inside its image: every image has the product centred.
+const CUP_CENTER_IN_IMAGE = 0.5;
+// The widest a product gets, as a fraction of its image, and the x (px) the hero copy needs
+// kept clear (its left padding plus its max width, with some air).
+const CUP_CONTENT_WIDTH = 0.58;
+const COPY_RIGHT_EDGE = 520;
+
+// Drinks shown in rotation. Each image is a transparent 1100×1100 canvas with the product centred,
+// resting on the same baseline and scaled to the same height, so they swap in place at the same size.
+const SLIDE_MS = 4500;
+const DRINKS = [
+  { src: '/bebidas/frozen-rosa.webp', alt: 'Frozen rosa com chantilly, calda de frutas vermelhas e picolé' },
+  { src: '/bebidas/drink-degrade.webp', alt: 'Drink em degradê de amarelo, verde e azul com gelo' },
+  { src: '/bebidas/drink-amarelo.webp', alt: 'Drink amarelo e verde com gelo em copo Copo Cheio' },
+  { src: '/bebidas/frozen-chocolate.webp', alt: 'Copo cremoso com chocolate, maracujá e picolé de manga' },
+  { src: '/bebidas/licor-43.webp', alt: 'Garrafa de Licor 43 ao lado de um copo de drink amarelo com gelo' },
+  { src: '/bebidas/energetico-azul.webp', alt: 'Energético azul em copo com gelo' },
+];
 
 const NAV_LINKS = ['Início', 'Bebidas', 'Ofertas', 'Sobre', 'Contato'];
 // Hidden on tablet so the pill never collides with the logo; everything shows from lg up.
@@ -75,16 +91,21 @@ function useVideoFraming(
       const fade = renderedWidth * HAND_BAND.fade;
       const handMask = `linear-gradient(to right, #000 ${bandStart - fade}px, transparent ${bandStart}px, transparent ${bandEnd}px, #000 ${bandEnd + fade}px)`;
 
-      if (width < 1024 || width / height < 1.2) {
+      // Decided by the window, not the page: the page's own height depends on the layout chosen.
+      const { innerWidth, innerHeight } = window;
+      if (innerWidth < 1024 || innerWidth / innerHeight < 1.2) {
         setFraming({ handMask, cupBox: null });
         return;
       }
-      const available = height - CUP_MARGIN.top - CUP_MARGIN.bottom;
+      const available = Math.min(height, innerHeight) - CUP_MARGIN.top - CUP_MARGIN.bottom;
       const size = Math.min(renderedHeight * HAND_IN_VIDEO.cupSize, available);
+      // Sits where the hand was, but on narrow or short screens slides right just enough
+      // for the widest drink to stay clear of the hero copy.
+      const centerX = Math.max(renderedWidth * HAND_IN_VIDEO.centerX, COPY_RIGHT_EDGE + (size * CUP_CONTENT_WIDTH) / 2);
       setFraming({
         handMask,
         cupBox: {
-          left: renderedWidth * HAND_IN_VIDEO.centerX - size * CUP_CENTER_IN_IMAGE,
+          left: centerX - size * CUP_CENTER_IN_IMAGE,
           top: CUP_MARGIN.top + (available - size) / 2,
           size,
         },
@@ -95,13 +116,89 @@ function useVideoFraming(
     const observer = new ResizeObserver(update);
     observer.observe(root);
     video.addEventListener('loadedmetadata', update);
+    window.addEventListener('resize', update);
     return () => {
       observer.disconnect();
       video.removeEventListener('loadedmetadata', update);
+      window.removeEventListener('resize', update);
     };
   }, [rootRef, videoRef]);
 
   return framing;
+}
+
+// Stacks every drink in the same spot and cross-fades between them; the dots below pick one.
+// The rotation pauses while a mouse hovers the dots or a keyboard user is focused on them.
+function DrinkShowcase() {
+  const [active, setActive] = useState(0);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
+
+  useEffect(() => {
+    if (paused) return;
+    const timer = window.setTimeout(() => setActive((i) => (i + 1) % DRINKS.length), SLIDE_MS);
+    return () => window.clearTimeout(timer);
+  }, [active, paused]);
+
+  return (
+    <>
+      <div className="absolute inset-0 cc-float drop-shadow-[0_30px_50px_rgba(0,0,0,0.55)]">
+        {DRINKS.map((drink, i) => {
+          const isActive = i === active;
+          return (
+            <img
+              key={drink.src}
+              src={drink.src}
+              alt={isActive ? drink.alt : ''}
+              aria-hidden={!isActive}
+              width={1100}
+              height={1100}
+              decoding="async"
+              fetchPriority={i === 0 ? 'high' : 'low'}
+              className={`absolute inset-0 h-full w-full object-contain transition-[opacity,transform] duration-700 ease-out motion-reduce:transition-opacity ${
+                isActive
+                  ? 'translate-y-0 scale-100 opacity-100'
+                  : 'translate-y-3 scale-95 opacity-0 motion-reduce:translate-y-0 motion-reduce:scale-100'
+              }`}
+            />
+          );
+        })}
+      </div>
+
+      <div
+        role="group"
+        aria-label="Escolher bebida"
+        onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+        onFocus={(e) => setFocused(e.target.matches(':focus-visible'))}
+        onBlur={() => setFocused(false)}
+        className="pointer-events-auto absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 items-center"
+      >
+        {DRINKS.map((drink, i) => {
+          const isActive = i === active;
+          return (
+            <button
+              key={drink.src}
+              type="button"
+              onClick={() => setActive(i)}
+              aria-label={`Ver bebida ${i + 1} de ${DRINKS.length}`}
+              aria-current={isActive}
+              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              <span
+                className={`block h-2 rounded-full transition-all duration-300 ${
+                  isActive
+                    ? 'w-6 bg-[#145CFF] shadow-[0_0_10px_rgba(20,92,255,0.9)]'
+                    : 'w-2 bg-white/35 group-hover:bg-white/70'
+                }`}
+              />
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
 }
 
 function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
@@ -258,15 +355,15 @@ export default function App() {
         <div
           className={
             overHand
-              ? 'pointer-events-none absolute inset-0'
-              : 'flex justify-center px-6 pt-4 sm:pt-8 lg:pointer-events-none lg:absolute lg:inset-0 lg:block lg:p-0'
+              ? 'pointer-events-none absolute inset-0 z-10'
+              : 'flex justify-center px-6 pb-6 pt-4 sm:pt-8'
           }
         >
           <div
             className={
               overHand
                 ? 'absolute aspect-square'
-                : 'relative aspect-square w-[min(64vw,29vh)] sm:w-[min(60vw,40vh)] lg:absolute lg:right-[-5%] lg:bottom-[-5%] lg:w-[min(64vh,46vw)] xl:w-[min(84vh,50vw)]'
+                : 'relative aspect-square w-[clamp(8rem,calc(100vh-32rem),76vw)] sm:w-[min(60vw,38vh)]'
             }
             style={cupBox ? { left: cupBox.left, top: cupBox.top, width: cupBox.size } : undefined}
           >
@@ -282,41 +379,30 @@ export default function App() {
               aria-hidden="true"
               className="absolute inset-x-[30%] bottom-[2%] h-[8%] rounded-[100%] bg-[#145CFF]/55 blur-2xl"
             />
-            <picture>
-              <source srcSet="/bebida.webp" type="image/webp" />
-              <img
-                src="/bebida.png"
-                alt="Frozen rosa com chantilly, calda de frutas vermelhas e picolé"
-                width={1254}
-                height={1254}
-                fetchPriority="high"
-                className="relative h-full w-full object-contain cc-float drop-shadow-[0_30px_50px_rgba(0,0,0,0.55)]"
-              />
-            </picture>
-
             {overHand ? (
               <>
-                <IceCube className="left-[24%] top-[8%] h-12 w-12 opacity-70 xl:h-14 xl:w-14" delay="-2s" />
-                <IceCube className="right-[10%] top-[12%] h-9 w-9 opacity-50" delay="-1s" />
-                <IceCube className="bottom-[14%] left-[20%] h-10 w-10 opacity-60" delay="-4s" />
+                <IceCube className="left-[7%] top-[10%] h-12 w-12 opacity-70 xl:h-14 xl:w-14" delay="-2s" />
+                <IceCube className="right-[6%] top-[14%] h-9 w-9 opacity-50" delay="-1s" />
+                <IceCube className="bottom-[12%] right-[8%] h-10 w-10 opacity-60" delay="-4s" />
               </>
             ) : (
               <>
-                <IceCube className="left-[8%] top-[18%] h-9 w-9 opacity-70 sm:h-11 sm:w-11 lg:left-[20%] lg:top-[4%] lg:h-12 lg:w-12 xl:left-[8%] xl:top-[16%] xl:h-14 xl:w-14" delay="-2s" />
-                <IceCube className="bottom-[22%] right-[10%] h-7 w-7 opacity-60 sm:h-9 sm:w-9 lg:bottom-[16%] lg:left-[16%] lg:right-auto lg:h-10 lg:w-10" delay="-4s" />
-                <IceCube className="right-[24%] top-[6%] hidden h-8 w-8 opacity-50 lg:block" delay="-1s" />
+                <IceCube className="left-[8%] top-[18%] h-9 w-9 opacity-70 sm:h-11 sm:w-11" delay="-2s" />
+                <IceCube className="bottom-[22%] right-[8%] h-7 w-7 opacity-60 sm:h-9 sm:w-9" delay="-4s" />
               </>
             )}
 
+            <DrinkShowcase />
+
             <InfoChip
-              className={overHand ? 'left-[78%] top-[30%]' : 'left-[-6%] top-[36%]'}
+              className={overHand ? 'left-[82%] top-[30%]' : 'left-[-6%] top-[36%]'}
               style={{ animationDelay: '-3s' }}
               icon={<Snowflake className="h-4 w-4" aria-hidden="true" />}
               title="Trincando de gelada"
               subtitle="Direto do freezer"
             />
             <InfoChip
-              className={overHand ? 'bottom-[30%] left-[76%]' : 'bottom-[26%] right-[18%]'}
+              className={overHand ? 'bottom-[30%] left-[80%]' : 'bottom-[26%] right-[18%]'}
               style={{ animationDelay: '-5s' }}
               icon={<Motorbike className="h-4 w-4" aria-hidden="true" />}
               title="Entrega rápida"
