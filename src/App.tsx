@@ -369,10 +369,12 @@ function AddControl({
 }) {
   const focusRing =
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#050505]';
+  // Na lista (compact) o controle fica sempre ao lado do preço, em qualquer celular: abaixo de 385 px o
+  // "Adicionar" vira só o "+" (o nome acessível continua completo) e o seletor de quantidade fica mais enxuto.
   if (soldOut) {
     return (
       <span
-        className={`inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm font-bold text-white/45 ${compact ? 'h-10 px-4' : 'h-11 w-full'}`}
+        className={`inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 font-bold text-white/45 ${compact ? 'h-10 shrink-0 px-2.5 text-xs min-[360px]:px-3 min-[360px]:text-[13px] min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full text-sm'}`}
       >
         Esgotado
       </span>
@@ -384,10 +386,12 @@ function AddControl({
         type="button"
         onClick={() => onChange(1)}
         aria-label={`Adicionar ${name} ao pedido`}
-        className={`inline-flex items-center justify-center gap-2 rounded-full bg-[#145CFF] text-sm font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${compact ? 'h-10 px-4' : 'h-11 w-full'} ${focusRing}`}
+        className={`inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
+          compact ? 'h-10 w-10 shrink-0 gap-1.5 text-[13px] min-[385px]:w-auto min-[385px]:px-3 min-[480px]:gap-2 min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full gap-2 text-sm'
+        } ${focusRing}`}
       >
         <Plus className="h-4 w-4" aria-hidden="true" />
-        Adicionar
+        <span className={compact ? 'max-[384px]:sr-only' : ''}>Adicionar</span>
       </button>
     );
   }
@@ -395,17 +399,17 @@ function AddControl({
     <div
       role="group"
       aria-label={`Quantidade de ${name}`}
-      className={`flex items-center justify-between rounded-full border border-[#2563FF]/60 bg-[#145CFF]/15 px-1 ${compact ? 'h-10 gap-1' : 'h-11 w-full'}`}
+      className={`flex items-center justify-between rounded-full border border-[#2563FF]/60 bg-[#145CFF]/15 px-1 ${compact ? 'h-10 shrink-0 gap-0 px-0.5 min-[360px]:gap-0.5 min-[360px]:px-1 min-[385px]:gap-1' : 'h-11 w-full'}`}
     >
       <button
         type="button"
         onClick={() => onChange(qty - 1)}
         aria-label={`Diminuir ${name}`}
-        className={`grid h-8 w-8 place-items-center rounded-full text-white transition-colors hover:bg-white/10 ${focusRing}`}
+        className={`grid place-items-center rounded-full text-white transition-colors hover:bg-white/10 ${compact ? 'h-7 w-7 min-[385px]:h-8 min-[385px]:w-8' : 'h-8 w-8'} ${focusRing}`}
       >
         <Minus className="h-4 w-4" aria-hidden="true" />
       </button>
-      <span className={`text-sm font-bold tabular-nums text-white ${compact ? 'min-w-6 text-center' : ''}`} aria-live="polite">
+      <span className={`text-sm font-bold tabular-nums text-white ${compact ? 'min-w-4 text-center min-[360px]:min-w-5 min-[385px]:min-w-6' : ''}`} aria-live="polite">
         {qty}
         {!compact && <span className="ml-1 hidden text-xs font-medium text-white/60 sm:inline">no pedido</span>}
       </span>
@@ -413,7 +417,7 @@ function AddControl({
         type="button"
         onClick={() => onChange(qty + 1)}
         aria-label={`Aumentar ${name}`}
-        className={`grid h-8 w-8 place-items-center rounded-full bg-[#145CFF] text-white transition-colors hover:bg-[#2563FF] ${focusRing}`}
+        className={`grid place-items-center rounded-full bg-[#145CFF] text-white transition-colors hover:bg-[#2563FF] ${compact ? 'h-7 w-7 min-[385px]:h-8 min-[385px]:w-8' : 'h-8 w-8'} ${focusRing}`}
       >
         <Plus className="h-4 w-4" aria-hidden="true" />
       </button>
@@ -477,7 +481,7 @@ function SkeletonRow() {
         <div className="h-3 w-full animate-pulse rounded bg-white/[0.06] motion-reduce:animate-none" />
         <div className="mt-3 h-6 w-1/3 animate-pulse rounded bg-white/[0.08] motion-reduce:animate-none" />
       </div>
-      <div className="h-32 w-32 animate-pulse rounded-2xl bg-white/[0.06] motion-reduce:animate-none sm:h-44 sm:w-44" />
+      <div className="h-32 w-[5.5rem] animate-pulse rounded-2xl bg-white/[0.06] motion-reduce:animate-none min-[360px]:w-[6.5rem] min-[480px]:w-32 sm:h-44 sm:w-44" />
     </li>
   );
 }
@@ -606,12 +610,13 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
         {product.description && (
           <p className="mt-1 line-clamp-3 text-xs leading-snug text-white/55 sm:text-[13px]">{product.description}</p>
         )}
-        <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pt-3">
-          <ProductPrice product={product} className={`text-xl sm:text-2xl ${product.soldOut ? 'opacity-60' : ''}`} />
+        {/* Preço e controle sempre na mesma linha, em todos os cards (sem quebrar para baixo). */}
+        <div className="mt-auto flex flex-nowrap items-center justify-between gap-2 pt-3">
+          <ProductPrice product={product} className={`text-base min-[360px]:text-lg min-[480px]:text-xl sm:text-2xl ${product.soldOut ? 'opacity-60' : ''}`} />
           <AddControl qty={qty} name={product.name} onChange={onChange} compact soldOut={product.soldOut} />
         </div>
       </div>
-      <div className="relative h-32 w-32 shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] sm:h-44 sm:w-44">
+      <div className="relative h-32 w-[5.5rem] shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] min-[360px]:w-[6.5rem] min-[480px]:w-32 sm:h-44 sm:w-44">
         <ProductImage product={product} padding="p-0.5" />
         {product.soldOut && <SoldOutBadge className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />}
       </div>
