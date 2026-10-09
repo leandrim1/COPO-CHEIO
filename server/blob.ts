@@ -1,5 +1,5 @@
-// Imagens no Vercel Blob (copocheio-uploads). O token (BLOB_READ_WRITE_TOKEN) é lido pelo @vercel/blob
-// direto do ambiente do servidor; no Neon fica só a URL pública do arquivo.
+// Imagens no Vercel Blob (copocheio-uploads). O token (BLOB_READ_WRITE_TOKEN) fica só no ambiente do
+// servidor; no Neon fica só a URL pública do arquivo.
 import { BlobError, del, put } from '@vercel/blob';
 import { randomUUID } from 'node:crypto';
 import { query } from './db.js';
@@ -24,11 +24,13 @@ export function sniffImage(b: Uint8Array): string | null {
 }
 
 export async function uploadImage(folder: Folder, bytes: Uint8Array): Promise<{ url: string; pathname: string }> {
-  if (!blobToken()) throw new MissingConfig(['BLOB_READ_WRITE_TOKEN']);
+  const token = blobToken();
+  if (!token) throw new MissingConfig(['BLOB_READ_WRITE_TOKEN']);
   const type = sniffImage(bytes);
   if (!type) throw new HttpError(400, 'Envie uma imagem JPG, PNG, WebP, GIF ou AVIF.');
   try {
     const blob = await put(`${folder}/${randomUUID()}.${EXTENSION[type]}`, Buffer.from(bytes), {
+      token,
       access: 'public',
       contentType: type,
       addRandomSuffix: false,
@@ -59,7 +61,8 @@ export const isBlobUrl = (value: string | null | undefined): value is string => 
 // Depois de uma troca ou exclusão: o arquivo antigo não fica ocupando espaço, e uma imagem
 // compartilhada (produto duplicado) só sai quando o último uso some.
 export async function releaseImages(urls: (string | null | undefined)[]): Promise<void> {
-  if (!blobToken()) return;
+  const token = blobToken();
+  if (!token) return;
   const unique = [...new Set(urls.filter(isBlobUrl))];
   const orphans: string[] = [];
   for (const url of unique) {
@@ -76,7 +79,7 @@ export async function releaseImages(urls: (string | null | undefined)[]): Promis
   }
   if (!orphans.length) return;
   try {
-    await del(orphans);
+    await del(orphans, { token });
   } catch (error) {
     // Arquivo sobrando no Blob não afeta o site; só registra.
     console.error('[blob] não foi possível apagar', orphans, error);
