@@ -3,18 +3,8 @@ import { checkNewPassword, hashPassword } from '../auth.js';
 import { one, query } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
-import { bool, oneOf, parse, text } from '../validate.js';
-import type { Field, Spec } from '../validate.js';
-
-const email: Field = {
-  label: 'E-mail',
-  required: true,
-  parse(value) {
-    const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    if (s.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) throw new HttpError(400, 'E-mail: confira o endereço.');
-    return s;
-  },
-};
+import { bool, email, oneOf, parse, text } from '../validate.js';
+import type { Spec } from '../validate.js';
 
 const adminSpec: Spec = {
   name: text('Nome', { min: 1, max: 80, required: true }),

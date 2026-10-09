@@ -64,10 +64,13 @@ export function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
-export function sessionCookie(req: Request, token: string, maxAge: number): string {
+// Cookie HttpOnly (o JavaScript do navegador nunca lê), SameSite=Lax e Secure em https.
+export function cookieHeader(req: Request, name: string, value: string, maxAge: number): string {
   const secure = new URL(req.url).protocol === 'https:';
-  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+  return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
+
+export const sessionCookie = (req: Request, token: string, maxAge: number): string => cookieHeader(req, COOKIE, token, maxAge);
 
 export async function adminFromRequest(req: Request): Promise<Admin | null> {
   const token = readCookie(req, COOKIE);

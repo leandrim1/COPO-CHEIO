@@ -4,12 +4,15 @@ import { adminFromRequest } from './auth.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
 import { HttpError, Router, json } from './http.js';
 import type { Access, Ctx } from './http.js';
+import { registerAccount } from './routes/account.js';
 import { registerCatalog } from './routes/catalog.js';
 import { registerContent } from './routes/content.js';
 import { registerOrders } from './routes/orders.js';
 import { registerPublic } from './routes/public.js';
 import { registerSession } from './routes/session.js';
+import { registerCustomers } from './routes/customers.js';
 import { registerTeam } from './routes/team.js';
+import { registerTracking } from './routes/tracking.js';
 import { registerUpload } from './routes/upload.js';
 import { one } from './db.js';
 
@@ -31,10 +34,13 @@ router.get('/api/health', 'public', async () => {
 
 registerPublic(router);
 registerSession(router);
+registerTracking(router);
+registerAccount(router);
 registerOrders(router);
 registerCatalog(router);
 registerContent(router);
 registerTeam(router);
+registerCustomers(router);
 registerUpload(router);
 
 const clientIp = (req: Request) => req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
@@ -43,6 +49,7 @@ const clientIp = (req: Request) => req.headers.get('x-real-ip') ?? req.headers.g
 const CONSTRAINT_MESSAGES: Record<string, string> = {
   store_settings_some_delivery: 'Mantenha pelo menos entrega ou retirada ativa.',
   admins_email_key: 'Já existe um administrador com esse e-mail.',
+  customers_email_key: 'Já existe uma conta com esse e-mail. Entre na sua conta ou recupere a senha.',
   categories_name_key: 'Já existe uma categoria com esse nome.',
   delivery_zones_name_key: 'Esse bairro já está cadastrado.',
   products_sku_key: 'Já existe um produto com esse SKU.',

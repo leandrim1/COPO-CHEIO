@@ -21,6 +21,7 @@ export type StoreSettings = {
   delivery_fee: number;
   min_order: number;
   delivery_time: string | null;
+  tracking_retention_days: number;
   updated_at?: string;
 };
 
@@ -112,7 +113,8 @@ export type DeliveryType = 'delivery' | 'pickup';
 export type Order = {
   id: string;
   order_number: number;
-  public_token: string;
+  customer_id: string | null;
+  customer_linked_at: string | null;
   customer_name: string;
   customer_phone: string;
   customer_email: string | null;
@@ -173,9 +175,9 @@ export type AdminAccount = {
   created_at: string;
 };
 
-// O pedido como o cliente vê (POST /api/orders e GET /api/orders/:token).
+// O pedido como o cliente vê (POST /api/orders, GET /api/tracking/:código e /api/account/orders/:número).
+// Nunca traz telefone, e-mail, ids internos nem o código de acompanhamento.
 export type PublicOrder = {
-  token: string;
   order_number: number;
   order_status: OrderStatus;
   payment_status: PaymentStatus;
@@ -194,6 +196,51 @@ export type PublicOrder = {
   discount: number;
   total: number;
   created_at: string;
-  items: { product_name: string; quantity: number; unit_price: number; total_price: number }[];
+  updated_at: string;
+  // Já está na conta de algum cliente?
+  linked: boolean;
+  // Por quantos dias, depois da última atualização, o link continua valendo.
+  retention_days: number;
+  // product_id só vem para o dono da conta (para "pedir de novo").
+  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number }[];
   history: { status: OrderStatus; at: string }[];
 };
+
+// Conta do cliente (opcional).
+export type CustomerAccount = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  address: string | null;
+  address_number: string | null;
+  neighborhood: string | null;
+  complement: string | null;
+  reference: string | null;
+};
+
+export type AccountOrderSummary = {
+  order_number: number;
+  order_status: OrderStatus;
+  payment_status: PaymentStatus;
+  payment_method: PaymentMethod;
+  delivery_type: DeliveryType;
+  total: number;
+  created_at: string;
+  updated_at: string;
+  summary: string | null;
+};
+
+// Painel: contas de clientes.
+export type CustomerRow = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+  orders: number;
+};
+
+export type TrackingLinkInfo = { id: string; source: 'checkout' | 'admin' | 'legacy'; created_at: string; revoked_at: string | null; created_by_name: string | null };

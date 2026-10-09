@@ -10,6 +10,7 @@ import {
   Settings,
   ShoppingBag,
   Tags,
+  Users,
   Volume2,
   VolumeX,
   X,
@@ -23,6 +24,7 @@ import type { AdminAccount } from '../lib/types';
 import { ConfirmProvider, IconButton, Spinner, ToastProvider, cx, useToast } from './ui';
 import BannersPage from './Banners';
 import CategoriesPage from './Categories';
+import CustomersPage from './Customers';
 import DashboardPage from './Dashboard';
 import LoginPage from './Login';
 import { OrderDetailPage, OrdersPage } from './Orders';
@@ -217,6 +219,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
 const MENU = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
+  { href: '/admin/clientes', label: 'Clientes', icon: Users },
   { href: '/admin/produtos', label: 'Produtos', icon: Package },
   { href: '/admin/categorias', label: 'Categorias', icon: Tags },
   { href: '/admin/estoque', label: 'Estoque', icon: Boxes },
@@ -372,6 +375,8 @@ function route(pathname: string): { title: string; page: ReactNode } | null {
       return { title: 'Dashboard', page: <DashboardPage /> };
     case 'pedidos':
       return id ? { title: `Pedido #${id}`, page: <OrderDetailPage number={id} /> } : { title: 'Pedidos', page: <OrdersPage /> };
+    case 'clientes':
+      return { title: 'Clientes', page: <CustomersPage /> };
     case 'produtos':
       return id ? { title: id === 'novo' ? 'Novo produto' : 'Editar produto', page: <ProductFormPage id={id} key={id} /> } : { title: 'Produtos', page: <ProductsPage /> };
     case 'categorias':

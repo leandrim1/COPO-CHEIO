@@ -14,6 +14,11 @@ export const BLUE_BUTTON =
   'inline-flex items-center justify-center gap-2.5 rounded-full bg-[#145CFF] px-6 py-3.5 text-[15px] font-extrabold text-white shadow-[0_16px_40px_-14px_rgba(20,92,255,0.95)] transition-all duration-200 hover:scale-[1.02] hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-black';
 
 export const NAV_LINKS = ['Início', 'Bebidas', 'Contato'];
+// Fora de NAV_LINKS de propósito: o menu do Hero não muda. Estes aparecem no rodapé e no menu fixo.
+export const CUSTOMER_LINKS = [
+  { label: 'Acompanhar pedido', href: '/acompanhar-pedido' },
+  { label: 'Minha conta', href: '/conta' },
+];
 export const NAV_HREF: Record<string, string> = { Início: '/', Bebidas: '/bebidas', Contato: '/#contato' };
 
 export function WhatsAppIcon({ className = 'h-5 w-5' }: { className?: string }) {
@@ -163,10 +168,15 @@ export function Footer() {
             )}
           </span>
         </a>
-        <nav aria-label="Rodapé" className="flex items-center gap-6 text-sm font-medium text-white/65">
+        <nav aria-label="Rodapé" className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-white/65 md:justify-end">
           {NAV_LINKS.map((link) => (
             <a key={link} href={NAV_HREF[link]} className="transition-colors hover:text-white">
               {link}
+            </a>
+          ))}
+          {CUSTOMER_LINKS.map((link) => (
+            <a key={link.href} href={link.href} className="transition-colors hover:text-white">
+              {link.label}
             </a>
           ))}
           {handle && (

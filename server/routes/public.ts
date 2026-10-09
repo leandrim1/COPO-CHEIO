@@ -1,8 +1,10 @@
 // Rotas públicas: o que o site mostra e a criação de pedidos. Nada administrativo sai daqui.
 import { attempts, recordAttempt } from '../auth.js';
+import { customerFromRequest } from '../customer.js';
 import { batch, one, query } from '../db.js';
-import { HttpError, UUID, json, readJson } from '../http.js';
+import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
+import { hashToken, newTrackingToken } from '../tracking.js';
 
 export function registerPublic(r: Router) {
   // Produtos e categorias ativos, só com as colunas que o site mostra (estoque e SKU ficam de fora).
@@ -48,17 +50,15 @@ export function registerPublic(r: Router) {
     if ((await attempts('order', ctx.ip, 600)) >= 20) {
       throw new HttpError(429, 'Muitos pedidos em pouco tempo. Aguarde alguns minutos ou fale com a loja pelo WhatsApp.');
     }
-    const row = await one<{ order: unknown }>('select create_order($1::jsonb) as "order"', [JSON.stringify(body)]);
+    // O código de acompanhamento nasce aqui, no servidor: só o hash vai para o banco, na mesma transação do
+    // pedido. A conta (se o cliente estiver logado) vem da sessão, nunca do corpo da requisição.
+    const customer = await customerFromRequest(ctx.req);
+    const token = newTrackingToken();
+    const payload = { ...body, tracking_hash: hashToken(token), customer_id: customer?.id ?? null };
+    const row = await one<{ order: unknown }>('select create_order($1::jsonb) as "order"', [JSON.stringify(payload)]);
     await recordAttempt('order', ctx.ip);
-    return json({ order: row?.order }, 201);
-  });
-
-  // O cliente acompanha o pedido pelo código secreto do link (/pedido/:token).
-  r.get('/api/orders/:token', 'public', async (ctx) => {
-    const token = ctx.params.token;
-    if (!UUID.test(token)) throw new HttpError(404, 'Pedido não encontrado.');
-    const rows = await query<{ order: unknown }>('select get_public_order($1::uuid) as "order"', [token]);
-    if (!rows[0]?.order) throw new HttpError(404, 'Pedido não encontrado.');
-    return json({ order: rows[0].order });
+    // De vez em quando, apaga dados técnicos vencidos (sessões, tentativas, códigos de pedidos fora do prazo).
+    if (Math.random() < 0.02) await query('select purge_expired_data()').catch(() => undefined);
+    return json({ order: row?.order, token }, 201);
   });
 }

@@ -225,6 +225,17 @@ export function siteLink(label: string): Field {
   };
 }
 
+// E-mail em minúsculas, no formato nome@dominio.tld
+export const email: Field = {
+  label: 'E-mail',
+  required: true,
+  parse(value) {
+    const s = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (s.length > 254 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s)) throw bad('E-mail', 'confira o endereço.');
+    return s;
+  },
+};
+
 type ParseOpts = { partial?: boolean };
 
 // Valida o corpo da requisição contra o spec e devolve só as colunas conhecidas.

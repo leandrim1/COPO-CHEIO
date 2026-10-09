@@ -35,6 +35,7 @@ const storeSpec: Spec = {
   delivery_fee: money('Taxa de entrega'),
   min_order: money('Pedido mínimo'),
   delivery_time: text('Tempo de entrega', { max: 30, nullable: true }),
+  tracking_retention_days: int('Validade do link de acompanhamento (dias)', { min: 7, max: 3650 }),
 };
 
 const siteSpec: Spec = {

@@ -150,6 +150,34 @@ function StoreTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
   );
 }
 
+// Política de retenção: por quantos dias o link de acompanhamento do cliente continua valendo.
+function RetentionCard({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
+  const toast = useToast();
+  const { saving, save } = useStoreSave(onSaved);
+  const [days, setDays] = useState(String(store.tracking_retention_days));
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const n = Number(days);
+    if (!Number.isInteger(n) || n < 7 || n > 3650) {
+      toast.error('Confira a validade.', 'Use um número de dias entre 7 e 3650.');
+      return;
+    }
+    await save({ tracking_retention_days: n }, 'Validade salva.');
+  };
+  return (
+    <form onSubmit={submit} noValidate>
+      <Card title="Acompanhamento de pedidos" description="Os clientes acompanham o pedido pelo link, sem login. Depois do prazo, o link deixa de abrir (o pedido continua guardado na loja e na conta do cliente).">
+        <div className="max-w-xs">
+          <Field label="Validade do link (dias)" hint="Conta a partir da última atualização do pedido. De 7 a 3650 dias.">
+            {(p) => <input {...p} inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value.replace(/\D/g, '').slice(0, 4))} className={INPUT} />}
+          </Field>
+        </div>
+        <Footer saving={saving} label="Salvar validade" />
+      </Card>
+    </form>
+  );
+}
+
 // ---- Horários ----------------------------------------------------------------------------------
 
 function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
@@ -713,7 +741,12 @@ export default function SettingsPage() {
     if (!store) return null;
     switch (tab) {
       case 'loja':
-        return <StoreTab store={store} onSaved={setStore} />;
+        return (
+          <div className="space-y-4">
+            <StoreTab store={store} onSaved={setStore} />
+            <RetentionCard store={store} onSaved={setStore} />
+          </div>
+        );
       case 'horarios':
         return <HoursTab store={store} onSaved={setStore} />;
       case 'entrega':

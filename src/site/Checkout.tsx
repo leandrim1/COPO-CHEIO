@@ -1,59 +1,18 @@
-import {
-  ArrowLeft,
-  Banknote,
-  Check,
-  CheckCircle2,
-  Clock,
-  Copy,
-  CreditCard,
-  LoaderCircle,
-  MapPin,
-  Motorbike,
-  QrCode,
-  ShoppingBag,
-  Store,
-  TriangleAlert,
-  XCircle,
-} from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { Banknote, Check, Clock, CreditCard, LoaderCircle, MapPin, Motorbike, QrCode, ShoppingBag, Store, TriangleAlert, UserRound, XCircle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { ApiError, api, friendlyError } from '../lib/api';
-import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, addressLines, formatTime, maskPhone, money, onlyDigits, parseMoney, statusLabel } from '../lib/format';
+import { useId } from 'react';
+import { api, friendlyError } from '../lib/api';
+import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
+import { seedOrder } from '../lib/orderCache';
+import { rememberOrder } from '../lib/recent';
 import { navigate } from '../lib/router';
-import type { DeliveryType, OrderStatus, PaymentMethod, PublicOrder, StoreSettings } from '../lib/types';
-import { fullAddress, storeWhatsappUrl, useShop } from './data';
-import { BLUE_BUTTON, CartLineItem, FIELD, Footer, GHOST_BUTTON, Price, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
-
-// ---- Mensagem do pedido para o WhatsApp da loja ------------------------------------------------
-
-export function orderWhatsappMessage(store: StoreSettings, order: PublicOrder): string {
-  const payment =
-    PAYMENT_LABEL[order.payment_method] +
-    (order.payment_method === 'cash' && order.change_for ? ` (troco para ${money(order.change_for)})` : '');
-  return [
-    `Olá, ${store.store_name}! Quero fazer o pedido #${order.order_number}.`,
-    '',
-    'Cliente:',
-    order.customer_name,
-    '',
-    'Itens:',
-    ...order.items.map((item) => `${item.quantity}x ${item.product_name}`),
-    '',
-    'Total:',
-    money(order.total),
-    '',
-    order.delivery_type === 'delivery' ? 'Entrega:' : 'Retirada:',
-    ...(order.delivery_type === 'delivery' ? addressLines(order) : ['Vou retirar na loja']),
-    '',
-    'Pagamento:',
-    payment,
-    ...(order.notes ? ['', 'Observações:', order.notes] : []),
-  ].join('\n');
-}
-
-// Pedido recém-criado: a página do pedido abre na hora, sem esperar outra consulta.
-const orderCache = new Map<string, PublicOrder>();
+import type { DeliveryType, PaymentMethod, PublicOrder } from '../lib/types';
+import { useCustomer } from './customer';
+import { fullAddress, useShop } from './data';
+import { Field, PageShell } from './shell';
+import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
 
 // ---- Peças do formulário -----------------------------------------------------------------------
 
@@ -67,40 +26,6 @@ function Card({ title, step, children }: { title: string; step: number; children
       </h2>
       <div className="mt-4">{children}</div>
     </section>
-  );
-}
-
-function Field({
-  label,
-  error,
-  hint,
-  children,
-  className = '',
-}: {
-  label: string;
-  error?: string;
-  hint?: string;
-  children: (props: { id: string; 'aria-invalid': boolean; 'aria-describedby'?: string }) => ReactNode;
-  className?: string;
-}) {
-  const id = useId();
-  const describedBy = error ? `${id}-erro` : hint ? `${id}-dica` : undefined;
-  return (
-    <div className={className}>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-semibold text-white/80">
-        {label}
-      </label>
-      {children({ id, 'aria-invalid': Boolean(error), 'aria-describedby': describedBy })}
-      {error ? (
-        <p id={`${id}-erro`} className="mt-1.5 text-xs font-medium text-rose-300">
-          {error}
-        </p>
-      ) : hint ? (
-        <p id={`${id}-dica`} className="mt-1.5 text-xs text-white/45">
-          {hint}
-        </p>
-      ) : null}
-    </div>
   );
 }
 
@@ -139,32 +64,6 @@ function Choice({
         {checked && <Check className="h-3 w-3 text-white" aria-hidden="true" />}
       </span>
     </label>
-  );
-}
-
-function PageShell({ back, backLabel, children }: { back: string; backLabel: string; children: ReactNode }) {
-  const { store, logo } = useShop();
-  return (
-    <div className="relative min-h-[100dvh] overflow-x-clip bg-[#050505]">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <div className="absolute -left-40 top-0 h-96 w-96 rounded-full bg-[#145CFF]/15 blur-3xl cc-glow" />
-        <div className="absolute -right-40 top-1/2 h-96 w-96 rounded-full bg-[#2563FF]/10 blur-3xl cc-glow [animation-delay:2s]" />
-      </div>
-      <header className="relative mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 pt-4 sm:px-6 sm:pt-6">
-        <a
-          href={back}
-          className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/5 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          {backLabel}
-        </a>
-        <a href="/" className="flex items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" aria-label={`${store.store_name} – início`}>
-          <img src={logo} alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_24px_rgba(20,92,255,0.55)]" />
-        </a>
-      </header>
-      <div className="relative mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6">{children}</div>
-      <Footer />
-    </div>
   );
 }
 
@@ -216,6 +115,8 @@ export function CheckoutPage() {
       notes: '',
     };
   });
+  const { status: accountStatus, customer: account } = useCustomer();
+  const prefilled = useRef(false);
   const [errors, setErrors] = useState<Partial<Record<keyof Customer, string>>>({});
   const [submitError, setSubmitError] = useState('');
   const [sending, setSending] = useState(false);
@@ -241,6 +142,33 @@ export function CheckoutPage() {
   useEffect(() => {
     if (submitError) errorRef.current?.focus();
   }, [submitError]);
+
+  // Já baixa a página de confirmação/acompanhamento: ao finalizar o pedido ela abre na hora.
+  useEffect(() => {
+    void import('./CustomerPages');
+  }, []);
+
+  // Com login, os dados da conta já vêm preenchidos (nome, telefone, e-mail e o endereço guardado).
+  useEffect(() => {
+    if (!account || prefilled.current) return;
+    prefilled.current = true;
+    const digits = onlyDigits(account.phone);
+    setForm((f) => ({
+      ...f,
+      name: account.name,
+      phone: maskPhone(digits.length > 11 ? digits.replace(/^55/, '') : digits),
+      email: account.email,
+      ...(account.address
+        ? {
+            address: account.address,
+            number: account.address_number ?? '',
+            neighborhood: account.neighborhood ?? '',
+            complement: account.complement ?? '',
+            reference: account.reference ?? '',
+          }
+        : {}),
+    }));
+  }, [account]);
 
   if (lines.length === 0) {
     return (
@@ -298,8 +226,9 @@ export function CheckoutPage() {
     }
     const change = payment === 'cash' && form.change.trim() ? parseMoney(form.change) : null;
     let order: PublicOrder;
+    let token: string;
     try {
-      ({ order } = await api.post<{ order: PublicOrder }>('/api/orders', {
+      ({ order, token } = await api.post<{ order: PublicOrder; token: string }>('/api/orders', {
         customer_name: form.name.trim(),
         customer_phone: onlyDigits(form.phone),
         customer_email: form.email.trim() || null,
@@ -322,9 +251,12 @@ export function CheckoutPage() {
       return;
     }
     setSending(false);
-    orderCache.set(order.token, order);
+    // O pedido já está salvo no Neon; o código de acompanhamento vai no endereço da página de confirmação
+    // e fica na lista "neste aparelho" só como atalho.
+    seedOrder(token, order);
+    rememberOrder(order.order_number, token);
     clear();
-    navigate(`/pedido/${order.token}`);
+    navigate(`/pedido/${token}`);
   };
 
   const closedText = store.orders_paused
@@ -338,6 +270,29 @@ export function CheckoutPage() {
         Finalizar <span className="text-[#2563FF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]">pedido</span>
       </h1>
       <p className="mt-2 text-white/60">Confira seus itens, diga onde entregar e como vai pagar.</p>
+      {accountStatus === 'in' && account ? (
+        <p className="mt-4 flex items-start gap-2.5 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-100">
+          <UserRound className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>
+            Você entrou como <strong className="text-white">{account.name}</strong>. Este pedido fica salvo em “Meus pedidos”.
+          </span>
+        </p>
+      ) : accountStatus === 'out' ? (
+        <p className="mt-4 flex items-start gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/65">
+          <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-white/45" aria-hidden="true" />
+          <span>
+            Você pode finalizar sem conta e acompanhar o pedido pelo link. Quer guardar o histórico?{' '}
+            <a href="/conta?voltar=%2Fcheckout" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
+              Entrar
+            </a>{' '}
+            ou{' '}
+            <a href="/conta?aba=cadastro&voltar=%2Fcheckout" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
+              criar conta
+            </a>
+            .
+          </span>
+        </p>
+      ) : null}
 
       <form onSubmit={submit} noValidate className="mt-8 grid gap-6 lg:grid-cols-[1fr_22rem] lg:items-start">
         <div className="space-y-5">
@@ -542,257 +497,11 @@ export function CheckoutPage() {
                   <>Finalizar pedido · {money(total)}</>
                 )}
               </button>
-              <p className="text-center text-xs text-white/45">Você recebe o número do pedido na hora e pode enviá-lo pelo WhatsApp.</p>
+              <p className="text-center text-xs text-white/45">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>
             </div>
           </div>
         </aside>
       </form>
-    </PageShell>
-  );
-}
-
-// ---- Pedido do cliente (/pedido/:id) -----------------------------------------------------------
-
-const FINAL: OrderStatus[] = ['delivered', 'cancelled'];
-
-function StatusSteps({ order }: { order: PublicOrder }) {
-  const steps: OrderStatus[] = ['new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered'];
-  const reached = new Map(order.history.map((h) => [h.status, h.at]));
-  if (order.order_status === 'cancelled') {
-    return (
-      <p className="flex items-center gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 font-semibold text-rose-100">
-        <XCircle className="h-5 w-5" aria-hidden="true" />
-        Pedido cancelado. Qualquer dúvida, fale com a loja pelo WhatsApp.
-      </p>
-    );
-  }
-  const currentIndex = steps.indexOf(order.order_status);
-  return (
-    <ol className="grid gap-3 sm:grid-cols-5 sm:gap-2" aria-label="Andamento do pedido">
-      {steps.map((status, i) => {
-        const done = i <= currentIndex;
-        const current = i === currentIndex;
-        const at = reached.get(status);
-        return (
-          <li key={status} className="flex items-center gap-3 sm:flex-col sm:items-center sm:gap-2 sm:text-center" aria-current={current ? 'step' : undefined}>
-            <span
-              className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-black ${
-                done ? 'bg-[#145CFF] text-white shadow-[0_0_18px_rgba(20,92,255,0.8)]' : 'border border-white/15 text-white/40'
-              } ${current ? 'ring-4 ring-[#145CFF]/30' : ''}`}
-            >
-              {done ? <Check className="h-4 w-4" aria-hidden="true" /> : i + 1}
-            </span>
-            <span className="min-w-0">
-              <span className={`block text-[11px] font-black tracking-wide ${done ? 'text-white' : 'text-white/40'}`}>
-                {statusLabel(status, order.delivery_type)}
-              </span>
-              {at && <span className="block text-[11px] text-white/45">{formatTime(at)}</span>}
-            </span>
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-export function OrderPage({ token }: { token: string }) {
-  const { store, payments } = useShop();
-  const pixKey = payments.find((p) => p.code === 'pix')?.details ?? null;
-  const [order, setOrder] = useState<PublicOrder | null>(() => orderCache.get(token) ?? null);
-  const [state, setState] = useState<'loading' | 'ok' | 'missing' | 'error'>(() => (orderCache.has(token) ? 'ok' : 'loading'));
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const { order: fresh } = await api.get<{ order: PublicOrder }>(`/api/orders/${token}`);
-        if (!alive) return;
-        setOrder(fresh);
-        setState('ok');
-      } catch (error) {
-        if (!alive) return;
-        if (error instanceof ApiError && error.status === 404) setState('missing');
-        else setState((s) => (s === 'ok' ? s : 'error'));
-      }
-    };
-    void load();
-    // Acompanha o status enquanto a página está aberta.
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
-    }, 20_000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [token]);
-
-  useEffect(() => {
-    if (order) document.title = `Pedido #${order.order_number} – ${store.store_name}`;
-  }, [order, store.store_name]);
-
-  if (state === 'loading' || (state === 'error' && !order)) {
-    return (
-      <PageShell back="/" backLabel="Início">
-        {state === 'loading' ? (
-          <div className="mt-20 flex justify-center" role="status" aria-label="Carregando o pedido">
-            <LoaderCircle className="h-10 w-10 animate-spin text-[#2563FF]" aria-hidden="true" />
-          </div>
-        ) : (
-          <p className="mt-16 text-center text-white/70" role="alert">
-            Não foi possível carregar o pedido agora. Atualize a página em instantes.
-          </p>
-        )}
-      </PageShell>
-    );
-  }
-
-  if (state === 'missing' || !order) {
-    return (
-      <PageShell back="/" backLabel="Início">
-        <div className="mx-auto mt-10 max-w-md text-center">
-          <h1 className="text-2xl font-black text-white">Pedido não encontrado</h1>
-          <p className="mt-2 text-white/65">Confira o link ou fale com a loja pelo WhatsApp.</p>
-          <a href="/bebidas" className={`${BLUE_BUTTON} mt-7`}>
-            Ver bebidas
-          </a>
-        </div>
-      </PageShell>
-    );
-  }
-
-  const message = orderWhatsappMessage(store, order);
-  const showPix = order.payment_method === 'pix' && pixKey && order.payment_status !== 'paid' && order.order_status !== 'cancelled';
-  const live = !FINAL.includes(order.order_status);
-
-  return (
-    <PageShell back="/bebidas" backLabel="Bebidas">
-      <div className="relative overflow-hidden rounded-[2rem] border border-[#145CFF]/35 bg-gradient-to-br from-[#145CFF]/30 via-[#0B1230] to-[#050505] p-6 text-center shadow-[0_40px_120px_-50px_rgba(20,92,255,0.9)] sm:p-10">
-        <div aria-hidden="true" className="pointer-events-none absolute -left-16 -top-20 h-64 w-64 rounded-full bg-[#2563FF]/30 blur-3xl cc-glow" />
-        <div className="relative">
-          <CheckCircle2 className="mx-auto h-14 w-14 text-[#5B8CFF] drop-shadow-[0_0_20px_rgba(37,99,255,0.9)]" aria-hidden="true" />
-          <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">Pedido recebido!</h1>
-          <p className="mx-auto mt-2 max-w-md text-balance text-white/75 sm:text-lg">
-            Seu pedido <strong className="text-white">#{order.order_number}</strong> foi enviado para a {store.store_name}.
-          </p>
-          <a href={storeWhatsappUrl(store, message)} target="_blank" rel="noopener noreferrer" className={`${WHATSAPP_BUTTON} mt-7 w-full sm:w-auto`}>
-            <WhatsAppIcon className="h-6 w-6" />
-            Enviar pedido pelo WhatsApp
-          </a>
-          <p className="mt-3 text-xs text-white/50">O pedido já está salvo. O WhatsApp é para falar com a loja, se quiser.</p>
-        </div>
-      </div>
-
-      <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_22rem] lg:items-start">
-        <div className="space-y-5">
-          <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5 sm:p-6" aria-labelledby="andamento">
-            <div className="flex items-center justify-between gap-3">
-              <h2 id="andamento" className="text-lg font-black text-white">
-                Andamento
-              </h2>
-              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black tracking-wide ring-1 ${STATUS[order.order_status].badge}`}>
-                <span className={`h-1.5 w-1.5 rounded-full ${STATUS[order.order_status].dot}`} />
-                {statusLabel(order.order_status, order.delivery_type)}
-              </span>
-            </div>
-            <div className="mt-5">
-              <StatusSteps order={order} />
-            </div>
-            {live && <p className="mt-4 text-xs text-white/45">Esta página atualiza sozinha.</p>}
-          </section>
-
-          <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5 sm:p-6" aria-labelledby="itens">
-            <h2 id="itens" className="text-lg font-black text-white">
-              Itens
-            </h2>
-            <ul className="mt-3 divide-y divide-white/10">
-              {order.items.map((item, i) => (
-                <li key={i} className="flex justify-between gap-4 py-2.5 text-sm">
-                  <span className="text-white">
-                    <span className="font-bold text-[#8FB1FF]">{item.quantity}x</span> {item.product_name}
-                  </span>
-                  <span className="tabular-nums text-white/75">{money(item.total_price)}</span>
-                </li>
-              ))}
-            </ul>
-            <dl className="mt-3 space-y-1.5 border-t border-white/10 pt-3 text-sm">
-              <div className="flex justify-between text-white/65">
-                <dt>Subtotal</dt>
-                <dd className="tabular-nums">{money(order.subtotal)}</dd>
-              </div>
-              <div className="flex justify-between text-white/65">
-                <dt>Entrega</dt>
-                <dd className="tabular-nums">{order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}</dd>
-              </div>
-              {order.discount > 0 && (
-                <div className="flex justify-between text-white/65">
-                  <dt>Desconto</dt>
-                  <dd className="tabular-nums">− {money(order.discount)}</dd>
-                </div>
-              )}
-              <div className="flex items-end justify-between pt-1">
-                <dt className="font-bold text-white">Total</dt>
-                <dd>
-                  <Price value={order.total} className="text-2xl" />
-                </dd>
-              </div>
-            </dl>
-          </section>
-        </div>
-
-        <aside className="space-y-5">
-          <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5" aria-labelledby="entrega">
-            <h2 id="entrega" className="flex items-center gap-2 text-base font-black text-white">
-              {order.delivery_type === 'delivery' ? <Motorbike className="h-5 w-5 text-[#2563FF]" aria-hidden="true" /> : <Store className="h-5 w-5 text-[#2563FF]" aria-hidden="true" />}
-              {DELIVERY_LABEL[order.delivery_type]}
-            </h2>
-            <div className="mt-2 space-y-0.5 text-sm text-white/70">
-              {order.delivery_type === 'delivery' ? addressLines(order).map((line) => <p key={line}>{line}</p>) : <p>{fullAddress(store) || 'Retirada na loja'}</p>}
-            </div>
-          </section>
-          <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5" aria-labelledby="pagamento">
-            <h2 id="pagamento" className="text-base font-black text-white">
-              Pagamento
-            </h2>
-            <p className="mt-2 text-sm text-white/70">
-              {PAYMENT_LABEL[order.payment_method]}
-              {order.payment_method === 'cash' && order.change_for ? ` · troco para ${money(order.change_for)}` : ''}
-              {order.payment_status === 'paid' ? ' · pago' : ''}
-            </p>
-            {showPix && (
-              <div className="mt-3 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 p-3">
-                <p className="text-xs text-white/60">Chave PIX</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <code className="min-w-0 flex-1 break-all text-sm font-bold text-white">{pixKey}</code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void navigator.clipboard?.writeText(pixKey ?? '').then(() => setCopied(true));
-                      window.setTimeout(() => setCopied(false), 2000);
-                    }}
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#145CFF] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                  >
-                    {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-                    {copied ? 'Copiada' : 'Copiar'}
-                  </button>
-                </div>
-                <p className="mt-2 text-xs text-white/55">Pague {money(order.total)} e envie o comprovante pelo WhatsApp.</p>
-              </div>
-            )}
-          </section>
-          {order.notes && (
-            <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5" aria-labelledby="obs">
-              <h2 id="obs" className="text-base font-black text-white">
-                Observações
-              </h2>
-              <p className="mt-2 whitespace-pre-line text-sm text-white/70">{order.notes}</p>
-            </section>
-          )}
-          <a href="/bebidas" className={`${GHOST_BUTTON} w-full`}>
-            Fazer outro pedido
-          </a>
-        </aside>
-      </div>
     </PageShell>
   );
 }

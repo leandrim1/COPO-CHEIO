@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronRight, Inbox, MessageCircle, Phone, Printer, Search, User } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Inbox, Link2, MessageCircle, Phone, Printer, Search, User, UserCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import {
@@ -16,7 +16,8 @@ import {
   whatsappTo,
 } from '../lib/format';
 import { navigate } from '../lib/router';
-import type { Order, OrderItem, OrderStatus, PaymentStatus, StatusChange } from '../lib/types';
+import { copyText, trackingUrl } from '../lib/tracking';
+import type { Order, OrderItem, OrderStatus, PaymentStatus, StatusChange, TrackingLinkInfo } from '../lib/types';
 import { useLiveOrders } from './AdminApp';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Spinner, StatusBadge, cx, useConfirm, useToast } from './ui';
 
@@ -31,6 +32,17 @@ const FILTERS: { value: OrderStatus | 'all'; label: string }[] = [
 ];
 
 const PAGE = 30;
+
+// Pedido de cliente com conta ou de visitante.
+function AccountBadge({ order }: { order: Pick<Order, 'customer_id'> }) {
+  return order.customer_id ? (
+    <Badge tone="blue" className="shrink-0">
+      <UserCheck className="h-3 w-3" aria-hidden="true" /> Conta
+    </Badge>
+  ) : (
+    <Badge tone="gray" className="shrink-0">Visitante</Badge>
+  );
+}
 
 // Próximo passo do fluxo (para o botão rápido da lista).
 function nextStatus(o: Order): { status: OrderStatus; label: string } | null {
@@ -65,8 +77,12 @@ export function OrdersPage() {
     const status = new URLSearchParams(window.location.search).get('status');
     return FILTERS.some((f) => f.value === status) ? (status as OrderStatus) : 'all';
   });
-  const [query, setQuery] = useState('');
-  const [term, setTerm] = useState('');
+  // /admin/pedidos?q=… (links vindos de Clientes) já abre filtrado.
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
+  const [term, setTerm] = useState(() => (new URLSearchParams(window.location.search).get('q') ?? '').trim());
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [account, setAccount] = useState<'all' | 'account' | 'guest'>('all');
   const [limit, setLimit] = useState(PAGE);
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -79,12 +95,15 @@ export function OrdersPage() {
     return () => window.clearTimeout(timer);
   }, [query]);
 
-  useEffect(() => setLimit(PAGE), [filter, term]);
+  useEffect(() => setLimit(PAGE), [filter, term, from, to, account]);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (filter !== 'all') params.set('status', filter);
     if (term) params.set('q', term);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (account !== 'all') params.set('account', account);
     try {
       const data = await api.get<{ orders: Order[]; has_more: boolean; counts: Partial<Record<OrderStatus, number>> }>(`/api/admin/orders?${params}`);
       setError(false);
@@ -94,7 +113,7 @@ export function OrdersPage() {
     } catch {
       setError(true);
     }
-  }, [filter, term, limit]);
+  }, [filter, term, from, to, account, limit]);
 
   useEffect(() => {
     void load();
@@ -151,8 +170,40 @@ export function OrdersPage() {
         <label className="relative block lg:w-80">
           <span className="sr-only">Buscar pedidos</span>
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" aria-hidden="true" />
-          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Número, nome ou telefone" className={cx(INPUT, 'pl-9')} />
+          <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Número, nome, telefone ou e-mail" className={cx(INPUT, 'pl-9')} />
         </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end gap-3" role="group" aria-label="Filtros de data e tipo de cliente">
+        <label className="block text-xs font-semibold text-white/55">
+          De
+          <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={cx(INPUT, 'mt-1 w-40')} />
+        </label>
+        <label className="block text-xs font-semibold text-white/55">
+          Até
+          <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={cx(INPUT, 'mt-1 w-40')} />
+        </label>
+        <label className="block text-xs font-semibold text-white/55">
+          Cliente
+          <select value={account} onChange={(e) => setAccount(e.target.value as typeof account)} className={cx(INPUT, 'mt-1 w-44')}>
+            <option value="all">Todos</option>
+            <option value="account">Com conta</option>
+            <option value="guest">Visitantes</option>
+          </select>
+        </label>
+        {(from || to || account !== 'all') && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setFrom('');
+              setTo('');
+              setAccount('all');
+            }}
+          >
+            Limpar filtros
+          </Button>
+        )}
       </div>
 
       <div className="mt-4">
@@ -170,8 +221,8 @@ export function OrdersPage() {
           <Card>
             <EmptyState
               icon={<Inbox className="h-6 w-6" aria-hidden="true" />}
-              title={term || filter !== 'all' ? 'Nenhum pedido encontrado' : 'Nenhum pedido ainda'}
-              description={term || filter !== 'all' ? 'Tente outro filtro ou busca.' : 'Assim que um cliente finalizar um pedido no site, ele aparece aqui.'}
+              title={term || filter !== 'all' || from || to || account !== 'all' ? 'Nenhum pedido encontrado' : 'Nenhum pedido ainda'}
+              description={term || filter !== 'all' || from || to || account !== 'all' ? 'Tente outro filtro ou busca.' : 'Assim que um cliente finalizar um pedido no site, ele aparece aqui.'}
             />
           </Card>
         ) : (
@@ -202,7 +253,10 @@ export function OrdersPage() {
                           </a>
                         </td>
                         <td className="max-w-[14rem] px-4 py-3">
-                          <p className="truncate font-semibold text-white">{o.customer_name}</p>
+                          <p className="flex items-center gap-2 font-semibold text-white">
+                            <span className="truncate">{o.customer_name}</span>
+                            <AccountBadge order={o} />
+                          </p>
                           <p className="text-xs text-white/45">{formatPhone(o.customer_phone)}</p>
                         </td>
                         <td className="px-4 py-3 text-right font-bold tabular-nums text-white">{money(Number(o.total))}</td>
@@ -246,7 +300,10 @@ export function OrdersPage() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="text-base font-black text-white">#{o.order_number}</p>
-                          <p className="truncate text-sm font-semibold text-white/85">{o.customer_name}</p>
+                          <p className="flex items-center gap-2 text-sm font-semibold text-white/85">
+                            <span className="truncate">{o.customer_name}</span>
+                            <AccountBadge order={o} />
+                          </p>
                         </div>
                         <StatusBadge status={o.order_status} delivery={o.delivery_type} />
                       </div>
@@ -298,6 +355,100 @@ const PRINT_CSS = `
 }
 `;
 
+// ---- Link de acompanhamento do cliente --------------------------------------------------------
+
+// O banco guarda só o hash do código: o link que o cliente recebeu não pode ser lido de volta. Para enviar,
+// copiar ou abrir, o painel gera um link novo (os que o cliente já tem continuam valendo, a não ser que se
+// escolha "Trocar link").
+function TrackingCard({ order, links, retention, onChanged }: { order: Order; links: TrackingLinkInfo[]; retention: number; onChanged: () => void }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [fresh, setFresh] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'new' | 'replace' | null>(null);
+  const [copied, setCopied] = useState(false);
+  const active = links.filter((l) => !l.revoked_at);
+  const first = order.customer_name.split(' ')[0];
+  const url = fresh ? trackingUrl(fresh) : '';
+
+  const generate = async (replace: boolean) => {
+    if (replace) {
+      const ok = await confirm({
+        title: 'Trocar o link de acompanhamento?',
+        description: 'Os links que o cliente já recebeu (inclusive o da página de confirmação) deixam de funcionar. Use se o link vazou ou foi parar na mão errada.',
+        confirmLabel: 'Trocar link',
+      });
+      if (!ok) return;
+    }
+    setBusy(replace ? 'replace' : 'new');
+    try {
+      const data = await api.post<{ token: string }>(`/api/admin/orders/${order.id}/tracking-link`, { replace });
+      setFresh(data.token);
+      setCopied(false);
+      onChanged();
+      toast.success(replace ? 'Link trocado.' : 'Link gerado.', replace ? 'Os links anteriores foram invalidados.' : 'Os links que o cliente já tem continuam valendo.');
+    } catch (err) {
+      toast.error('Não foi possível gerar o link.', friendlyError(err, ''));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card title="Acompanhamento do cliente" description={`O cliente acompanha o pedido sem login. O link vale por ${retention} dias após a última atualização.`}>
+      <p className="flex items-center gap-2 text-sm text-white/75">
+        <Link2 className="h-4 w-4 text-white/40" aria-hidden="true" />
+        {active.length} {active.length === 1 ? 'link ativo' : 'links ativos'}
+        {links.length > active.length ? <span className="text-white/40">· {links.length - active.length} invalidado(s)</span> : null}
+      </p>
+      <p className="mt-2 text-xs text-white/45">
+        Por segurança, o sistema guarda só o hash do código: o link que o cliente já recebeu não pode ser visto de novo. Gere um link novo para abrir, copiar ou enviar.
+      </p>
+
+      {fresh && (
+        <div className="mt-3 space-y-2 rounded-xl border border-[#145CFF]/35 bg-[#145CFF]/10 p-3">
+          <input readOnly value={url} aria-label="Link de acompanhamento" onFocus={(e) => e.currentTarget.select()} className={cx(INPUT, 'text-xs')} />
+          <p className="text-[11px] text-white/50">Este link só aparece agora. Código: <span className="font-mono text-white/80">{fresh}</span></p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              onClick={() => void copyText(url).then((ok) => (ok ? setCopied(true) : toast.error('Não foi possível copiar.', 'Selecione o link e copie à mão.')))}
+            >
+              {copied ? 'Copiado' : 'Copiar'}
+            </Button>
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.06] px-3 text-xs font-semibold text-white hover:bg-white/10"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /> Abrir
+            </a>
+            <a
+              href={whatsappTo(order.customer_phone, `Olá, ${first}! Aqui é da Copo Cheio. Acompanhe o seu pedido #${order.order_number} por este link:\n${url}`)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-xl bg-[#25D366] px-3 text-xs font-bold text-[#04210F] hover:bg-[#3DE07A]"
+            >
+              <MessageCircle className="h-3.5 w-3.5" aria-hidden="true" /> Enviar por WhatsApp
+            </a>
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" variant="secondary" loading={busy === 'new'} onClick={() => void generate(false)}>
+          Gerar link
+        </Button>
+        <Button size="sm" variant="danger-ghost" loading={busy === 'replace'} onClick={() => void generate(true)}>
+          Trocar link
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 export function OrderDetailPage({ number }: { number: string }) {
   const { version } = useLiveOrders();
   const toast = useToast();
@@ -305,6 +456,9 @@ export function OrderDetailPage({ number }: { number: string }) {
   const [order, setOrder] = useState<Order | null | undefined>(undefined);
   const [items, setItems] = useState<OrderItem[]>([]);
   const [history, setHistory] = useState<StatusChange[]>([]);
+  const [links, setLinks] = useState<TrackingLinkInfo[]>([]);
+  const [account, setAccount] = useState<{ id: string; name: string; email: string; phone: string } | null>(null);
+  const [retention, setRetention] = useState(180);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -314,11 +468,14 @@ export function OrderDetailPage({ number }: { number: string }) {
       return;
     }
     try {
-      const data = await api.get<{ order: Order; items: OrderItem[]; history: StatusChange[] }>(`/api/admin/orders/${number}`);
+      const data = await api.get<{ order: Order; items: OrderItem[]; history: StatusChange[]; tracking_links: TrackingLinkInfo[]; account: typeof account; retention_days: number }>(`/api/admin/orders/${number}`);
       setError(false);
       setOrder(data.order);
       setItems(data.items);
       setHistory(data.history);
+      setLinks(data.tracking_links);
+      setAccount(data.account);
+      setRetention(data.retention_days);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) setOrder(null);
       else setError(true);
@@ -399,6 +556,7 @@ export function OrderDetailPage({ number }: { number: string }) {
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-black tracking-tight text-white sm:text-3xl">PEDIDO #{order.order_number}</h1>
             <StatusBadge status={order.order_status} delivery={order.delivery_type} />
+            <AccountBadge order={order} />
           </div>
           <p className="mt-1 text-sm text-white/50">
             {formatDateTime(order.created_at)} · {timeAgo(order.created_at)} · {DELIVERY_LABEL[order.delivery_type]}
@@ -524,8 +682,22 @@ export function OrderDetailPage({ number }: { number: string }) {
                 </a>
               </p>
               {order.customer_email && <p className="pl-6 text-white/60">{order.customer_email}</p>}
+              <p className="flex items-center gap-2 pt-1 text-xs text-white/55">
+                {account ? (
+                  <>
+                    <UserCheck className="h-4 w-4 text-[#9DBBFF]" aria-hidden="true" />
+                    <span>
+                      Cliente com conta: <a href={`/admin/clientes?q=${encodeURIComponent(account.email)}`} className="font-semibold text-[#8FB1FF] hover:text-white">{account.email}</a>
+                    </span>
+                  </>
+                ) : (
+                  <span>Pedido de visitante (sem conta).</span>
+                )}
+              </p>
             </div>
           </Card>
+
+          <TrackingCard order={order} links={links} retention={retention} onChanged={() => void load()} />
           <Card title={order.delivery_type === 'delivery' ? 'Endereço de entrega' : 'Retirada'}>
             {order.delivery_type === 'delivery' ? (
               <div className="space-y-0.5 text-sm text-white/80">

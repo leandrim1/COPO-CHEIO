@@ -21,7 +21,8 @@ import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
 import { money, normalizeText } from './lib/format';
 import { hoursLines, nextOpening, openHoursSummary } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
-import { CheckoutPage, OrderPage } from './site/Checkout';
+import { CheckoutPage } from './site/Checkout';
+import type { CustomerPage } from './site/CustomerPages';
 import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
 import type { Product } from './site/data';
 import {
@@ -46,6 +47,8 @@ import type { Banner } from './lib/types';
 
 // O painel administrativo só é baixado quando alguém abre /admin.
 const AdminApp = lazy(() => import('./admin/AdminApp'));
+// Acompanhamento de pedidos e conta do cliente: pacote à parte, fora do caminho da página inicial.
+const CustomerPages = lazy(() => import('./site/CustomerPages'));
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260508_215831_c6a8989c-d716-4d8d-8745-e972a2eec711.mp4';
@@ -709,6 +712,12 @@ function BebidasPage() {
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Início
           </a>
+          <a
+            href="/acompanhar-pedido"
+            className="absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            Acompanhar<span className="max-[420px]:sr-only">&nbsp;pedido</span>
+          </a>
         </div>
 
         <div className="px-4 sm:px-6">
@@ -1121,6 +1130,9 @@ function StickyNav({ visible, count, onOrder }: { visible: boolean; count: numbe
               {link}
             </a>
           ))}
+          <a href="/acompanhar-pedido" className="text-sm font-medium text-white/75 transition-colors hover:text-white">
+            Acompanhar pedido
+          </a>
         </div>
         <a
           href={ORDER_HREF}
@@ -1567,17 +1579,50 @@ function useSeo(page: string) {
 
 // ---- Site público ------------------------------------------------------------------------------
 
-type Page = { name: 'home' } | { name: 'bebidas' } | { name: 'checkout' } | { name: 'pedido'; token: string };
+type Page = { name: 'home' } | { name: 'bebidas' } | { name: 'checkout' } | CustomerPage;
+
+// Código de acompanhamento no endereço: 20 letras/números em grupos (ou o UUID dos links antigos). Qualquer
+// outro texto cai na página "Pedido não encontrado" em vez de abrir a página inicial.
+const CODE = '[^/]{1,200}';
 
 function pageOf(pathname: string): Page {
   if (pathname === '/bebidas') return { name: 'bebidas' };
   if (pathname === '/checkout') return { name: 'checkout' };
-  const order = /^\/pedido\/([0-9a-f-]{36})$/i.exec(pathname);
-  if (order) return { name: 'pedido', token: order[1].toLowerCase() };
+  let m = new RegExp(`^/pedido/(${CODE})$`).exec(pathname);
+  if (m) return { name: 'pedido', token: m[1] };
+  if (pathname === '/acompanhar-pedido') return { name: 'acompanhar', token: null };
+  m = new RegExp(`^/acompanhar-pedido/(${CODE})$`).exec(pathname);
+  if (m) return { name: 'acompanhar', token: m[1] };
+  if (pathname === '/conta') return { name: 'conta' };
+  if (pathname === '/conta/pedidos') return { name: 'conta-pedidos' };
+  m = /^\/conta\/pedidos\/(\d{1,12})$/.exec(pathname);
+  if (m) return { name: 'conta-pedido', number: m[1] };
+  if (pathname === '/conta/recuperar') return { name: 'recuperar' };
+  m = /^\/conta\/redefinir\/([0-9A-Za-z_-]{20,100})$/.exec(pathname);
+  if (m) return { name: 'redefinir', token: m[1] };
   return { name: 'home' };
 }
 
-const PAGE_TITLE: Record<Page['name'], string> = { home: '', bebidas: 'Bebidas', checkout: 'Finalizar pedido', pedido: 'Seu pedido' };
+const PAGE_TITLE: Record<Page['name'], string> = {
+  home: '',
+  bebidas: 'Bebidas',
+  checkout: 'Finalizar pedido',
+  pedido: 'Seu pedido',
+  acompanhar: 'Acompanhar pedido',
+  conta: 'Minha conta',
+  'conta-pedidos': 'Meus pedidos',
+  'conta-pedido': 'Meu pedido',
+  recuperar: 'Recuperar senha',
+  redefinir: 'Nova senha',
+};
+
+function CustomerLoading() {
+  return (
+    <div className="grid min-h-[100dvh] place-items-center bg-[#050505]" role="status" aria-label="Carregando">
+      <span className="h-10 w-10 animate-spin rounded-full border-2 border-white/15 border-t-[#2563FF]" />
+    </div>
+  );
+}
 
 function PublicSite({ pathname }: { pathname: string }) {
   const page = pageOf(pathname);
@@ -1615,8 +1660,12 @@ function PublicSite({ pathname }: { pathname: string }) {
       </style>
       {page.name === 'bebidas' && <BebidasPage />}
       {page.name === 'checkout' && <CheckoutPage />}
-      {page.name === 'pedido' && <OrderPage token={page.token} />}
       {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
+      {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
+        <Suspense fallback={<CustomerLoading />}>
+          <CustomerPages page={page} />
+        </Suspense>
+      )}
       {showOrder && (
         <>
           <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} />
