@@ -38,7 +38,7 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | `/bebidas`          | Cardápio: banners, busca, categorias, favoritos, ESGOTADO                    |
 | `/checkout`         | Dados do cliente, entrega ou retirada, endereço, pagamento, observações      |
 | `/pedido/:codigo`   | Confirmação: "Pedido recebido!", andamento, link de acompanhamento, WhatsApp |
-| `/acompanhar-pedido`            | Acompanhar sem cadastro (número + código) ou entrar na conta       |
+| `/acompanhar-pedido`            | Sem login: acompanhar sem cadastro (número + código) ou entrar na conta. Com login: só os pedidos em andamento da conta |
 | `/acompanhar-pedido/:codigo`    | Link permanente do pedido: andamento ao vivo, itens, pagamento     |
 | `/conta` · `/conta/pedidos` · `/conta/pedidos/:numero` | Conta (opcional): dados, "Meus pedidos", detalhe e "pedir de novo" |
 | `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha                                      |
@@ -141,6 +141,7 @@ no Neon.
   *Compartilhar pelo WhatsApp* (abre a conversa com a loja com o número do pedido e o link; abrir o WhatsApp não é
   tratado como "enviado") e *Fazer outro pedido*.
 - **Perdeu o link?** `/acompanhar-pedido` (rodapé e menu): informe o **número do pedido + o código**, ou entre na conta.
+  Quem já entrou na conta não vê a consulta sem cadastro: a página mostra direto os pedidos em andamento dela.
   O número sozinho nunca dá acesso. Também dá para colar o link inteiro no campo do código. Neste aparelho fica uma
   lista de atalhos dos últimos pedidos (só conveniência; pode apagar).
 - **Andamento ao vivo**: linha do tempo Novo → Confirmado → Em preparo → Saiu para entrega (Pronto para retirar) →

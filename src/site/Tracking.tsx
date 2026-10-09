@@ -18,27 +18,21 @@ import {
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
-import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, STATUS_FLOW, addressLines, formatDateTime, money } from '../lib/format';
+import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, STATUS_FLOW, addressLines, formatDateTime, money, stepLabel } from '../lib/format';
 import { orderCache, seedOrder } from '../lib/orderCache';
 import { forgetAllOrders, forgetOrder, loadRecent, rememberOrder } from '../lib/recent';
 import type { RecentOrder } from '../lib/recent';
 import { copyText, normalizeCode, trackingPath, trackingUrl } from '../lib/tracking';
 import { navigate } from '../lib/router';
-import type { DeliveryType, OrderStatus, PublicOrder, StoreSettings } from '../lib/types';
+import type { CustomerAccount, OrderStatus, PublicOrder, StoreSettings } from '../lib/types';
 import { setCustomer, useCustomer } from './customer';
 import { fullAddress, storeWhatsappUrl, useShop } from './data';
+import { OrderListItem, useActiveOrders } from './OrderList';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, FIELD, GHOST_BUTTON, Price, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
 import { useOrderFeed } from './useOrderFeed';
 
 // ---- Textos de status ---------------------------------------------------------------------------
-
-// Nomes das etapas como o cliente lê (na retirada, "saiu para entrega" vira "pronto para retirar").
-export function stepLabel(status: OrderStatus, delivery: DeliveryType): string {
-  if (status === 'out_for_delivery') return delivery === 'pickup' ? 'Pronto para retirar' : 'Saiu para entrega';
-  if (status === 'delivered') return delivery === 'pickup' ? 'Retirado' : 'Entregue';
-  return { new: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', cancelled: 'Cancelado' }[status];
-}
 
 function headline(order: PublicOrder): string {
   const pickup = order.delivery_type === 'pickup';
@@ -666,18 +660,101 @@ function TrackingLoaded({ token, confirmation }: { token: string; confirmation: 
 
 // ---- /acompanhar-pedido -------------------------------------------------------------------------
 
+// Quem já entrou na conta vê só os próprios pedidos: acompanhar "sem cadastro" deixa de fazer sentido.
 export function LookupPage() {
   const { status, customer } = useCustomer();
+  // Só decide qual versão mostrar depois de saber se há conta logada (assim a opção errada não pisca);
+  // se a resposta demorar, mostra a consulta sem cadastro mesmo assim.
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    document.title = 'Acompanhar pedido';
+    const timer = window.setTimeout(() => setWaited(true), 2500);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (status === 'in' && customer) return <AccountTracking customer={customer} />;
+  if ((status === 'idle' || status === 'loading') && !waited) {
+    return (
+      <PageShell back="/" backLabel="Início">
+        <div className="mt-20 flex justify-center" role="status" aria-label="Carregando">
+          <LoaderCircle className="h-10 w-10 animate-spin text-[#2563FF]" aria-hidden="true" />
+        </div>
+      </PageShell>
+    );
+  }
+  return <GuestLookup />;
+}
+
+const LookupTitle = () => (
+  <h1 className="text-3xl font-black tracking-tight text-white sm:text-4xl">
+    Acompanhar <span className="text-[#2563FF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]">pedido</span>
+  </h1>
+);
+
+// Logado: os pedidos em andamento da conta, direto, sem número nem código.
+function AccountTracking({ customer }: { customer: CustomerAccount }) {
+  const { orders, failed, reload } = useActiveOrders();
+  return (
+    <PageShell back="/" backLabel="Início">
+      <LookupTitle />
+      <p className="mt-2 max-w-2xl text-white/60">
+        Você entrou como <strong className="text-white">{customer.name}</strong>. Seus pedidos ficam aqui, sem precisar de link nem de código.
+      </p>
+      <section aria-labelledby="em-andamento" className="mt-8 max-w-3xl">
+        <h2 id="em-andamento" className="mb-3 text-lg font-black text-white">
+          {orders && orders.length === 1 ? 'Seu pedido em andamento' : 'Seus pedidos em andamento'}
+        </h2>
+        {orders === null ? (
+          failed ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+              <span className="min-w-0 flex-1">Não foi possível carregar seus pedidos agora.</span>
+              <button type="button" onClick={() => void reload()} className="inline-flex items-center gap-1.5 rounded-full bg-amber-300/20 px-3 py-1.5 text-xs font-bold hover:bg-amber-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" /> Tentar de novo
+              </button>
+            </div>
+          ) : (
+            <div className="flex justify-center py-8" role="status" aria-label="Carregando seus pedidos">
+              <LoaderCircle className="h-8 w-8 animate-spin text-[#2563FF]" aria-hidden="true" />
+            </div>
+          )
+        ) : orders.length === 0 ? (
+          <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.03] p-5 sm:p-6">
+            <p className="font-semibold text-white">Você não tem nenhum pedido em andamento agora.</p>
+            <p className="mt-1 text-sm text-white/60">Quando fizer um pedido, o andamento aparece aqui e se atualiza sozinho.</p>
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+              <a href="/bebidas" className={BLUE_BUTTON}>
+                Ver bebidas
+              </a>
+              <a href="/conta/pedidos" className={GHOST_BUTTON}>
+                Ver meus pedidos
+              </a>
+            </div>
+          </div>
+        ) : (
+          <>
+            <ul className="space-y-3">
+              {orders.map((o) => (
+                <OrderListItem key={o.order_number} o={o} />
+              ))}
+            </ul>
+            <a href="/conta/pedidos" className={`${GHOST_BUTTON} mt-5`}>
+              Ver todos os meus pedidos
+            </a>
+          </>
+        )}
+      </section>
+    </PageShell>
+  );
+}
+
+// Sem conta: número + código (opção B) ou entrar na conta (opção A).
+function GuestLookup() {
   const [number, setNumber] = useState('');
   const [code, setCode] = useState('');
   const [errors, setErrors] = useState<{ number?: string; code?: string }>({});
   const [formError, setFormError] = useState('');
   const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<RecentOrder[]>(() => loadRecent());
-
-  useEffect(() => {
-    document.title = 'Acompanhar pedido';
-  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -710,9 +787,7 @@ export function LookupPage() {
 
   return (
     <PageShell back="/" backLabel="Início">
-      <h1 className="text-3xl font-black tracking-tight text-white sm:text-4xl">
-        Acompanhar <span className="text-[#2563FF] [text-shadow:0_0_28px_rgba(20,92,255,0.6)]">pedido</span>
-      </h1>
+      <LookupTitle />
       <p className="mt-2 max-w-2xl text-white/60">Veja em que etapa está o seu pedido. Você pode entrar na sua conta ou acompanhar sem cadastro, como preferir.</p>
 
       <div className="mt-8 grid gap-5 lg:grid-cols-2">
@@ -731,25 +806,14 @@ export function LookupPage() {
             ))}
           </ul>
           <div className="mt-auto pt-6">
-            {status === 'in' && customer ? (
-              <>
-                <p className="mb-3 text-sm text-white/70">
-                  Você entrou como <strong className="text-white">{customer.name}</strong>.
-                </p>
-                <a href="/conta/pedidos" className={`${BLUE_BUTTON} w-full`}>
-                  Ver meus pedidos
-                </a>
-              </>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2">
-                <a href="/conta?voltar=%2Fconta%2Fpedidos" className={BLUE_BUTTON}>
-                  Entrar na conta
-                </a>
-                <a href="/conta?aba=cadastro&voltar=%2Fconta%2Fpedidos" className={GHOST_BUTTON}>
-                  Criar conta
-                </a>
-              </div>
-            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <a href="/conta?voltar=%2Fconta%2Fpedidos" className={BLUE_BUTTON}>
+                Entrar na conta
+              </a>
+              <a href="/conta?aba=cadastro&voltar=%2Fconta%2Fpedidos" className={GHOST_BUTTON}>
+                Criar conta
+              </a>
+            </div>
           </div>
         </section>
 
@@ -825,7 +889,7 @@ export function LookupPage() {
                 forgetAllOrders();
                 setRecent([]);
               }}
-              className="text-xs font-semibold text-white/50 underline-offset-4 hover:text-white hover:underline"
+              className="shrink-0 whitespace-nowrap text-xs font-semibold text-white/50 underline-offset-4 hover:text-white hover:underline"
             >
               Esquecer todos
             </button>

@@ -103,6 +103,13 @@ export function statusLabel(status: OrderStatus, delivery: DeliveryType): string
   return STATUS[status].label;
 }
 
+// Nomes das etapas como o cliente lê (na retirada, "saiu para entrega" vira "pronto para retirar").
+export function stepLabel(status: OrderStatus, delivery: DeliveryType): string {
+  if (status === 'out_for_delivery') return delivery === 'pickup' ? 'Pronto para retirar' : 'Saiu para entrega';
+  if (status === 'delivered') return delivery === 'pickup' ? 'Retirado' : 'Entregue';
+  return { new: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', cancelled: 'Cancelado' }[status];
+}
+
 export const PAYMENT_LABEL: Record<PaymentMethod, string> = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão' };
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   pending: 'Aguardando pagamento',

@@ -1,15 +1,16 @@
-import { LoaderCircle, LogOut, RefreshCw, ShoppingBag, TriangleAlert, XCircle, Check, ChevronRight } from 'lucide-react';
+import { LoaderCircle, LogOut, RefreshCw, ShoppingBag, TriangleAlert, XCircle, Check } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
-import { PAYMENT_LABEL, STATUS, formatDateTime, maskPhone, money, onlyDigits } from '../lib/format';
+import { maskPhone, onlyDigits } from '../lib/format';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder } from '../lib/types';
 import { logoutCustomer, safeReturn, setCustomer, useCustomer } from './customer';
 import { useShop } from './data';
 import { Field, PageShell } from './shell';
-import { OrderView, stepLabel } from './Tracking';
+import { OrderListItem, useActiveOrders } from './OrderList';
+import { OrderView } from './Tracking';
 import { BLUE_BUTTON, FIELD, GHOST_BUTTON } from './ui';
 import { useOrderFeed } from './useOrderFeed';
 
@@ -235,57 +236,12 @@ function ClaimForm({ onClaimed }: { onClaimed?: () => void }) {
   );
 }
 
-// Cartão de um pedido na lista (Meus pedidos e "pedido em andamento").
-function OrderListItem({ o }: { o: AccountOrderSummary }) {
-  return (
-    <li>
-      <a
-        href={`/conta/pedidos/${o.order_number}`}
-        className="flex items-center gap-4 rounded-[1.5rem] border border-white/10 bg-white/[0.03] p-4 transition-colors hover:border-white/30 hover:bg-white/[0.06] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:p-5"
-      >
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <span className="text-lg font-black text-white">Pedido #{o.order_number}</span>
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-black tracking-wide ring-1 ${STATUS[o.order_status].badge}`}>
-              <span className={`h-1.5 w-1.5 rounded-full ${STATUS[o.order_status].dot}`} />
-              {stepLabel(o.order_status, o.delivery_type).toUpperCase()}
-            </span>
-          </span>
-          {o.summary && <span className="mt-1 block truncate text-sm text-white/65">{o.summary}</span>}
-          <span className="mt-1 block text-xs text-white/45">
-            {formatDateTime(o.created_at)} · {PAYMENT_LABEL[o.payment_method]}
-            {o.payment_status === 'paid' ? ' · pago' : ''}
-          </span>
-        </span>
-        <span className="shrink-0 text-right">
-          <span className="block font-black tabular-nums text-white">{money(o.total)}</span>
-          <ChevronRight className="ml-auto mt-1 h-5 w-5 text-white/40" aria-hidden="true" />
-        </span>
-      </a>
-    </li>
-  );
-}
-
 // ---- /conta ----------------------------------------------------------------------------------------------
 
 function Profile({ customer }: { customer: CustomerAccount }) {
   const { zones } = useShop();
   // Pedidos ainda em andamento, para acompanhar sem procurar o link da confirmação.
-  const [active, setActive] = useState<AccountOrderSummary[]>([]);
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .get<{ orders: AccountOrderSummary[] }>('/api/account/orders')
-        .then(({ orders }) => alive && setActive(orders.filter((o) => o.order_status !== 'delivered' && o.order_status !== 'cancelled')))
-        .catch(() => undefined);
-    void load();
-    const timer = window.setInterval(() => document.visibilityState === 'visible' && void load(), 20_000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, []);
+  const { orders: active } = useActiveOrders();
   const [form, setForm] = useState({
     name: customer.name,
     phone: maskPhone(customer.phone.replace(/^55(?=\d{11}$)/, '')),
@@ -360,7 +316,7 @@ function Profile({ customer }: { customer: CustomerAccount }) {
   return (
     <>
       <Title sub={customer.email}>Olá, {customer.name.split(' ')[0]}!</Title>
-      {active.length > 0 && (
+      {active && active.length > 0 && (
         <section aria-labelledby="atual" className="mt-6">
           <h2 id="atual" className="mb-3 text-lg font-black text-white">
             {active.length === 1 ? 'Seu pedido em andamento' : 'Seus pedidos em andamento'}
