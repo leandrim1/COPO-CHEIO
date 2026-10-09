@@ -1,12 +1,12 @@
-import { LoaderCircle, LogOut, RefreshCw, ShoppingBag, TriangleAlert, XCircle, Check } from 'lucide-react';
+import { Check, Info, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag, TriangleAlert, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { maskPhone, onlyDigits } from '../lib/format';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
-import type { AccountOrderSummary, CustomerAccount, PublicOrder } from '../lib/types';
-import { logoutCustomer, safeReturn, setCustomer, useCustomer } from './customer';
+import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
+import { getLoginPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, useCustomer } from './customer';
 import { useShop } from './data';
 import { Field, PageShell } from './shell';
 import { OrderListItem, useActiveOrders } from './OrderList';
@@ -50,6 +50,20 @@ function OkLine({ children }: { children: ReactNode }) {
   );
 }
 
+function InfoLine({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' }) {
+  if (!children) return null;
+  const Icon = tone === 'warn' ? TriangleAlert : Info;
+  return (
+    <p
+      role="status"
+      className={`flex items-start gap-2 rounded-2xl border px-3.5 py-2.5 text-sm ${tone === 'warn' ? 'border-amber-400/30 bg-amber-400/10 text-amber-100' : 'border-[#2563FF]/40 bg-[#145CFF]/10 text-blue-100'}`}
+    >
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+      <span>{children}</span>
+    </p>
+  );
+}
+
 function Submit({ busy, children, className = '' }: { busy: boolean; children: ReactNode; className?: string }) {
   return (
     <button type="submit" disabled={busy} className={`${BLUE_BUTTON} w-full disabled:cursor-not-allowed disabled:opacity-60 ${className}`}>
@@ -74,18 +88,158 @@ const Title = ({ children, sub }: { children: ReactNode; sub?: string }) => (
 
 // ---- Entrar / criar conta ------------------------------------------------------------------------------
 
+// Conta criada (ou tentando entrar) cujo e-mail ainda não foi confirmado: a pessoa digita o código que chegou na caixa de entrada.
+type Pending = {
+  email: string;
+  // Só na memória desta tela (nunca em localStorage): serve para entrar sozinho depois de confirmar o código.
+  password: string;
+  resendIn: number;
+  codeMinutes: number;
+  notice: string;
+  mailAvailable: boolean;
+};
+
+type RegisterResponse = VerificationInfo & { status: 'pending_verification' };
+
+const number = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
+const mmss = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+
+// Contagem regressiva em segundos até a hora marcada (não perde tempo se a aba ficar em segundo plano).
+function useCountdown(initial: number) {
+  const [until, setUntil] = useState(() => Date.now() + initial * 1000);
+  const [left, setLeft] = useState(initial);
+  useEffect(() => {
+    const tick = () => setLeft(Math.max(0, Math.ceil((until - Date.now()) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [until]);
+  return [left, (seconds: number) => setUntil(Date.now() + seconds * 1000)] as const;
+}
+
+function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConfirmed: (customer: CustomerAccount | null) => void; onBack: () => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [resends, setResends] = useState(0);
+  const [left, restart] = useCountdown(pending.resendIn);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    if (code.length !== 6) {
+      setError('Digite os 6 dígitos do código que enviamos por e-mail.');
+      input.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post('/api/account/verify-email', { email: pending.email, code });
+    } catch (err) {
+      setBusy(false);
+      setError(friendlyError(err, 'Não foi possível confirmar agora. Tente de novo em instantes.'));
+      setCode('');
+      input.current?.focus();
+      return;
+    }
+    // E-mail confirmado. Entra sozinho com a senha que acabou de ser digitada; se não der, a tela pede o login.
+    try {
+      const { customer } = await api.post<{ customer: CustomerAccount }>('/api/account/login', { email: pending.email, password: pending.password });
+      onConfirmed(customer);
+    } catch {
+      onConfirmed(null);
+    }
+  };
+
+  const resend = async () => {
+    setError('');
+    setInfo('');
+    setSending(true);
+    try {
+      const data = await api.post<{ resend_in?: number }>('/api/account/resend-verification', { email: pending.email });
+      restart(number(data.resend_in, 60));
+      setResends((n) => n + 1);
+      setCode('');
+      setInfo(`Pedimos um novo código para ${pending.email}. Ele costuma chegar em até 1 minuto, e o código anterior só deixa de valer quando o novo chegar.`);
+      input.current?.focus();
+    } catch (err) {
+      setError(friendlyError(err, 'Não foi possível reenviar agora. Tente de novo em instantes.'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} noValidate className="space-y-4">
+      <InfoLine tone={pending.mailAvailable ? 'info' : 'warn'}>{pending.notice}</InfoLine>
+      <Field label="Código de confirmação" error={undefined} hint={`Os 6 dígitos do e-mail. O código vale por ${pending.codeMinutes} minutos e só pode ser usado uma vez.`}>
+        {(p) => (
+          <input
+            {...p}
+            ref={input}
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+              setError('');
+            }}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="one-time-code"
+            maxLength={12}
+            spellCheck={false}
+            placeholder="000000"
+            className={`${FIELD} text-center font-mono text-2xl font-bold tracking-[0.35em]`}
+          />
+        )}
+      </Field>
+      <ErrorLine>{error}</ErrorLine>
+      <OkLine>{info}</OkLine>
+      <Submit busy={busy}>Confirmar e-mail</Submit>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={() => void resend()}
+          disabled={left > 0 || sending}
+          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/40 disabled:no-underline"
+        >
+          {sending && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+          {left > 0 ? `Reenviar código em ${mmss(left)}` : 'Reenviar código'}
+        </button>
+        <button type="button" onClick={onBack} className="text-sm font-semibold text-white/60 underline-offset-4 hover:text-white hover:underline">
+          Usar outro e-mail
+        </button>
+      </div>
+      <p className="text-xs leading-relaxed text-white/45">
+        Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se o e-mail está certo.
+        {resends >= 2 && ' Por segurança, limitamos quantos códigos podem ser enviados por hora: se ainda não chegou, aguarde um pouco e tente de novo.'} Sua conta só é ativada depois que o código for confirmado.
+      </p>
+    </form>
+  );
+}
+
 function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const [tab, setTab] = useState(initial);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', password: '' });
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [form, setForm] = useState(() => ({ name: '', email: getLoginPrefill(), phone: '', password: '' }));
   const set = (key: keyof typeof form, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: '' }));
   };
+  useEffect(() => () => setLoginPrefill(''), []);
 
   const done = (customer: CustomerAccount) => {
+    setLoginPrefill('');
     setCustomer(customer);
     const back = safeReturn(query().get('voltar'));
     if (back) navigate(back, { replace: true });
@@ -94,6 +248,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotice('');
     const next: Record<string, string> = {};
     const email = form.email.trim();
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) next.email = 'Confira o e-mail.';
@@ -112,17 +267,73 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
     }
     setBusy(true);
     try {
-      const { customer } =
-        tab === 'entrar'
-          ? await api.post<{ customer: CustomerAccount }>('/api/account/login', { email, password: form.password })
-          : await api.post<{ customer: CustomerAccount }>('/api/account/register', { name: form.name.trim(), email, phone: onlyDigits(form.phone), password: form.password });
-      done(customer);
+      if (tab === 'entrar') {
+        const { customer } = await api.post<{ customer: CustomerAccount }>('/api/account/login', { email, password: form.password });
+        done(customer);
+      } else {
+        // A conta nasce "pendente": nada de sessão até confirmar o código que o servidor manda por e-mail.
+        const res = await api.post<RegisterResponse>('/api/account/register', { name: form.name.trim(), email, phone: onlyDigits(form.phone), password: form.password });
+        setPending({
+          email: res.email,
+          password: form.password,
+          resendIn: number(res.resend_in, 60),
+          codeMinutes: number(res.code_minutes, 15),
+          mailAvailable: true,
+          notice: `Enviamos um código de 6 dígitos para ${res.email}. Digite-o abaixo para ativar a sua conta.`,
+        });
+      }
     } catch (err) {
-      setError(friendlyError(err, 'Não foi possível continuar agora. Tente de novo em instantes.'));
+      if (err instanceof ApiError && err.code === 'email_not_verified') {
+        // Senha certa, mas o e-mail ainda não foi confirmado: leva para a tela do código.
+        const d = err.data;
+        const available = d.mail_available !== false;
+        const address = typeof d.email === 'string' ? d.email : email;
+        setPending({
+          email: address,
+          password: form.password,
+          resendIn: number(d.resend_in, 60),
+          codeMinutes: number(d.code_minutes, 15),
+          mailAvailable: available,
+          notice: !available
+            ? 'Sua conta ainda não foi ativada, e o envio de e-mails da loja está indisponível no momento. Tente de novo mais tarde.'
+            : d.sent
+              ? `Sua conta ainda não foi ativada. Enviamos um novo código de 6 dígitos para ${address}.`
+              : `Sua conta ainda não foi ativada: falta confirmar o e-mail ${address}. Use o último código que enviamos ou peça outro.`,
+        });
+      } else if (err instanceof ApiError && ['invalid_email', 'invalid_email_domain', 'mail_recipient_rejected'].includes(err.code ?? '')) {
+        setErrors({ email: err.message });
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      } else {
+        setError(friendlyError(err, 'Não foi possível continuar agora. Tente de novo em instantes.'));
+      }
     } finally {
       setBusy(false);
     }
   };
+
+  const confirmed = (customer: CustomerAccount | null) => {
+    if (customer) return done(customer);
+    // E-mail confirmado, mas não foi possível entrar sozinho: pede o login normal.
+    setForm((f) => ({ ...f, email: pending?.email ?? f.email, password: '' }));
+    setPending(null);
+    setTab('entrar');
+    setNotice('E-mail confirmado! Agora entre com o seu e-mail e a sua senha.');
+  };
+
+  const useOtherEmail = () => {
+    setPending(null);
+    setTab('cadastro');
+    setForm((f) => ({ ...f, email: '' }));
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('input[type="email"]')?.focus());
+  };
+
+  if (pending) {
+    return (
+      <Panel id="confirmar" title="Confirme seu e-mail" subtitle="Falta pouco: confirme que este e-mail é seu para ativar a conta.">
+        <VerifyStep pending={pending} onConfirmed={confirmed} onBack={useOtherEmail} />
+      </Panel>
+    );
+  }
 
   return (
     <Panel id="acesso" title={tab === 'entrar' ? 'Entrar na minha conta' : 'Criar minha conta'}>
@@ -136,6 +347,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             onClick={() => {
               setTab(t);
               setError('');
+              setNotice('');
               setErrors({});
             }}
             className={`rounded-full px-4 py-2 text-sm font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${tab === t ? 'bg-[#145CFF] text-white' : 'text-white/60 hover:text-white'}`}
@@ -145,6 +357,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
         ))}
       </div>
       <form onSubmit={submit} noValidate className="space-y-4">
+        <OkLine>{notice}</OkLine>
         {tab === 'cadastro' && (
           <>
             <Field label="Nome *" error={errors.name}>
@@ -155,7 +368,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             </Field>
           </>
         )}
-        <Field label="E-mail *" error={errors.email}>
+        <Field label="E-mail *" error={errors.email} hint={tab === 'cadastro' ? 'Enviaremos um código para confirmar que o e-mail é seu.' : undefined}>
           {(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
         </Field>
         <Field label="Senha *" error={errors.password} hint={tab === 'cadastro' ? 'Pelo menos 8 caracteres.' : undefined}>
@@ -172,7 +385,10 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
           )}
         </Field>
         <ErrorLine>{error}</ErrorLine>
-        <Submit busy={busy}>{tab === 'entrar' ? 'Entrar' : 'Criar conta'}</Submit>
+        <Submit busy={busy}>
+          {tab === 'cadastro' && !busy ? <Mail className="h-5 w-5" aria-hidden="true" /> : null}
+          {tab === 'entrar' ? 'Entrar' : 'Criar conta e receber o código'}
+        </Submit>
         {tab === 'entrar' && (
           <p className="text-center text-sm">
             <a href="/conta/recuperar" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
@@ -180,9 +396,68 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             </a>
           </p>
         )}
-        {tab === 'cadastro' && <p className="text-xs text-white/45">Usamos seus dados só para entregar e acompanhar seus pedidos. Você pode excluir a conta quando quiser.</p>}
+        {tab === 'cadastro' && <p className="text-xs text-white/45">Usamos seus dados só para entregar e acompanhar seus pedidos. A conta só é ativada depois que você confirmar o código enviado ao seu e-mail. Você pode excluir a conta quando quiser.</p>}
       </form>
     </Panel>
+  );
+}
+
+// ---- /conta/verificar/:token (link do e-mail) -----------------------------------------------------------
+
+// O link do e-mail só abre esta tela; a confirmação acontece no clique (leitores de e-mail que "abrem" links sozinhos não gastam o link).
+export function VerifyLinkPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<'ready' | 'busy' | 'done' | 'error'>('ready');
+  const [error, setError] = useState('');
+  const [masked, setMasked] = useState('');
+  useEffect(() => {
+    document.title = 'Confirmar e-mail';
+  }, []);
+
+  const confirm = async () => {
+    setPhase('busy');
+    setError('');
+    try {
+      const data = await api.post<{ email: string; email_masked: string }>('/api/account/verify-link', { token });
+      setLoginPrefill(data.email);
+      setMasked(data.email_masked);
+      setPhase('done');
+    } catch (err) {
+      setError(friendlyError(err, 'Não foi possível confirmar agora. Tente de novo em instantes.'));
+      setPhase(err instanceof ApiError && err.status >= 500 ? 'ready' : 'error');
+    }
+  };
+
+  return (
+    <PageShell back="/conta" backLabel="Minha conta">
+      <div className="mx-auto max-w-md">
+        <Title>Confirmar e-mail</Title>
+        <div className="mt-6">
+          {phase === 'done' ? (
+            <Panel id="ok" title="E-mail confirmado!">
+              <OkLine>Sua conta foi ativada{masked ? ` (${masked})` : ''}. Agora é só entrar com o seu e-mail e a sua senha.</OkLine>
+              <a href="/conta" className={`${BLUE_BUTTON} mt-4 w-full`}>
+                Entrar na minha conta
+              </a>
+            </Panel>
+          ) : phase === 'error' ? (
+            <Panel id="erro" title="Não foi possível confirmar">
+              <ErrorLine>{error}</ErrorLine>
+              <a href="/conta" className={`${BLUE_BUTTON} mt-4 w-full`}>
+                Ir para a minha conta
+              </a>
+            </Panel>
+          ) : (
+            <Panel id="confirmar" title="Falta só um toque" subtitle="Toque no botão para confirmar que este e-mail é seu e ativar a conta.">
+              <ErrorLine>{error}</ErrorLine>
+              <button type="button" onClick={() => void confirm()} disabled={phase === 'busy'} className={`${BLUE_BUTTON} ${error ? 'mt-4' : ''} w-full disabled:cursor-not-allowed disabled:opacity-60`}>
+                {phase === 'busy' ? <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Check className="h-5 w-5" aria-hidden="true" />}
+                Confirmar meu e-mail
+              </button>
+            </Panel>
+          )}
+        </div>
+      </div>
+    </PageShell>
   );
 }
 

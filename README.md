@@ -42,13 +42,14 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | `/acompanhar-pedido/:codigo`    | Link permanente do pedido: andamento ao vivo, itens, pagamento     |
 | `/conta` · `/conta/pedidos` · `/conta/pedidos/:numero` | Conta (opcional): dados, "Meus pedidos", detalhe e "pedir de novo" |
 | `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha                                      |
+| `/conta/verificar/:codigo`                             | Link do e-mail de confirmação (um toque no botão ativa a conta) |
 
 | Painel (só administradores)                    | O que faz                                                   |
 | ---------------------------------------------- | ----------------------------------------------------------- |
 | `/admin/login`                                 | Entrar com e-mail e senha                                   |
 | `/admin/dashboard`                             | Pedidos e faturamento do dia/semana/mês, gráficos, recentes |
 | `/admin/pedidos` · `/admin/pedidos/:numero`    | Pedidos ao vivo, filtros (status, data, conta/visitante), busca, status, histórico, link de acompanhamento, impressão |
-| `/admin/clientes`                              | Contas de clientes: link de nova senha, desativar, excluir  |
+| `/admin/clientes`                              | Contas de clientes (confirmadas / aguardando confirmação do e-mail), estado do envio de e-mails e e-mail de teste, link de nova senha, desativar, excluir |
 | `/admin/produtos` · `/novo` · `/:id`           | Cadastrar, editar, duplicar, excluir, destacar, esgotar     |
 | `/admin/categorias`                            | Criar, editar, ordenar, ativar/desativar                    |
 | `/admin/estoque`                               | + adicionar / − retirar; 0 = ESGOTADO automático            |
@@ -68,11 +69,14 @@ O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blo
    servidor aceita os dois: o clássico, com `BLOB_READ_WRITE_TOKEN` (ou `<PREFIXO>_READ_WRITE_TOKEN`), e o novo, sem
    token, com `BLOB_STORE_ID` + OIDC da Vercel (as variáveis `BLOB_STORE_ID` e `BLOB_WEBHOOK_PUBLIC_KEY` indicam o modo
    novo; o projeto precisa estar com *OIDC* ligado em *Settings → Security*). O Blob precisa ser **público** (as fotos
-   aparecem no site). `GET /api/health` mostra o que está faltando: `{"database":"ok","blob":"ok"}`.
-2. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
+   aparecem no site). `GET /api/health` mostra o que está faltando: `{"database":"ok","blob":"ok","mail":"ok"}`.
+2. **E-mail (necessário para criar contas de clientes)** — veja [Confirmação do e-mail](#confirmação-do-e-mail-contas-de-clientes):
+   cadastre `SMTP_HOST`, `SMTP_USER` e `SMTP_PASS`. **Enquanto faltarem, ninguém consegue criar conta nem entrar nela**
+   (pedir e acompanhar pedidos sem conta continua funcionando, e o painel mostra um aviso com o que falta).
+3. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
    (`db/migrations`) e carrega o conteúdo inicial (os mesmos textos que o site já tinha). Nenhum produto, preço ou
    categoria é inventado. Rodar de novo não faz nada de novo.
-3. **Primeiro administrador (owner)** — no seu computador, com as variáveis baixadas (`vercel env pull .env.local`):
+4. **Primeiro administrador (owner)** — no seu computador, com as variáveis baixadas (`vercel env pull .env.local`):
 
    ```bash
    npm run admin:create -- seu@email.com "Seu Nome"
@@ -80,7 +84,7 @@ O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blo
 
    Ele pergunta a senha (mínimo de 8 caracteres) sem mostrá-la. A senha é guardada só como hash (scrypt).
    Os outros administradores o owner cria pelo painel, em *Configurações → Administradores*.
-4. Entre em `/admin`, configure **WhatsApp, Instagram, endereço, horário, entrega e pagamento** em *Configurações*
+5. Entre em `/admin`, configure **WhatsApp, Instagram, endereço, horário, entrega e pagamento** em *Configurações*
    e cadastre (ou importe) os produtos.
 
 ## Migrar o cardápio antigo
@@ -156,20 +160,91 @@ no Neon.
 
 ### Conta do cliente (opcional)
 
-`/conta`: cadastro (nome, e-mail, telefone), login, "Meus pedidos" (com o pedido em andamento em destaque), detalhe
-com andamento ao vivo, **pedir de novo** e dados/endereço guardados que já vêm preenchidos no checkout. Comprar como
-visitante continua sempre possível.
+`/conta`: cadastro (nome, e-mail, telefone), **confirmação do e-mail**, login, "Meus pedidos" (com o pedido em andamento
+em destaque), detalhe com andamento ao vivo, **pedir de novo** e dados/endereço guardados que já vêm preenchidos no
+checkout. Comprar como visitante continua sempre possível.
 
 - **Vincular um pedido de visitante à conta** exige a prova de posse: o **número + o código de acompanhamento** do
   pedido *e* o telefone (ou e-mail) do pedido iguais aos da conta. Pedido já ligado a outra conta, código errado ou
   vencido recebem a mesma resposta ("não encontramos…"). Vincular não altera o pedido.
-- **Esqueci a senha** (não há serviço de e-mail ligado): ou *e-mail + telefone cadastrado + número e código de um
-  pedido que já está na conta* (`/conta/recuperar`), ou a loja gera um **link de nova senha** (uso único, vale 24 h) em
-  *Painel → Clientes* e envia pelo WhatsApp.
+- **Esqueci a senha** (o e-mail da loja só manda códigos de confirmação): ou *e-mail + telefone cadastrado + número e
+  código de um pedido que já está na conta* (`/conta/recuperar`), ou a loja gera um **link de nova senha** (uso único,
+  vale 24 h) em *Painel → Clientes* e envia pelo WhatsApp. Redefinir a senha não confirma o e-mail: conta pendente
+  continua pendente.
 - **Excluir a conta** (pelo cliente em `/conta`, ou pelo owner a pedido do titular): apaga cadastro, endereço guardado e
   sessões; os pedidos ficam na loja, sem ligação com a conta, e o link de acompanhamento deles continua valendo.
 - Sessão do cliente: cookie `HttpOnly` + `SameSite=Lax` próprio (`copocheio_cliente`, 30 dias), só o hash no Neon; é
   outro mundo que a sessão do painel (uma não abre a outra). Senha com scrypt. 8 erros por e-mail / 30 por IP a cada 15 min.
+
+### Confirmação do e-mail (contas de clientes)
+
+**Regra:** uma conta só passa a valer depois que a pessoa **prova que lê a caixa de e-mail** informada. Formato válido,
+domínio que existe e e-mail que não é descartável são camadas extras; **nenhuma delas substitui a confirmação**.
+
+**Fluxo**
+
+1. `/conta` → *Criar conta*: nome, telefone, e-mail e senha. O servidor valida o formato, normaliza o e-mail, barra
+   domínio descartável/inexistente (abaixo), cria a conta como **`pending_verification`** (sem sessão) e envia um e-mail
+   com um **código de 6 dígitos** e um **link**.
+2. A tela pede o código (ou a pessoa toca no link do e-mail → `/conta/verificar/<código>` → botão *Confirmar meu e-mail*).
+   Confirmado, a conta vira `active` com a **data da confirmação** (`email_verified_at`) e a tela entra sozinha.
+3. Quem tenta entrar com a senha certa antes de confirmar **não ganha sessão**: recebe `403 email_not_verified`, um
+   código novo é enviado (respeitando os limites) e a tela volta para a confirmação.
+
+**Códigos**
+
+| Regra | Valor |
+| ----- | ----- |
+| Código | 6 dígitos aleatórios (`crypto.randomInt`), vale **15 min**, **uso único**, **5 erros** inutilizam o código |
+| Link | 256 bits aleatórios, vale **24 h**, uso único; abrir o link não confirma (precisa do toque no botão, para leitores de e-mail que "abrem" links sozinhos não gastarem o link) |
+| Armazenamento | o banco guarda **só hashes**: HMAC-SHA256 do código (chave que só o servidor conhece, derivada da `DATABASE_URL`: se a senha do banco for trocada, os códigos em andamento deixam de valer e é só pedir outro) e SHA-256 do link — nada em texto puro |
+| Reenvio | espera de **60 s**; no máximo **5 por hora** e **10 por dia** por conta; um código novo **invalida os anteriores** (só depois que o e-mail novo realmente sai: se o envio falhar, o código que a pessoa já tinha continua valendo) |
+| Vínculo ao endereço | o código só vale para o endereço para o qual foi enviado; o e-mail da conta **não pode ser trocado** por `PATCH /api/account` (mudar o e-mail = novo cadastro = nova confirmação) |
+| Excesso de erros | 5 códigos errados por e-mail e 30 por IP a cada 15 min → `429`; pedir um código novo libera |
+| Abuso | 6 cadastros por IP por hora, 12 pedidos de reenvio e 15 e-mails por IP por hora |
+| Mensagens | iguais para e-mail novo, pendente ou já cadastrado (não revela quem tem conta); quem já tem conta recebe, na própria caixa, um aviso "você já tem uma conta" (no máximo 1 por hora) |
+
+**Validação do endereço antes de enviar** (`server/emailAddress.ts`, `server/mailDomain.ts`)
+
+- **Formato e normalização**: um `@`, parte local em ASCII, domínio em minúsculas (acentos viram punycode), espaços e
+  caracteres invisíveis removidos. Pontos e `+etiqueta` **não** são mexidos (mudariam o endereço).
+- **Descartáveis**: lista embutida com ~62 mil domínios (união de duas listas públicas: `disposable-email-domains`, CC0, e
+  `mailchecker`, MIT), incluindo subdomínios. Provedores comuns (Gmail, Outlook, Hotmail, Yahoo, iCloud, UOL…) e serviços
+  de "apelido" legítimos nunca são barrados. Para atualizar a lista: `npm run emails:update-blocklist`, conferir o diff e
+  fazer deploy (vale rodar de vez em quando).
+- **DNS**: o domínio precisa ter MX (ou A/AAAA, como manda o protocolo) e não pode ser "MX nulo" (RFC 7505). Só rejeita
+  quando a inexistência é **confirmada**; falha de rede, timeout ou DNS fora do ar **não** bloqueiam o cadastro (quem decide
+  é o código no e-mail).
+- Domínios reservados (`example.com`, `.test`, `.invalid`, `.local`…) são recusados.
+
+**Configurar o envio** (variáveis do **servidor**, nunca chegam ao navegador). O envio usa SMTP comum, que funciona com
+qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta **Gmail** da loja:
+
+1. Na conta Google da loja, ligue a *Verificação em duas etapas* e crie uma **senha de app** em
+   <https://myaccount.google.com/apppasswords> (16 letras; os espaços não importam).
+2. Na Vercel, *Settings → Environment Variables* (Production), cadastre:
+
+   | Variável | Valor | Obrigatória |
+   | -------- | ----- | ----------- |
+   | `SMTP_HOST` | `smtp.gmail.com` | sim |
+   | `SMTP_USER` | o Gmail da loja, ex.: `copocheio@gmail.com` | sim |
+   | `SMTP_PASS` | a senha de app (marque como *Sensitive*) | sim |
+   | `SMTP_PORT` | `465` (padrão) ou `587` | não |
+   | `SMTP_SECURE` | `true`/`false` (padrão: `true` na porta 465) | não |
+   | `MAIL_FROM` | remetente, ex.: `Copo Cheio <copocheio@gmail.com>`; **obrigatória só** quando `SMTP_USER` não é um e-mail (Resend, SendGrid, SES…) | não |
+   | `SITE_URL` | endereço do site nos links, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
+
+3. Faça um novo deploy, abra *Painel → Clientes* e use **Enviar e-mail de teste** (owner). O painel e
+   `GET /api/health` (`"mail":"ok"`) mostram se está configurado; se faltar algo, listam os **nomes** das variáveis.
+
+Outros provedores (Brevo, Resend `smtp.resend.com`, Amazon SES, SendGrid, Zoho…) funcionam do mesmo jeito, com o servidor
+e as credenciais SMTP deles; para um remetente com o seu domínio, configure SPF/DKIM no provedor. Contas Gmail comuns têm
+limite diário de envios (centenas); para volume maior use um provedor transacional. **Sem as variáveis, o servidor recusa o
+cadastro (`503 mail_not_configured`) em vez de criar contas que ninguém poderia confirmar.**
+
+**Contas que já existiam** antes desta atualização passam a `pending_verification` (com 30 dias de prazo) e confirmam o
+e-mail no próximo login. Conta pendente há mais de 7 dias (30, as antigas), **sem pedidos**, é apagada
+automaticamente. Administradores do painel não passam por isto (só o owner os cria).
 
 ### No painel
 
@@ -196,11 +271,11 @@ cliente na próxima consulta.
 
 Público: `GET /api/products` · `GET /api/site` · `POST /api/orders` (devolve `{order, token}`) · `GET /api/health`
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
-Conta do cliente: `POST /api/account/register|login|logout|recover|reset` · `GET /api/account/me` ·
+Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|recover|reset` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim`
 Painel, sessão: `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password`
-Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `products`,
+Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner), `products`,
 `categories`, `banners`, `settings`, `store`, `site`, `hero`, `payments`, `zones`, `upload`; `/api/admin/admins` só para o owner
 (excluir cliente também).
 
@@ -212,7 +287,12 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
   em https), guardado no Neon só como hash e conferido a cada chamada administrativa. Sair, trocar ou redefinir a senha,
   desativar ou remover a pessoa derruba as sessões. Sem cadastro público: administradores só o owner cria.
 - Limites de tentativa: 8 senhas erradas por e-mail e 30 por IP a cada 15 min (painel e conta do cliente); 30 consultas
-  de pedido erradas por IP a cada 15 min; 10 cadastros por IP por hora; 5 pedidos por telefone a cada 10 min e 20 por IP.
+  de pedido erradas por IP a cada 15 min; 6 cadastros por IP por hora (mais os limites de código/reenvio acima); 5 pedidos
+  por telefone a cada 10 min e 20 por IP.
+- **Conta de cliente só vale com o e-mail confirmado, conferido no servidor em toda chamada**: `login`, `/me`, "Meus pedidos",
+  vincular pedido, trocar senha, excluir conta e a ligação do pedido à conta exigem `active` **e** `email_verified_at`
+  (as funções do banco repetem a regra). Chamar a API direto, forjar cookie ou ter uma sessão antiga não contorna isso.
+  Códigos e links só existem no banco como hash. Nenhuma chave de e-mail vai para o navegador.
 - Escritas administrativas só aceitam a própria origem do site (defesa extra contra CSRF).
 - Toda entrada é validada no servidor (tipos, tamanhos, links `https://`) e o banco repete os limites. Consultas sempre
   parametrizadas.
@@ -226,8 +306,9 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
 
 `admins`, `admin_sessions`, `categories`, `products`, `payment_methods`, `orders`, `order_items`, `order_status_history`,
 `store_settings`, `delivery_zones`, `site_settings`, `hero_settings`, `banners`, **`order_tracking_tokens`**
-(hash dos códigos), **`customers`**, **`customer_sessions`**, **`customer_password_resets`** (+ `rate_limits`,
-`schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
+(hash dos códigos), **`customers`** (com `status` e `email_verified_at`), **`customer_sessions`**,
+**`customer_password_resets`**, **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso)
+(+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
 última atualização.
 
@@ -235,6 +316,10 @@ A migration `0004_order_tracking.sql` **preserva os pedidos existentes**: o UUID
 enviados vira hash e continua abrindo o pedido; a coluna em texto puro (`public_token`) deixa de existir. Ela também
 mantém, de forma transitória, a compatibilidade com a versão anterior do site (que pode seguir no ar durante um deploy
 ou voltar num rollback).
+A migration `0005_email_verification.sql` acrescenta o status da conta (`pending_verification`, `active` ou `disabled`,
+coluna gerada a partir de `active` e `email_verified_at`, então nunca fica fora de sincronia), a tabela
+`email_verifications`, as funções que emitem e conferem códigos de forma atômica (limites de reenvio e tentativas dentro
+do banco) e encerra as sessões de cliente abertas antes dela.
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
@@ -245,14 +330,20 @@ dashboard) são funções do banco chamadas só pelo servidor.
   descrição e favicon editados no painel valem para o Google e para o navegador.
 - Uma função da Vercel aceita até ~4,5 MB por requisição: o painel já reduz as fotos (limite de 4 MB por imagem).
 - Neon pode "dormir" quando fica sem uso; a primeira chamada depois disso demora um pouco mais.
+- Nenhuma checagem automática prova que a caixa de e-mail existe e é da pessoa (DNS e lista de descartáveis só descartam o
+  que é claramente impossível): quem prova é o código/link. Se o provedor de e-mail da loja estiver fora do ar, o cadastro
+  responde "tente de novo" em vez de criar conta sem confirmação.
 
 ## Estrutura
 
 ```
 api/index.ts      função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
+server/verification.ts confirmação do e-mail: códigos, links, reenvio e limites
+server/mail*.ts        envio SMTP, textos dos e-mails, domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
+server/emailAddress.ts formato, normalização e máscara do e-mail
 db/migrations/         tabelas, funções e conteúdo inicial do Neon
-scripts/               migrate.mjs (migrations) · create-admin.mjs (primeiro administrador)
+scripts/               migrate.mjs (migrations) · create-admin.mjs (primeiro administrador) · update-disposable-domains.mjs (lista de e-mails descartáveis)
 src/App.tsx            site: Hero, Bebidas, Contato, chamada final, rotas
 src/site/              dados do site (API), carrinho, checkout
 src/site/Tracking.tsx  confirmação, acompanhamento e "Acompanhar pedido" (pacote à parte, junto com Account.tsx)

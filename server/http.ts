@@ -37,7 +37,10 @@ export async function readJson(req: Request, maxBytes = 256 * 1024): Promise<Row
   if (!type.includes('application/json')) throw new HttpError(415, 'Envie os dados em JSON.');
   const bytes = await readBytes(req, maxBytes);
   try {
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    const text = new TextDecoder().decode(bytes);
+    // O caractere nulo (\u0000) é inválido em texto do Postgres: barra aqui, para nenhuma rota virar erro 500 por causa dele.
+    if (/\\u0000/i.test(text)) throw new Error('nulo');
+    const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('formato');
     return parsed as Row;
   } catch {

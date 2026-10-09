@@ -5,9 +5,22 @@ import { CUSTOMER_COLUMNS, CUSTOMER_COOKIE, createCustomerSession, customerCooki
 import { batch, one, query, updateRow } from '../db.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
+import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
+import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
+import { mailConfigured } from '../mail.js';
 import { NOT_FOUND, normalizeToken, hashToken } from '../tracking.js';
-import { digits, email, parse, text } from '../validate.js';
+import { digits, parse, text } from '../validate.js';
 import type { Spec } from '../validate.js';
+import {
+  CODE_MINUTES,
+  RESEND_SECONDS,
+  checkCode,
+  checkLink,
+  cleanCode,
+  mailNotConfigured,
+  sendAlreadyRegisteredNotice,
+  sendVerificationEmail,
+} from '../verification.js';
 
 const WINDOW = 15 * 60;
 
@@ -38,39 +51,147 @@ const ORDER_LIST = `
     from orders o`;
 
 export function registerAccount(r: Router) {
+  // Cadastro: a conta nasce "pending_verification", SEM sessão. Só passa a valer depois de confirmar o e-mail
+  // (código de 6 dígitos ou link que o servidor envia). A resposta é a mesma para e-mail novo, pendente ou que já
+  // tem conta: quem tenta um endereço alheio não descobre se ele existe (o dono recebe um aviso por e-mail).
   r.post('/api/account/register', 'public', async (ctx) => {
     const body = await readJson(ctx.req, 8 * 1024);
-    await limit('cust-register', ctx.ip, 3600, 10, 'Muitos cadastros em pouco tempo. Tente de novo mais tarde.');
-    const { values } = parse({ ...profileSpec, email }, body);
+    if (!mailConfigured()) throw mailNotConfigured();
+    await limit('register-ip', ctx.ip, 3600, 6, 'Muitos cadastros em pouco tempo. Tente de novo mais tarde.');
+    const { values } = parse(profileSpec, body);
     if (values.phone === undefined) throw new HttpError(400, 'Telefone: preencha este campo.');
-    const passwordHash = await hashPassword(checkNewPassword(body.password));
-    const customer = await one<{ id: string }>(
-      `insert into customers (name, email, phone, password_hash, address, address_number, neighborhood, complement, reference)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id`,
-      [values.name, values.email, values.phone, passwordHash, values.address ?? null, values.address_number ?? null, values.neighborhood ?? null, values.complement ?? null, values.reference ?? null],
-    );
-    await recordAttempt('cust-register', ctx.ip);
-    const { token, maxAge } = await createCustomerSession(customer!.id);
-    const me = await one(`select ${CUSTOMER_COLUMNS} from customers c where c.id = $1`, [customer!.id]);
-    return json({ customer: me }, 201, { 'set-cookie': customerCookie(ctx.req, token, maxAge) });
+    const parsed = parseEmail(body.email);
+    const password = checkNewPassword(body.password);
+
+    // Camadas extras antes de gastar um e-mail: domínio temporário/inexistente. A prova de verdade vem da confirmação.
+    const domain = await checkMailDomain(parsed.domain);
+    if (!domain.ok) throw new HttpError(400, DOMAIN_MESSAGE[domain.reason], { code: 'invalid_email_domain', reason: domain.reason });
+
+    const passwordHash = await hashPassword(password);
+    await recordAttempt('register-ip', ctx.ip);
+
+    const params = [values.name, parsed.email, values.phone, passwordHash, values.address ?? null, values.address_number ?? null, values.neighborhood ?? null, values.complement ?? null, values.reference ?? null];
+    type Row = { id: string; email: string; name: string; email_verified_at: string | null; active: boolean };
+    let existing = await one<Row>('select id, email, name, email_verified_at, active from customers where lower(email) = $1', [parsed.email]);
+    let pending: { id: string; email: string } | null = null;
+    if (!existing) {
+      const created = await one<{ id: string; email: string }>(
+        `insert into customers (name, email, phone, password_hash, address, address_number, neighborhood, complement, reference)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         on conflict ((lower(email))) do nothing
+         returning id, email`,
+        params,
+      );
+      if (created) pending = created;
+      else existing = await one<Row>('select id, email, name, email_verified_at, active from customers where lower(email) = $1', [parsed.email]);
+    }
+    if (existing && !existing.email_verified_at && existing.active) {
+      // Cadastro pendente: quem provar acesso ao e-mail fica com a conta (os dados novos substituem os antigos).
+      pending = await one<{ id: string; email: string }>(
+        `update customers set name = $1, email = $2, phone = $3, password_hash = $4, address = $5, address_number = $6, neighborhood = $7, complement = $8, reference = $9,
+                verify_by = greatest(verify_by, now() + interval '7 days')
+          where id = $10 and email_verified_at is null and active
+          returning id, email`,
+        [...params, existing.id],
+      );
+    } else if (existing && existing.email_verified_at && existing.active) {
+      await sendAlreadyRegisteredNotice(ctx.req, { email: existing.email, name: existing.name });
+    }
+    if (pending) await sendVerificationEmail(ctx.req, ctx.ip, pending);
+    await clearAttempts('verify-email', parsed.email);
+    return json({ status: 'pending_verification', email: parsed.email, email_masked: maskEmail(parsed.email), resend_in: RESEND_SECONDS, code_minutes: CODE_MINUTES }, 202);
+  });
+
+  // Confirma o e-mail com o código de 6 dígitos. Não abre sessão: depois de confirmar, a pessoa entra com a senha.
+  r.post('/api/account/verify-email', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    const email = normalizeLoginEmail(body.email);
+    const code = cleanCode(body.code);
+    if (!email) throw new HttpError(400, 'Informe o e-mail.');
+    if (!code) throw new HttpError(400, 'Digite os 6 dígitos do código que enviamos por e-mail.', { code: 'invalid_code_format' });
+    // Mesmo limite para endereço existente ou não: quem erra demais é barrado sem saber se o e-mail tem cadastro.
+    if ((await attempts('verify-ip', ctx.ip, WINDOW)) >= 30 || (await attempts('verify-email', email, WINDOW)) >= 5) {
+      throw new HttpError(429, 'Muitas tentativas incorretas. Peça um novo código para continuar.', { code: 'too_many_attempts' });
+    }
+    if ((await checkCode(email, code)) === 'ok') {
+      await clearAttempts('verify-email', email);
+      return json({ ok: true, verified: true });
+    }
+    await Promise.all([recordAttempt('verify-ip', ctx.ip), recordAttempt('verify-email', email)]);
+    throw new HttpError(400, 'Código incorreto ou expirado. Confira os 6 dígitos ou peça um novo código.', { code: 'invalid_code' });
+  });
+
+  // Confirma pelo link do e-mail (a tela do link pede um clique antes de chamar isto, para que programas que
+  // "abrem" links sozinhos não gastem o link).
+  r.post('/api/account/verify-link', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    const token = typeof body.token === 'string' ? body.token : '';
+    await limit('verify-ip', ctx.ip, WINDOW, 30, 'Muitas tentativas. Aguarde alguns minutos e tente de novo.');
+    const verified = await checkLink(token);
+    if (!verified) {
+      await recordAttempt('verify-ip', ctx.ip);
+      throw new HttpError(400, 'Este link não vale mais: ele expirou, já foi usado ou foi trocado por um código mais novo. Entre na sua conta para receber um novo código.', { code: 'invalid_link' });
+    }
+    return json({ ok: true, verified: true, email: verified, email_masked: maskEmail(verified) });
+  });
+
+  // Novo código. Resposta sempre igual (existindo cadastro pendente ou não); o banco aplica a espera de 60 s e os
+  // limites por hora/dia, e o código anterior só deixa de valer depois que o novo e-mail sai.
+  r.post('/api/account/resend-verification', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    if (!mailConfigured()) throw mailNotConfigured();
+    const parsed = parseEmail(body.email);
+    await limit('resend-ip', ctx.ip, 3600, 12, 'Muitos pedidos de código desta rede. Aguarde um pouco e tente de novo.');
+    await recordAttempt('resend-ip', ctx.ip);
+    await clearAttempts('verify-email', parsed.email);
+    const row = await one<{ id: string; email: string }>('select id, email from customers where lower(email) = $1 and email_verified_at is null and active', [parsed.email]);
+    if (row) await sendVerificationEmail(ctx.req, ctx.ip, row);
+    return json({ ok: true, resend_in: RESEND_SECONDS, code_minutes: CODE_MINUTES });
   });
 
   r.post('/api/account/login', 'public', async (ctx) => {
     const body = await readJson(ctx.req, 4 * 1024);
-    const login = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const login = normalizeLoginEmail(body.email);
     const password = typeof body.password === 'string' ? body.password : '';
     if (!login || !password || login.length > 254 || password.length > 200) throw new HttpError(400, 'Informe o e-mail e a senha.');
     const tooMany = 'Muitas tentativas de login. Aguarde alguns minutos e tente de novo.';
     await limit('cust-login-email', login, WINDOW, 8, tooMany);
     await limit('cust-login-ip', ctx.ip, WINDOW, 30, tooMany);
 
-    const row = await one<{ id: string; password_hash: string; active: boolean }>('select id, password_hash, active from customers where lower(email) = $1', [login]);
+    const row = await one<{ id: string; email: string; password_hash: string; active: boolean; email_verified_at: string | null }>(
+      'select id, email, password_hash, active, email_verified_at from customers where lower(email) = $1',
+      [login],
+    );
     const valid = await verifyPassword(password, row?.password_hash ?? (await decoyHash()));
     if (!row || !valid || !row.active) {
       await Promise.all([recordAttempt('cust-login-email', login), recordAttempt('cust-login-ip', ctx.ip)]);
       throw new HttpError(401, 'E-mail ou senha incorretos.');
     }
     await clearAttempts('cust-login-email', login);
+
+    // Senha certa, e-mail ainda não confirmado: nada de sessão. Manda um código novo (se os limites deixarem) e a tela
+    // pede a confirmação. Só quem sabe a senha chega aqui.
+    if (!row.email_verified_at) {
+      let sent = false;
+      if (mailConfigured()) {
+        try {
+          sent = (await sendVerificationEmail(ctx.req, ctx.ip, row)).sent;
+        } catch {
+          /* falha de envio não muda a resposta: a tela oferece "reenviar" */
+        }
+        await clearAttempts('verify-email', row.email);
+      }
+      throw new HttpError(403, `Falta confirmar o seu e-mail (${maskEmail(row.email)}) para entrar na conta.`, {
+        code: 'email_not_verified',
+        email: row.email,
+        email_masked: maskEmail(row.email),
+        sent,
+        mail_available: mailConfigured(),
+        resend_in: RESEND_SECONDS,
+        code_minutes: CODE_MINUTES,
+      });
+    }
+
     await query('update customers set last_login_at = now() where id = $1', [row.id]);
     const { token, maxAge } = await createCustomerSession(row.id);
     const customer = await one(`select ${CUSTOMER_COLUMNS} from customers c where c.id = $1`, [row.id]);
@@ -134,7 +255,7 @@ export function registerAccount(r: Router) {
     const body = await readJson(ctx.req, 4 * 1024);
     const generic = 'Não foi possível redefinir a senha com esses dados. Confira tudo e tente de novo, ou peça um link à loja pelo WhatsApp.';
     await limit('cust-recover', ctx.ip, WINDOW, 10, 'Muitas tentativas. Aguarde alguns minutos e tente de novo.');
-    const login = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    const login = normalizeLoginEmail(body.email);
     const phone = typeof body.phone === 'string' ? body.phone.replace(/\D/g, '') : '';
     const number = orderNumber(body.order_number);
     const password = checkNewPassword(body.password);

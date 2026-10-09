@@ -1605,6 +1605,8 @@ function pageOf(pathname: string): Page {
   if (pathname === '/conta/recuperar') return { name: 'recuperar' };
   m = /^\/conta\/redefinir\/([0-9A-Za-z_-]{20,100})$/.exec(pathname);
   if (m) return { name: 'redefinir', token: m[1] };
+  m = /^\/conta\/verificar\/([0-9A-Za-z_-]{20,100})$/.exec(pathname);
+  if (m) return { name: 'verificar', token: m[1] };
   return { name: 'home' };
 }
 
@@ -1619,6 +1621,7 @@ const PAGE_TITLE: Record<Page['name'], string> = {
   'conta-pedido': 'Meu pedido',
   recuperar: 'Recuperar senha',
   redefinir: 'Nova senha',
+  verificar: 'Confirmar e-mail',
 };
 
 function CustomerLoading() {

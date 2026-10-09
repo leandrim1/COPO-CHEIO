@@ -87,7 +87,7 @@ export function registerOrders(r: Router) {
           where t.order_id = $1 order by t.created_at`,
         [order.id],
       ],
-      ['select id, name, email, phone from customers where id = $1', [order.customer_id]],
+      ['select id, name, email, phone, status from customers where id = $1', [order.customer_id]],
     ]);
     const retention = await one<{ days: number }>('select tracking_retention_days as days from store_settings where id = 1');
     return json({ order, items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180 });

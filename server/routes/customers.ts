@@ -26,7 +26,7 @@ export function registerCustomers(r: Router) {
     }
     params.push(limit + 1);
     const rows = await query(
-      `select c.id, c.name, c.email, c.phone, c.active, c.created_at, c.last_login_at,
+      `select c.id, c.name, c.email, c.phone, c.active, c.status, c.email_verified_at, c.created_at, c.last_login_at,
               (select count(*) from orders o where o.customer_id = c.id) as orders
          from customers c ${where} order by c.created_at desc limit $${params.length}`,
       params,
@@ -56,7 +56,7 @@ export function registerCustomers(r: Router) {
     const id = uuidParam(ctx);
     const body = await readJson(ctx.req, 1024);
     if (typeof body.active !== 'boolean') throw new HttpError(400, 'Nada para atualizar.');
-    const customer = await one('update customers set active = $2 where id = $1 returning id, name, email, phone, active', [id, body.active]);
+    const customer = await one('update customers set active = $2 where id = $1 returning id, name, email, phone, active, status, email_verified_at', [id, body.active]);
     if (!customer) throw new HttpError(404, 'Cliente não encontrado.');
     if (!body.active) await query('delete from customer_sessions where customer_id = $1', [id]);
     return json({ customer });

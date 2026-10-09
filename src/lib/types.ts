@@ -231,6 +231,17 @@ export type AccountOrderSummary = {
   summary: string | null;
 };
 
+// Situação da conta: só "active" entra. "pending_verification" ainda não provou acesso ao e-mail.
+export type AccountStatus = 'active' | 'pending_verification' | 'disabled';
+
+// Resposta do cadastro (202) e do login de uma conta cujo e-mail ainda não foi confirmado (403 "email_not_verified").
+export type VerificationInfo = {
+  email: string;
+  email_masked: string;
+  resend_in: number;
+  code_minutes: number;
+};
+
 // Painel: contas de clientes.
 export type CustomerRow = {
   id: string;
@@ -238,6 +249,8 @@ export type CustomerRow = {
   email: string;
   phone: string;
   active: boolean;
+  status: AccountStatus;
+  email_verified_at: string | null;
   created_at: string;
   last_login_at: string | null;
   orders: number;

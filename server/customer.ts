@@ -33,14 +33,15 @@ export async function createCustomerSession(customerId: string): Promise<{ token
   return { token, maxAge: SESSION_DAYS * 86400 };
 }
 
-// Sem cookie nem chega a consultar o banco.
+// Sem cookie nem chega a consultar o banco. Todas as rotas da conta passam por aqui (requireCustomer).
 export async function customerFromRequest(req: Request): Promise<Customer | null> {
   const token = readCookie(req, CUSTOMER_COOKIE);
   if (!token || token.length > 100) return null;
+  // Conta ativa E com o e-mail confirmado: uma sessão de conta pendente (que nem deveria existir) não vale nada.
   return one<Customer>(
     `select ${CUSTOMER_COLUMNS}
        from customer_sessions s join customers c on c.id = s.customer_id
-      where s.token_hash = $1 and s.expires_at > now() and c.active`,
+      where s.token_hash = $1 and s.expires_at > now() and c.active and c.email_verified_at is not null`,
     [sha256(token)],
   );
 }

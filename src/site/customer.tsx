@@ -54,3 +54,10 @@ export function safeReturn(value: string | null | undefined): string | null {
   if (!value || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) return null;
   return /^\/(pedido|acompanhar-pedido|conta|checkout|bebidas)(\/|$|\?)/.test(value) ? value : null;
 }
+
+// E-mail que acabou de ser confirmado (pelo link): preenche o campo de login. Só na memória desta aba.
+let loginPrefill = '';
+export const setLoginPrefill = (email: string) => {
+  loginPrefill = email;
+};
+export const getLoginPrefill = (): string => loginPrefill;

@@ -2,6 +2,7 @@
 // Roda como função da Vercel (api/index.ts) e também no servidor de desenvolvimento do Vite.
 import { adminFromRequest } from './auth.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
+import { mailConfigured } from './mail.js';
 import { HttpError, Router, json } from './http.js';
 import type { Access, Ctx } from './http.js';
 import { registerAccount } from './routes/account.js';
@@ -11,6 +12,7 @@ import { registerOrders } from './routes/orders.js';
 import { registerPublic } from './routes/public.js';
 import { registerSession } from './routes/session.js';
 import { registerCustomers } from './routes/customers.js';
+import { registerMailAdmin } from './routes/mailadmin.js';
 import { registerTeam } from './routes/team.js';
 import { registerTracking } from './routes/tracking.js';
 import { registerUpload } from './routes/upload.js';
@@ -29,7 +31,7 @@ router.get('/api/health', 'public', async () => {
       database = 'error';
     }
   }
-  return json({ database, blob: blobConfigured() ? 'ok' : 'missing' });
+  return json({ database, blob: blobConfigured() ? 'ok' : 'missing', mail: mailConfigured() ? 'ok' : 'missing' });
 });
 
 registerPublic(router);
@@ -41,6 +43,7 @@ registerCatalog(router);
 registerContent(router);
 registerTeam(router);
 registerCustomers(router);
+registerMailAdmin(router);
 registerUpload(router);
 
 const clientIp = (req: Request) => req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
@@ -98,6 +101,8 @@ export async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
   try {
+    // %00 (caractere nulo) no endereço nunca é legítimo e o Postgres o recusa: responde 400 em vez de estourar lá dentro.
+    if (/%00/i.test(req.url)) throw new HttpError(400, 'Endereço inválido.');
     const found = router.match(req.method === 'HEAD' ? 'GET' : req.method, path);
     if (!found) throw new HttpError(404, 'Rota não encontrada.');
     if ('allowed' in found) {

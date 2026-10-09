@@ -7,13 +7,15 @@ export class ApiError extends Error {
     message: string,
     public code?: string,
     public missing?: string[],
+    // Corpo inteiro da resposta de erro (campos extras que algumas rotas mandam, como o e-mail a confirmar).
+    public data: Record<string, unknown> = {},
   ) {
     super(message);
   }
 }
 
 type Json = Record<string, unknown> | unknown[];
-type ErrorBody = { error?: string; code?: string; missing?: string[] };
+type ErrorBody = { error?: string; code?: string; missing?: string[] } & Record<string, unknown>;
 
 // Chamado quando uma rota do painel responde 401 (sessão vencida ou encerrada).
 let onUnauthorized: (() => void) | null = null;
@@ -43,7 +45,7 @@ async function request<T>(method: string, path: string, body?: Json | Blob | Arr
   }
   if (!response.ok) {
     if (response.status === 401 && path.startsWith('/api/admin')) onUnauthorized?.();
-    throw new ApiError(response.status, data?.error ?? `O servidor respondeu com erro ${response.status}. Tente de novo em instantes.`, data?.code, data?.missing);
+    throw new ApiError(response.status, data?.error ?? `O servidor respondeu com erro ${response.status}. Tente de novo em instantes.`, data?.code, data?.missing, data ?? {});
   }
   return data as T;
 }

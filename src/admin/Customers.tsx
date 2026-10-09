@@ -1,4 +1,4 @@
-import { Check, Copy, ExternalLink, KeyRound, MessageCircle, Search, Trash2, Users } from 'lucide-react';
+import { Check, Copy, ExternalLink, KeyRound, Mail, MessageCircle, Search, Trash2, TriangleAlert, Users } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, friendlyError } from '../lib/api';
 import { formatDateTime, formatPhone, timeAgo, whatsappTo } from '../lib/format';
@@ -8,6 +8,74 @@ import { useAdmin } from './AdminApp';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, cx, useConfirm, useToast } from './ui';
 
 type ResetLink = { customer: CustomerRow; token: string; expires_at: string };
+type MailInfo = { configured: boolean; missing: string[]; from: string | null; host: string | null };
+
+// Estado do envio de e-mails (códigos de confirmação das contas). Sem isso configurado ninguém cria conta nem entra.
+function MailStatus() {
+  const toast = useToast();
+  const { user } = useAdmin();
+  const [info, setInfo] = useState<MailInfo | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get<MailInfo>('/api/admin/mail')
+      .then((data) => alive && setInfo(data))
+      .catch(() => alive && setFailed(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const sendTest = async () => {
+    setTesting(true);
+    try {
+      const data = await api.post<{ to: string }>('/api/admin/mail/test', {});
+      toast.success('E-mail de teste enviado.', `Veja a caixa de entrada de ${data.to} (e o spam).`);
+    } catch (err) {
+      toast.error('Não foi possível enviar o e-mail de teste.', friendlyError(err, ''));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (failed || !info) return null;
+  if (!info.configured) {
+    return (
+      <div role="alert" className="mb-4 flex gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
+        <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="font-bold">O envio de e-mails ainda não está configurado</p>
+          <p className="mt-1 text-amber-100/85">
+            Enquanto isso, ninguém consegue criar conta nem entrar nela (os pedidos feitos sem conta continuam funcionando). Cadastre na Vercel (Settings → Environment Variables) e faça um novo deploy:{' '}
+            {info.missing.map((name, i) => (
+              <span key={name}>
+                {i > 0 && ', '}
+                <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">{name}</code>
+              </span>
+            ))}
+            . O passo a passo está no README.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-400/25 bg-emerald-400/[0.07] px-4 py-3 text-sm text-emerald-100">
+      <p className="min-w-0">
+        <Mail className="mr-2 inline h-4 w-4 align-[-2px]" aria-hidden="true" />
+        Envio de e-mails configurado{info.host ? ` (${info.host})` : ''}. Remetente: <span className="font-semibold">{info.from}</span>
+      </p>
+      {user.role === 'owner' && (
+        <Button size="sm" variant="secondary" loading={testing} onClick={() => void sendTest()}>
+          Enviar e-mail de teste
+        </Button>
+      )}
+    </div>
+  );
+}
 
 // Contas de clientes (opcionais). A loja não vê senhas: só ajuda a recuperar o acesso, desativa ou exclui a pedido do titular.
 export default function CustomersPage() {
@@ -98,7 +166,9 @@ export default function CustomersPage() {
 
   return (
     <>
-      <PageHeader title="Clientes" description="Contas criadas no site. Criar conta é opcional: quem compra como visitante não aparece aqui." />
+      <PageHeader title="Clientes" description="Contas criadas no site. Criar conta é opcional: quem compra como visitante não aparece aqui. A conta só vale depois que a pessoa confirma o e-mail." />
+
+      <MailStatus />
 
       {reset && (
         <Card className="mb-4" title={`Link para ${reset.customer.name} criar uma senha nova`} description={`Vale uma vez e expira em ${formatDateTime(reset.expires_at)}. Envie só depois de confirmar que é a própria pessoa.`}>
@@ -160,10 +230,14 @@ export default function CustomersPage() {
                   <p className="flex flex-wrap items-center gap-2 font-bold text-white">
                     {c.name}
                     {!c.active && <Badge tone="red">Desativada</Badge>}
+                    {c.active && c.status === 'pending_verification' && <Badge tone="amber">Aguardando confirmação do e-mail</Badge>}
+                    {c.active && c.status === 'active' && <Badge tone="green">E-mail confirmado</Badge>}
                   </p>
                   <p className="truncate text-sm text-white/65">{c.email}</p>
                   <p className="text-xs text-white/45">
-                    {formatPhone(c.phone)} · cadastro em {formatDateTime(c.created_at)} · {c.last_login_at ? `último acesso ${timeAgo(c.last_login_at)}` : 'nunca entrou depois do cadastro'}
+                    {formatPhone(c.phone)} · cadastro em {formatDateTime(c.created_at)}
+                    {c.email_verified_at ? ` · e-mail confirmado em ${formatDateTime(c.email_verified_at)}` : ' · e-mail ainda não confirmado'} ·{' '}
+                    {c.last_login_at ? `último acesso ${timeAgo(c.last_login_at)}` : 'nunca entrou depois do cadastro'}
                   </p>
                 </div>
                 <a href={`/admin/pedidos?q=${encodeURIComponent(c.email)}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8FB1FF] hover:text-white">
@@ -171,9 +245,11 @@ export default function CustomersPage() {
                 </a>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" variant="secondary" icon={<KeyRound className="h-3.5 w-3.5" aria-hidden="true" />} loading={busy === `reset:${c.id}`} onClick={() => void makeReset(c)}>
-                  Link para nova senha
-                </Button>
+                {c.status !== 'pending_verification' && (
+                  <Button size="sm" variant="secondary" icon={<KeyRound className="h-3.5 w-3.5" aria-hidden="true" />} loading={busy === `reset:${c.id}`} onClick={() => void makeReset(c)}>
+                    Link para nova senha
+                  </Button>
+                )}
                 <Button size="sm" variant="secondary" loading={busy === `toggle:${c.id}`} onClick={() => void toggle(c)}>
                   {c.active ? 'Desativar' : 'Reativar'}
                 </Button>
