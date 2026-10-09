@@ -19,7 +19,7 @@ Site de delivery + painel administrativo da Copo Cheio.
         configurações, administradores Hero, logo (no Neon fica só a URL)
 ```
 
-O navegador só fala com `/api/*`. `DATABASE_URL` e `BLOB_READ_WRITE_TOKEN` existem apenas no servidor.
+O navegador só fala com `/api/*`. `DATABASE_URL` e a credencial do Blob existem apenas no servidor.
 Tudo o que aparece no site — produtos, preços, fotos, estoque, textos, WhatsApp, Instagram, endereço, horário,
 taxa de entrega, formas de pagamento e banners — vem do Neon e é editado no painel, sem mexer no código.
 
@@ -59,9 +59,11 @@ administrativa: esconder a tela no navegador não é a proteção. O código do 
 O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blob `copocheio-uploads`.
 
 1. **Variáveis** — em *Settings → Environment Variables* do projeto confirme que existem `DATABASE_URL`
-   (integração Neon) e `BLOB_READ_WRITE_TOKEN` (integração Blob), marcadas para *Production*.
-   O Blob precisa ser **público** (as fotos aparecem no site). `GET /api/health` mostra o que está faltando:
-   `{"database":"ok","blob":"ok"}`.
+   (integração Neon) e a credencial do Blob, marcadas para *Production*. O Blob tem dois jeitos de autenticar, e o
+   servidor aceita os dois: o clássico, com `BLOB_READ_WRITE_TOKEN` (ou `<PREFIXO>_READ_WRITE_TOKEN`), e o novo, sem
+   token, com `BLOB_STORE_ID` + OIDC da Vercel (as variáveis `BLOB_STORE_ID` e `BLOB_WEBHOOK_PUBLIC_KEY` indicam o modo
+   novo; o projeto precisa estar com *OIDC* ligado em *Settings → Security*). O Blob precisa ser **público** (as fotos
+   aparecem no site). `GET /api/health` mostra o que está faltando: `{"database":"ok","blob":"ok"}`.
 2. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
    (`db/migrations`) e carrega o conteúdo inicial (os mesmos textos que o site já tinha). Nenhum produto, preço ou
    categoria é inventado. Rodar de novo não faz nada de novo.
@@ -130,7 +132,7 @@ Painel (exige login): `/api/admin/dashboard`, `orders`, `live`, `products`, `cat
 
 ## Segurança
 
-- `DATABASE_URL` e `BLOB_READ_WRITE_TOKEN` só existem no servidor (nenhuma variável `VITE_`); o bundle do navegador não
+- `DATABASE_URL` e a credencial do Blob só existem no servidor (nenhuma variável `VITE_`); o bundle do navegador não
   contém driver de banco, token nem segredo.
 - Login por e-mail e senha: senha com **scrypt**; sessão = código aleatório num cookie `HttpOnly` + `SameSite=Lax` (+ `Secure`
   em https), guardado no Neon só como hash e conferido a cada chamada administrativa. Sair, trocar ou redefinir a senha,

@@ -1,7 +1,7 @@
 // API do COPO CHEIO: um único handler (Request → Response) para todas as rotas /api/*.
 // Roda como função da Vercel (api/index.ts) e também no servidor de desenvolvimento do Vite.
 import { adminFromRequest } from './auth.js';
-import { blobToken, databaseUrl, MissingConfig } from './env.js';
+import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
 import { HttpError, Router, json } from './http.js';
 import type { Access, Ctx } from './http.js';
 import { registerCatalog } from './routes/catalog.js';
@@ -26,7 +26,7 @@ router.get('/api/health', 'public', async () => {
       database = 'error';
     }
   }
-  return json({ database, blob: blobToken() ? 'ok' : 'missing' });
+  return json({ database, blob: blobConfigured() ? 'ok' : 'missing' });
 });
 
 registerPublic(router);
