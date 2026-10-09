@@ -474,7 +474,7 @@ function SkeletonRow() {
         <div className="h-3 w-full animate-pulse rounded bg-white/[0.06] motion-reduce:animate-none" />
         <div className="mt-3 h-6 w-1/3 animate-pulse rounded bg-white/[0.08] motion-reduce:animate-none" />
       </div>
-      <div className="h-24 w-24 animate-pulse rounded-2xl bg-white/[0.06] motion-reduce:animate-none sm:h-32 sm:w-32" />
+      <div className="h-32 w-32 animate-pulse rounded-2xl bg-white/[0.06] motion-reduce:animate-none sm:h-44 sm:w-44" />
     </li>
   );
 }
@@ -608,8 +608,8 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
           <AddControl qty={qty} name={product.name} onChange={onChange} compact soldOut={product.soldOut} />
         </div>
       </div>
-      <div className="relative h-24 w-24 shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] sm:h-32 sm:w-32">
-        <ProductImage product={product} padding="p-1.5" />
+      <div className="relative h-32 w-32 shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] sm:h-44 sm:w-44">
+        <ProductImage product={product} padding="p-0.5" />
         {product.soldOut && <SoldOutBadge className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2" />}
       </div>
     </li>
