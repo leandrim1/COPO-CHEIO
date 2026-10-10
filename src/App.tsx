@@ -598,6 +598,149 @@ function BannerCarousel({ banners }: { banners: Banner[] }) {
   );
 }
 
+// ---- Capa da página Bebidas (faixa azul do topo) -----------------------------------------------
+
+// A capa de sempre: círculos, brilho e gelos flutuando. Aparece quando não há banner de capa ativo no painel.
+// `visible` só fica verdadeiro depois que o cardápio chegou, para a capa não trocar de aparência na frente de quem acabou de entrar.
+function CoverDecoration({ visible }: { visible: boolean }) {
+  return (
+    <div aria-hidden="true" className={`pointer-events-none absolute inset-0 transition-opacity duration-500 ${visible ? 'opacity-100' : 'opacity-0'}`}>
+      <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/30" />
+      <div className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/20" />
+      <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/[0.12]" />
+      <div className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2563FF]/40 blur-3xl" />
+      <IceCube className="left-[14%] top-[34%] h-10 w-10 opacity-60" delay="-2s" />
+      <IceCube className="right-[13%] top-[24%] h-12 w-12 opacity-55" delay="-4s" />
+      <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#050505]/60 to-transparent" />
+    </div>
+  );
+}
+
+// Uma imagem de capa. Entra aos poucos quando termina de carregar; se não abrir, avisa para sair da vez.
+function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isActive: boolean; first: boolean; onBroken: (banner: Banner) => void }) {
+  const [loaded, setLoaded] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const external = banner.link?.startsWith('https://');
+
+  // Imagem que o navegador já tinha pode ter terminado de carregar antes de o React ouvir o evento.
+  useEffect(() => {
+    const img = imgRef.current;
+    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
+  }, []);
+
+  const picture = (
+    <picture>
+      {banner.image_mobile_url && <source media="(max-width: 639px)" srcSet={banner.image_mobile_url} />}
+      <img
+        ref={imgRef}
+        src={(banner.image_desktop_url ?? banner.image_mobile_url)!}
+        alt={banner.title || 'Promoção'}
+        loading={first ? 'eager' : 'lazy'}
+        fetchPriority={first ? 'high' : 'auto'}
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => onBroken(banner)}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 motion-reduce:transition-none ${loaded ? 'opacity-100' : 'opacity-0'}`}
+      />
+    </picture>
+  );
+  const layer = `absolute inset-0 transition-opacity duration-700 motion-reduce:transition-none ${isActive ? 'opacity-100' : 'pointer-events-none opacity-0'}`;
+  return banner.link ? (
+    <a
+      href={banner.link}
+      target={external ? '_blank' : undefined}
+      rel={external ? 'noopener noreferrer' : undefined}
+      aria-hidden={!isActive}
+      tabIndex={isActive ? 0 : -1}
+      className={`${layer} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white`}
+    >
+      {picture}
+    </a>
+  ) : (
+    <div aria-hidden={!isActive} className={layer}>
+      {picture}
+    </div>
+  );
+}
+
+// Mudou a imagem de um banner (ou ele é outro): trata como slide novo, com fade-in e sem lembrar de falha antiga.
+const coverKey = (b: Banner) => `${b.id}|${b.image_desktop_url}|${b.image_mobile_url}`;
+
+// Foco que veio do teclado (clicar num ponto com o mouse não conta). Navegador sem :focus-visible conta como teclado.
+function keyboardFocus(target: EventTarget): boolean {
+  try {
+    return (target as Element).matches(':focus-visible');
+  } catch {
+    return true;
+  }
+}
+
+// O fundo da capa: os banners de capa cadastrados no painel (Banners → Capa) no lugar dos gelos. Só imagem, com a
+// versão de celular abaixo de 640 px. Com mais de um, trocam sozinhos a cada 6 s (parado para quem pediu menos
+// animação, enquanto o mouse está em cima e enquanto o foco do teclado está nos pontos). Sem banner ativo, ou com
+// imagens que não abrem, volta a capa de sempre.
+function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[] }) {
+  const [active, setActive] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [broken, setBroken] = useState<string[]>([]);
+  const slides = useMemo(
+    () => banners.filter((b) => (b.image_desktop_url || b.image_mobile_url) && !broken.includes(coverKey(b))),
+    [banners, broken],
+  );
+  const current = active < slides.length ? active : 0;
+
+  useEffect(() => {
+    if (paused || slides.length < 2 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = window.setTimeout(() => setActive((i) => (i + 1) % slides.length), 6000);
+    return () => window.clearTimeout(timer);
+  }, [active, paused, slides.length]);
+
+  if (slides.length === 0) return <CoverDecoration visible={ready} />;
+  const many = slides.length > 1;
+  return (
+    <div
+      role={many ? 'group' : undefined}
+      aria-roledescription={many ? 'carrossel' : undefined}
+      aria-label={many ? 'Destaques da loja' : undefined}
+      onPointerEnter={(e) => e.pointerType === 'mouse' && setPaused(true)}
+      onPointerLeave={() => setPaused(false)}
+      onFocus={(e) => keyboardFocus(e.target) && setPaused(true)}
+      onBlur={() => setPaused(false)}
+      className="absolute inset-0"
+    >
+      {slides.map((banner, i) => (
+        <CoverSlide
+          key={coverKey(banner)}
+          banner={banner}
+          isActive={i === current}
+          first={i === 0}
+          onBroken={(b) => setBroken((list) => (list.includes(coverKey(b)) ? list : [...list, coverKey(b)]))}
+        />
+      ))}
+      {/* Um véu no alto mantém "Início" e "Acompanhar" legíveis até sobre uma imagem toda branca. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/45 to-transparent" />
+      {many && (
+        <div className="absolute bottom-2 right-3 flex items-center">
+          {slides.map((banner, i) => (
+            <button
+              key={banner.id}
+              type="button"
+              onClick={() => setActive(i)}
+              aria-label={`Ver destaque ${i + 1} de ${slides.length}`}
+              aria-current={i === current}
+              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              <span
+                className={`block h-1.5 rounded-full transition-all duration-300 ${i === current ? 'w-5 bg-white' : 'w-1.5 bg-white/45 group-hover:bg-white/80'}`}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- Página Bebidas (/bebidas) -----------------------------------------------------------------
 
 const categoryId = (name: string) => `cat-${normalizeText(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
@@ -625,7 +768,7 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
 }
 
 function BebidasPage() {
-  const { ready, fresh, failed, refresh, products, cart, store, site, banners, zones, logo } = useShop();
+  const { ready, fresh, failed, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
   const { cart: quantities, setQty } = cart;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
@@ -701,15 +844,7 @@ function BebidasPage() {
 
       <div className="relative mx-auto w-full max-w-[44rem]">
         <div className="relative h-44 overflow-hidden rounded-b-[2rem] bg-gradient-to-b from-[#0E36B8] via-[#0A2273] to-[#07123A] sm:h-52">
-          <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-            <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/30" />
-            <div className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/20" />
-            <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/[0.12]" />
-            <div className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2563FF]/40 blur-3xl" />
-            <IceCube className="left-[14%] top-[34%] h-10 w-10 opacity-60" delay="-2s" />
-            <IceCube className="right-[13%] top-[24%] h-12 w-12 opacity-55" delay="-4s" />
-            <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#050505]/60 to-transparent" />
-          </div>
+          <CoverBackground ready={ready} banners={coverBanners} />
           <a
             href="/"
             className="absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"

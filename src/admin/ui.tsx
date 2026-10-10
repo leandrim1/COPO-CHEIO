@@ -443,6 +443,18 @@ export function useToast(): ToastApi {
 
 // ---- Imagem (escolhe, mostra a prévia; o envio acontece ao salvar) -----------------------------
 
+// Endereço para mostrar a imagem escolhida: a prévia local do arquivo novo (ainda não enviado) ou a URL já salva.
+export function useImagePreview(value: ImageValue): string | null {
+  const preview = useMemo(() => (value.file ? URL.createObjectURL(value.file) : value.url), [value.file, value.url]);
+  useEffect(
+    () => () => {
+      if (value.file && preview) URL.revokeObjectURL(preview);
+    },
+    [value.file, preview],
+  );
+  return preview;
+}
+
 export function ImageInput({
   label,
   value,
@@ -463,13 +475,7 @@ export function ImageInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState('');
   const [dragging, setDragging] = useState(false);
-  const preview = useMemo(() => (value.file ? URL.createObjectURL(value.file) : value.url), [value.file, value.url]);
-  useEffect(
-    () => () => {
-      if (value.file && preview) URL.revokeObjectURL(preview);
-    },
-    [value.file, preview],
-  );
+  const preview = useImagePreview(value);
 
   const pick = (file: File | undefined) => {
     if (!file) return;

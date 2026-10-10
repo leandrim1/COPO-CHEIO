@@ -28,13 +28,16 @@ type ShopData = {
   site: SiteSettings;
   hero: HeroSettings;
   products: Product[];
+  // Carrossel abaixo do título "Bebidas".
   banners: Banner[];
+  // Faixa do topo da página (no lugar dos gelos). Vazio = a capa azul de sempre.
+  coverBanners: Banner[];
   zones: DeliveryZone[];
   payments: PaymentOption[];
 };
 
 const CACHE_KEY = 'copocheio:site-v2';
-const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], zones: [], payments: DEFAULT_PAYMENTS };
+const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS };
 
 function readCache(): ShopData | null {
   try {
@@ -89,7 +92,15 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
 async function fetchShop(): Promise<ShopData> {
   const [catalog, content] = await Promise.all([
     api.get<{ categories: Category[]; products: ProductRowFromDb[] }>('/api/products'),
-    api.get<{ store: StoreSettings; site: SiteSettings; hero: HeroSettings; banners: Banner[]; zones: DeliveryZone[]; payments: PaymentOption[] }>('/api/site'),
+    api.get<{
+      store: StoreSettings;
+      site: SiteSettings;
+      hero: HeroSettings;
+      banners: Banner[];
+      cover_banners?: Banner[];
+      zones: DeliveryZone[];
+      payments: PaymentOption[];
+    }>('/api/site'),
   ]);
   const visibleCategories = new Set(catalog.categories.map((c) => c.id));
   return {
@@ -101,6 +112,7 @@ async function fetchShop(): Promise<ShopData> {
       catalog.categories,
     ),
     banners: content.banners,
+    coverBanners: content.cover_banners ?? [],
     zones: content.zones,
     payments: content.payments.length ? content.payments : DEFAULT_PAYMENTS,
   };

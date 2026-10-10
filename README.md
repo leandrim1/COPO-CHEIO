@@ -35,7 +35,7 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | Site                | O que é                                                                      |
 | ------------------- | ---------------------------------------------------------------------------- |
 | `/`                 | Hero, Contato, chamada final ("Deu sede?") e rodapé                          |
-| `/bebidas`          | Cardápio: banners, busca, categorias, favoritos, ESGOTADO                    |
+| `/bebidas`          | Cardápio: capa com banner, carrossel de banners, busca, categorias, favoritos, ESGOTADO |
 | `/checkout`         | Dados do cliente, entrega ou retirada, endereço, pagamento, observações      |
 | `/pedido/:codigo`   | Confirmação: "Pedido recebido!", andamento, link de acompanhamento, WhatsApp |
 | `/acompanhar-pedido`            | Sem login: acompanhar sem cadastro (número + código) ou entrar na conta. Com login: só os pedidos em andamento da conta |
@@ -54,7 +54,7 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | `/admin/categorias`                            | Criar, editar, ordenar, ativar/desativar                    |
 | `/admin/estoque`                               | + adicionar / − retirar; 0 = ESGOTADO automático            |
 | `/admin/site`                                  | Logo, nome, Hero, textos das seções, SEO                    |
-| `/admin/banners`                               | Banners (desktop e celular) da página Bebidas               |
+| `/admin/banners`                               | Banner da capa da página Bebidas (no lugar dos gelos) e carrossel do cardápio, com imagem de celular e de computador |
 | `/admin/configuracoes`                         | Loja, horários, entrega, pagamento, painel, administradores |
 
 Qualquer `/admin/*` sem login vai para `/admin/login`, e o servidor confere a sessão em **toda** chamada
@@ -127,6 +127,15 @@ público continuam funcionando — para guardá-las no Blob, abra o produto e en
   o cliente escolhe o bairro numa lista.
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo).
   Ainda não há pagamento online; a chave PIX (opcional) aparece para o cliente depois do pedido.
+- **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
+  no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
+  descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
+  quem pediu menos animação e enquanto o mouse ou o teclado está em cima). **Sem banner ativo, ou se a imagem não abrir,
+  a página mostra a capa azul com os gelos, como antes.** Tamanhos ideais: 1200 × 540 px (celular) e 1400 × 420 px
+  (computador). A altura da capa é fixa (a imagem é cortada para caber, sempre centralizada) e os botões "Início" e
+  "Acompanhar" (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas.
+  A capa e o carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o
+  outro é só escolher *Onde aparece* ao editar.
 - **Site sempre em dia**: o site lê a API ao abrir e de novo quando a pessoa volta para a aba; guarda uma cópia no
   navegador para abrir rápido.
 - **Textos sem quebrar o layout**: cada texto tem limite de tamanho (no painel, na API e no banco). O "trecho em azul" de
@@ -351,7 +360,7 @@ cliente na próxima consulta.
 
 ## API
 
-Público: `GET /api/products` · `GET /api/site` · `POST /api/orders` (devolve `{order, token}`) · `GET /api/health`
+Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e `cover_banners` da capa) · `POST /api/orders` (devolve `{order, token}`) · `GET /api/health`
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
@@ -408,6 +417,8 @@ do banco) e encerra as sessões de cliente abertas antes dela.
 A migration `0006_password_reset_email.sql` acrescenta a `customer_password_resets` de onde veio o link (`via`: `admin` ou
 `email`), para qual e-mail foi e quando foi enviado, e as funções atômicas que pedem o link (espera de 60 s, limites por
 hora e por dia), registram o envio e usam o link (trocar a senha, derrubar sessões e, só para link de e-mail enviado, confirmar o e-mail).
+A migration `0007_banner_cover.sql` acrescenta `banners.placement` (`menu` ou `cover`; os banners que já existiam ficam no
+cardápio, na mesma ordem) e a regra de que um banner de capa precisa de pelo menos uma imagem.
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.

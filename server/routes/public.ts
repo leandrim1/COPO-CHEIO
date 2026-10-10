@@ -23,15 +23,20 @@ export function registerPublic(r: Router) {
     return json({ categories, products });
   });
 
-  // Textos, loja, entrega, pagamento e banners.
+  // Textos, loja, entrega, pagamento e banners (os do cardápio em `banners`; os da capa em `cover_banners`).
   r.get('/api/site', 'public', async () => {
-    const [store, site, hero, banners, zones, payments] = await batch([
+    const [store, site, hero, banners, coverBanners, zones, payments] = await batch([
       ['select * from store_settings where id = 1'],
       ['select * from site_settings where id = 1'],
       ['select * from hero_settings where id = 1'],
       [
-        `select id, title, subtitle, image_desktop_url, image_mobile_url, button_text, link, position, active
-           from banners where active order by position, created_at`,
+        `select id, placement, title, subtitle, image_desktop_url, image_mobile_url, button_text, link, position, active
+           from banners where active and placement = 'menu' order by position, created_at`,
+      ],
+      [
+        // A capa mostra só a imagem (o título é a descrição dela para leitores de tela) e o link.
+        `select id, placement, title, image_desktop_url, image_mobile_url, link, position, active
+           from banners where active and placement = 'cover' order by position, created_at`,
       ],
       ['select id, name, fee, position, active from delivery_zones where active order by position, name'],
       ['select code, label, details from payment_methods where enabled order by position'],
@@ -39,7 +44,7 @@ export function registerPublic(r: Router) {
     if (!store[0] || !site[0] || !hero[0]) {
       throw new HttpError(503, 'O banco ainda não tem o conteúdo inicial. Rode as migrations (npm run db:migrate).');
     }
-    return json({ store: store[0], site: site[0], hero: hero[0], banners, zones, payments });
+    return json({ store: store[0], site: site[0], hero: hero[0], banners, cover_banners: coverBanners, zones, payments });
   });
 
   r.post('/api/orders', 'public', async (ctx) => {

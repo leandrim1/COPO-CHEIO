@@ -56,6 +56,8 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
   categories_name_key: 'Já existe uma categoria com esse nome.',
   delivery_zones_name_key: 'Esse bairro já está cadastrado.',
   products_sku_key: 'Já existe um produto com esse SKU.',
+  banners_has_content: 'O banner precisa de pelo menos uma imagem ou um título.',
+  banners_cover_needs_image: 'O banner da capa precisa de uma imagem.',
 };
 
 function failure(error: unknown): Response {

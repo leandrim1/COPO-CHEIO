@@ -85,8 +85,12 @@ export type ProductRecord = {
   updated_at: string;
 };
 
+// Onde o banner aparece: 'menu' = carrossel abaixo do título "Bebidas"; 'cover' = faixa azul do topo da página.
+export type BannerPlacement = 'menu' | 'cover';
+
 export type Banner = {
   id: string;
+  placement: BannerPlacement;
   title: string | null;
   subtitle: string | null;
   image_desktop_url: string | null;

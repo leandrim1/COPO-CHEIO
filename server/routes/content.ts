@@ -11,6 +11,7 @@ import {
   instagram,
   int,
   money,
+  oneOf,
   openingHours,
   parse,
   siteLink,
@@ -70,7 +71,11 @@ const heroSpec: Spec = {
   images: imageList('Imagens do Hero', 6),
 };
 
+// Onde o banner aparece: 'menu' = carrossel abaixo do título "Bebidas"; 'cover' = faixa azul do topo da página (no lugar dos gelos).
+const BANNER_PLACEMENTS = ['menu', 'cover'] as const;
+
 const bannerSpec: Spec = {
+  placement: oneOf('Onde aparece', BANNER_PLACEMENTS),
   title: text('Título', { max: 60, nullable: true }),
   subtitle: text('Subtítulo', { max: 120, nullable: true }),
   image_desktop_url: imageUrl('Imagem desktop'),
@@ -186,11 +191,13 @@ export function registerContent(r: Router) {
 
   r.get('/api/admin/banners', 'admin', async () => json({ banners: await query('select * from banners order by position, created_at') }));
 
+  // Cada lugar (capa e cardápio) tem a sua própria ordem.
+  const nextBannerPosition = async (placement: unknown) =>
+    (await one<{ n: number }>('select coalesce(max(position), -1) + 1 as n from banners where placement = $1', [placement ?? 'menu']))?.n ?? 0;
+
   r.post('/api/admin/banners', 'admin', async (ctx) => {
     const { values } = parse(bannerSpec, await readJson(ctx.req, 8 * 1024));
-    if (values.position === undefined) {
-      values.position = (await one<{ n: number }>('select coalesce(max(position), -1) + 1 as n from banners'))?.n ?? 0;
-    }
+    if (values.position === undefined) values.position = await nextBannerPosition(values.placement);
     return json({ banner: await insertRow('banners', values) }, 201);
   });
 
@@ -213,8 +220,15 @@ export function registerContent(r: Router) {
   r.patch('/api/admin/banners/:id', 'admin', async (ctx) => {
     const id = uuidParam(ctx);
     const { values } = parse(bannerSpec, await readJson(ctx.req, 8 * 1024), { partial: true });
-    const before = await one<{ image_desktop_url: string | null; image_mobile_url: string | null }>('select image_desktop_url, image_mobile_url from banners where id = $1', [id]);
+    const before = await one<{ placement: string; image_desktop_url: string | null; image_mobile_url: string | null }>(
+      'select placement, image_desktop_url, image_mobile_url from banners where id = $1',
+      [id],
+    );
     if (!before) throw new HttpError(404, 'Banner não encontrado.');
+    // Mudou de lugar sem dizer a ordem: vai para o fim da fila do lugar novo.
+    if (values.placement !== undefined && values.placement !== before.placement && values.position === undefined) {
+      values.position = await nextBannerPosition(values.placement);
+    }
     const banner = await updateRow('banners', { column: 'id', value: id }, values);
     await releaseImages([before.image_desktop_url, before.image_mobile_url]);
     return json({ banner });
