@@ -33,7 +33,7 @@ function MailStatus() {
     setTesting(true);
     try {
       const data = await api.post<{ to: string }>('/api/admin/mail/test', {});
-      toast.success('E-mail de teste enviado.', `Veja a caixa de entrada de ${data.to} (e o spam).`);
+      toast.success('E-mail de teste enviado.', `Veja a caixa de entrada de ${data.to} (e o spam). É o e-mail de confirmação com um código de exemplo.`);
     } catch (err) {
       toast.error('Não foi possível enviar o e-mail de teste.', friendlyError(err, ''));
     } finally {

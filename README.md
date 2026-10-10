@@ -232,7 +232,7 @@ qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta *
    | `SMTP_PORT` | `465` (padrão) ou `587` | não |
    | `SMTP_SECURE` | `true`/`false` (padrão: `true` na porta 465) | não |
    | `MAIL_FROM` | remetente, ex.: `Copo Cheio <copocheio@gmail.com>`; **obrigatória só** quando `SMTP_USER` não é um e-mail (Resend, SendGrid, SES…) | não |
-   | `SITE_URL` | endereço do site nos links, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
+   | `SITE_URL` | endereço do site nos links e na logo dos e-mails, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
 
 3. Faça um novo deploy, abra *Painel → Clientes* e use **Enviar e-mail de teste** (owner). O painel e
    `GET /api/health` (`"mail":"ok"`) mostram se está configurado; se faltar algo, listam os **nomes** das variáveis.
@@ -245,6 +245,54 @@ cadastro (`503 mail_not_configured`) em vez de criar contas que ninguém poderia
 **Contas que já existiam** antes desta atualização passam a `pending_verification` (com 30 dias de prazo) e confirmam o
 e-mail no próximo login. Conta pendente há mais de 7 dias (30, as antigas), **sem pedidos**, é apagada
 automaticamente. Administradores do painel não passam por isto (só o owner os cria).
+
+### E-mails da Copo Cheio (layout único da marca)
+
+Todo e-mail do sistema usa o **mesmo layout** (`server/mailLayout.ts`): cabeçalho preto com a **logo oficial** e uma faixa azul
+da marca, cartão claro com cantos arredondados sobre um fundo suave, tipografia do sistema, rodapé com o nome e o slogan da
+loja e os **contatos reais** (WhatsApp, Instagram, endereço e site, lidos de *Painel → Configurações*; o que não estiver
+cadastrado simplesmente não aparece) e uma versão em **texto simples** gerada junto. Cada e-mail só descreve o próprio conteúdo.
+
+| Arquivo | O que é |
+| ------- | ------- |
+| `server/mailLayout.ts` | O layout: cabeçalho, rodapé, paleta, modo escuro, ajuste para celular e os blocos (texto, código, botão, link, aviso) em HTML e em texto |
+| `server/mailTemplates.ts` | Os e-mails de hoje: **confirmação de e-mail** e **aviso "você já tem uma conta"** (o de teste do painel é o de confirmação com um código de exemplo) |
+| `server/mailBrand.ts` | A marca na hora de enviar: nome, slogan, contatos e logo, vindos do banco (`loadBrand`) |
+| `server/mail.ts` | O envio (SMTP, `nodemailer`) |
+| `public/email/logo.png` | A logo oficial reduzida para e-mail |
+
+**Como a logo é carregada.** Leitores de e-mail só mostram imagem com **endereço público** (nada de arquivo anexo ou
+`data:`), então o e-mail aponta para `https://<seu site>/email/logo.png`: a mesma arte de `public/logo.png`, reduzida para
+256×256 (o dobro do tamanho exibido, 128 px, para ficar nítida em tela de celular), em PNG de 32 bits com transparência
+(~64 KB; é o formato que todo leitor abre, inclusive o Outlook para Windows). O endereço do site vem de `SITE_URL` (se
+definida) ou do domínio de produção da Vercel — por isso o domínio de produção precisa ser público (o padrão). Se a logo for
+trocada em *Painel → Site* e o arquivo novo for PNG, JPG ou GIF, o e-mail passa a usá-la; se for WebP (o formato que o painel
+costuma gerar, e que o Outlook para Windows não abre), o e-mail continua com a logo oficial em PNG. Sem a imagem (Outlook
+bloqueia por padrão), aparece o nome da loja no lugar.
+
+**Compatibilidade.** HTML de tabelas com estilos inline (o visual claro não depende do `<style>`), fonte do sistema por
+extenso, botão com retângulo arredondado em VML para o Outlook para Windows, `color-scheme` e `prefers-color-scheme` para o
+**modo escuro** (Apple Mail, Outlook.com e aplicativo, Samsung; o Gmail escurece sozinho), ajuste para telas de até 520 px,
+sem JavaScript, sem fonte externa e **sem pixel de rastreamento** (a única imagem é a logo). Cerca de 14 KB de HTML por e-mail (o Gmail
+corta acima de ~100 KB). As cores têm contraste WCAG AA nos dois modos.
+
+**Criar um e-mail novo** (por exemplo, quando existir recuperação de senha por e-mail):
+
+1. Em `server/mailTemplates.ts`, escreva uma função no formato das que já estão lá: recebe `brand` e os dados e devolve
+   `renderEmail(brand, { to, subject, preheader, eyebrow, title, greeting, blocks: [...], reason })`. Os blocos disponíveis
+   são `text`, `code`, `button`, `link` e `notice` (para um bloco novo, como o resumo de um pedido, acrescente o tipo em
+   `mailLayout.ts`: HTML e texto).
+2. Na rota, carregue a marca com `await loadBrand(req)` e envie com `sendMail(mensagem)` (`mail.ts`), depois de aplicar as
+   regras de quem pode receber (limites, confirmação do endereço).
+
+Cabeçalho, logo, cores, rodapé, modo escuro e versão em texto vêm do layout; o e-mail novo só diz o que tem a dizer.
+
+**Testar o envio real e ver no Gmail.** Em *Painel → Clientes*, o dono usa **Enviar e-mail de teste**: chega na caixa do
+próprio dono o e-mail de confirmação de verdade (mesmo layout, logo e rodapé), com a faixa "Mensagem de teste" e o código de
+exemplo `123456`, que não ativa conta nenhuma. Abra no celular e no computador, nos modos claro e escuro do Gmail, e use
+*⋮ → Mostrar original* para conferir que SPF, DKIM e DMARC estão em **PASS**. O e-mail de confirmação real é o do cadastro em
+`/conta`. Limites: a "foto" do remetente na lista do Gmail (a silhueta cinza) não vem do e-mail — só aparece a logo ali com
+BIMI, que exige um domínio próprio; e o Outlook para Windows mostra cantos retos nos cartões (o botão continua arredondado).
 
 ### No painel
 
@@ -340,7 +388,7 @@ dashboard) são funções do banco chamadas só pelo servidor.
 api/index.ts      função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/verification.ts confirmação do e-mail: códigos, links, reenvio e limites
-server/mail*.ts        envio SMTP, textos dos e-mails, domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
+server/mail*.ts        envio SMTP, layout e textos dos e-mails (mailLayout, mailTemplates, mailBrand), domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
 server/emailAddress.ts formato, normalização e máscara do e-mail
 db/migrations/         tabelas, funções e conteúdo inicial do Neon
 scripts/               migrate.mjs (migrations) · create-admin.mjs (primeiro administrador) · update-disposable-domains.mjs (lista de e-mails descartáveis)
@@ -348,6 +396,7 @@ src/App.tsx            site: Hero, Bebidas, Contato, chamada final, rotas
 src/site/              dados do site (API), carrinho, checkout
 src/site/Tracking.tsx  confirmação, acompanhamento e "Acompanhar pedido" (pacote à parte, junto com Account.tsx)
 src/site/Account.tsx   conta do cliente: login, Meus pedidos, recuperar senha
+public/email/logo.png  logo oficial reduzida para os e-mails (servida em /email/logo.png)
 src/lib/               cliente da API, tipos, formatação, horários, rotas
 src/admin/             painel (carregado só em /admin)
 ```

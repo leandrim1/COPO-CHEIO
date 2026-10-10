@@ -9,6 +9,7 @@ import { one, query } from './db.js';
 import { databaseUrl } from './env.js';
 import { HttpError } from './http.js';
 import { MailError, mailConfigured, sendMail } from './mail.js';
+import { loadBrand } from './mailBrand.js';
 import { alreadyRegisteredMessage, verificationMessage } from './mailTemplates.js';
 
 export const CODE_MINUTES = 15;
@@ -48,22 +49,6 @@ function mailFailure(error: unknown): HttpError {
   return new HttpError(503, 'Não conseguimos enviar o e-mail agora. Tente de novo em instantes.', { code: 'mail_failed' });
 }
 
-// ---- Endereço do site nos links ------------------------------------------------------------------------
-
-// Link do e-mail: SITE_URL (se definida) → domínio de produção da Vercel → endereço da própria requisição.
-export function siteUrl(req: Request): string {
-  const configured = (process.env.SITE_URL ?? '').trim();
-  if (configured) return configured.replace(/\/+$/, '');
-  const production = (process.env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
-  if (process.env.VERCEL_ENV === 'production' && production) return `https://${production}`;
-  return new URL(req.url).origin;
-}
-
-async function storeName(): Promise<string> {
-  const row = await one<{ store_name: string }>('select store_name from store_settings where id = 1');
-  return row?.store_name || 'Copo Cheio';
-}
-
 // ---- Enviar um código ----------------------------------------------------------------------------------
 
 export type Issue = { sent: boolean; reason?: 'cooldown' | 'limit' | 'not_pending'; retryAfter?: number };
@@ -91,13 +76,13 @@ export async function sendVerificationEmail(req: Request, ip: string, customer: 
     return { sent: false, reason: begin.reason === 'not_pending' ? 'not_pending' : 'limit' };
   }
   try {
+    const brand = await loadBrand(req);
     await sendMail(
-      verificationMessage({
+      verificationMessage(brand, {
         to: begin.email,
         name: begin.name,
         code,
-        link: `${siteUrl(req)}/conta/verificar/${token}`,
-        store: await storeName(),
+        link: `${brand.siteUrl}/conta/verificar/${token}`,
         codeMinutes: CODE_MINUTES,
         linkHours: LINK_HOURS,
       }),
@@ -117,7 +102,8 @@ export async function sendAlreadyRegisteredNotice(req: Request, customer: { emai
   if (!mailConfigured()) return;
   if ((await attempts('notice-email', customer.email, 3600)) >= 1) return;
   try {
-    await sendMail(alreadyRegisteredMessage({ to: customer.email, name: customer.name, loginUrl: `${siteUrl(req)}/conta`, store: await storeName() }));
+    const brand = await loadBrand(req);
+    await sendMail(alreadyRegisteredMessage(brand, { to: customer.email, name: customer.name, loginUrl: `${brand.siteUrl}/conta` }));
     await recordAttempt('notice-email', customer.email);
   } catch {
     /* quem tentou o cadastro não pode saber se o endereço já existe: falha de envio aqui não vira erro na tela */
