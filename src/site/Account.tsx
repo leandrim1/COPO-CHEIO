@@ -1,4 +1,4 @@
-import { Check, Info, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag, TriangleAlert, XCircle } from 'lucide-react';
+import { Check, ChevronDown, Info, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag, TriangleAlert, XCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
@@ -6,7 +6,7 @@ import { maskPhone, onlyDigits } from '../lib/format';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
-import { getLoginPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, useCustomer } from './customer';
+import { getLoginPrefill, getRecoverPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, setRecoverPrefill, useCustomer } from './customer';
 import { useShop } from './data';
 import { Field, PageShell } from './shell';
 import { OrderListItem, useActiveOrders } from './OrderList';
@@ -391,7 +391,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
         </Submit>
         {tab === 'entrar' && (
           <p className="text-center text-sm">
-            <a href="/conta/recuperar" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
+            <a href="/conta/recuperar" onClick={() => setRecoverPrefill(form.email.trim())} className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
               Esqueci minha senha
             </a>
           </p>
@@ -959,16 +959,14 @@ export function MyOrderPage({ number }: { number: string }) {
 
 // ---- /conta/recuperar e /conta/redefinir/:código -------------------------------------------------------
 
-export function RecoverPage() {
+// Alternativa para quem não acessa o e-mail (ou quando a loja ainda não configurou o envio): prova de posse com o
+// telefone da conta + um pedido que já está nela.
+function RecoverByOrder({ initialEmail, onDone }: { initialEmail: string; onDone: () => void }) {
   const { store } = useShop();
-  const [form, setForm] = useState({ email: '', phone: '', number: '', code: '', password: '' });
+  const [form, setForm] = useState({ email: initialEmail, phone: '', number: '', code: '', password: '' });
   const [error, setError] = useState('');
-  const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
   const set = (key: keyof typeof form, value: string) => setForm((f) => ({ ...f, [key]: value }));
-  useEffect(() => {
-    document.title = 'Recuperar senha';
-  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -982,7 +980,7 @@ export function RecoverPage() {
     setBusy(true);
     try {
       await api.post('/api/account/recover', { email: form.email.trim(), phone: onlyDigits(form.phone), order_number: form.number.trim().replace(/^#/, ''), code, password: form.password });
-      setDone(true);
+      onDone();
     } catch (err) {
       setError(friendlyError(err, 'Não foi possível redefinir a senha agora.'));
     } finally {
@@ -993,10 +991,134 @@ export function RecoverPage() {
   const whatsapp = `https://wa.me/${(store.whatsapp ?? '').replace(/\D/g, '')}?text=${encodeURIComponent(`Olá, ${store.store_name}! Esqueci a senha da minha conta no site. Podem me enviar um link para criar uma nova?`)}`;
 
   return (
+    <>
+      <p className="mb-4 text-sm text-white/60">Sem o e-mail, você prova que a conta é sua com o telefone cadastrado e um pedido que já está nela.</p>
+      <form onSubmit={submit} noValidate className="space-y-4">
+        <Field label="E-mail da conta">{(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className={FIELD} />}</Field>
+        <Field label="Telefone cadastrado">{(p) => <input {...p} type="tel" value={form.phone} onChange={(e) => set('phone', maskPhone(e.target.value))} autoComplete="tel-national" className={FIELD} placeholder="(34) 99999-0000" />}</Field>
+        <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
+          <Field label="Nº do pedido">{(p) => <input {...p} value={form.number} onChange={(e) => set('number', e.target.value)} inputMode="numeric" autoComplete="off" className={FIELD} placeholder="#1001" />}</Field>
+          <Field label="Código de acompanhamento">
+            {(p) => <input {...p} value={form.code} onChange={(e) => set('code', e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} className={`${FIELD} font-mono`} placeholder="7K3M9-QX2VB-…" />}
+          </Field>
+        </div>
+        <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
+          {(p) => <input {...p} type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" maxLength={200} className={FIELD} />}
+        </Field>
+        <ErrorLine>{error}</ErrorLine>
+        <Submit busy={busy}>Redefinir senha</Submit>
+      </form>
+      <p className="mt-5 text-sm text-white/55">
+        Sua conta ainda não tem nenhum pedido?{' '}
+        <a href={whatsapp} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
+          Peça um link de redefinição à loja pelo WhatsApp
+        </a>
+        .
+      </p>
+    </>
+  );
+}
+
+type Sent = { email: string; resendIn: number; minutes: number };
+
+// Depois do pedido: a resposta é a mesma exista a conta ou não, então a tela diz "se existir" e ajuda a achar o e-mail.
+function RecoverSent({ sent, onAgain, onOther }: { sent: Sent; onAgain: (s: Sent) => void; onOther: () => void }) {
+  const [left, restart] = useCountdown(sent.resendIn);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  const resend = async () => {
+    setError('');
+    setInfo('');
+    setBusy(true);
+    try {
+      const data = await api.post<{ resend_in?: number; minutes?: number }>('/api/account/forgot-password', { email: sent.email });
+      restart(number(data.resend_in, 60));
+      onAgain({ email: sent.email, resendIn: number(data.resend_in, 60), minutes: number(data.minutes, sent.minutes) });
+      setInfo('Pedimos um novo link. O link anterior deixa de valer quando o novo chegar.');
+    } catch (err) {
+      setError(friendlyError(err, 'Não foi possível reenviar agora. Tente de novo em instantes.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <InfoLine>
+        Se existir uma conta com <strong className="font-bold">{sent.email}</strong>, o link para criar uma senha nova já está a caminho. Ele vale por {sent.minutes} minutos e só pode ser usado uma vez.
+      </InfoLine>
+      <ErrorLine>{error}</ErrorLine>
+      <OkLine>{info}</OkLine>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={() => void resend()}
+          disabled={left > 0 || busy}
+          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/40 disabled:no-underline"
+        >
+          {busy && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+          {left > 0 ? `Reenviar link em ${mmss(left)}` : 'Reenviar link'}
+        </button>
+        <button type="button" onClick={onOther} className="text-sm font-semibold text-white/60 underline-offset-4 hover:text-white hover:underline">
+          Usar outro e-mail
+        </button>
+      </div>
+      <p className="text-xs leading-relaxed text-white/45">Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se digitou o e-mail certo. Por segurança, limitamos quantos links podem ser enviados por hora.</p>
+    </div>
+  );
+}
+
+export function RecoverPage() {
+  const [email, setEmail] = useState(() => getRecoverPrefill());
+  const [emailError, setEmailError] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState<Sent | null>(null);
+  const [mailDown, setMailDown] = useState(false);
+  const [altOpen, setAltOpen] = useState(false);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    document.title = 'Recuperar senha';
+    return () => setRecoverPrefill('');
+  }, []);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setEmailError('');
+    const address = email.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(address)) {
+      setEmailError('Confira o e-mail.');
+      requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await api.post<{ resend_in?: number; minutes?: number }>('/api/account/forgot-password', { email: address });
+      setSent({ email: address, resendIn: number(data.resend_in, 60), minutes: number(data.minutes, 60) });
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'invalid_email') {
+        setEmailError(err.message);
+        requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      } else if (err instanceof ApiError && err.code === 'mail_not_configured') {
+        // A loja ainda não configurou o envio de e-mails: o caminho sem e-mail é o que resta.
+        setMailDown(true);
+        setAltOpen(true);
+      } else {
+        setError(friendlyError(err, 'Não foi possível enviar agora. Tente de novo em instantes.'));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
     <PageShell back="/conta" backLabel="Entrar">
       <div className="mx-auto max-w-md">
-        <Title sub="Sem e-mail automático: você prova que a conta é sua com um pedido que já está nela.">Recuperar senha</Title>
-        <div className="mt-6">
+        <Title sub="Informe o e-mail da sua conta e enviaremos um link para você criar uma senha nova.">Recuperar senha</Title>
+        <div className="mt-6 space-y-5">
           {done ? (
             <Panel id="ok" title="Senha redefinida">
               <OkLine>Pronto! Entre com a senha nova.</OkLine>
@@ -1005,30 +1127,52 @@ export function RecoverPage() {
               </a>
             </Panel>
           ) : (
-            <Panel id="recuperar" title="Dados da conta e de um pedido">
-              <form onSubmit={submit} noValidate className="space-y-4">
-                <Field label="E-mail da conta">{(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className={FIELD} />}</Field>
-                <Field label="Telefone cadastrado">{(p) => <input {...p} type="tel" value={form.phone} onChange={(e) => set('phone', maskPhone(e.target.value))} autoComplete="tel-national" className={FIELD} placeholder="(34) 99999-0000" />}</Field>
-                <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
-                  <Field label="Nº do pedido">{(p) => <input {...p} value={form.number} onChange={(e) => set('number', e.target.value)} inputMode="numeric" autoComplete="off" className={FIELD} placeholder="#1001" />}</Field>
-                  <Field label="Código de acompanhamento">
-                    {(p) => <input {...p} value={form.code} onChange={(e) => set('code', e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} className={`${FIELD} font-mono`} placeholder="7K3M9-QX2VB-…" />}
-                  </Field>
-                </div>
-                <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
-                  {(p) => <input {...p} type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" maxLength={200} className={FIELD} />}
-                </Field>
-                <ErrorLine>{error}</ErrorLine>
-                <Submit busy={busy}>Redefinir senha</Submit>
-              </form>
-              <p className="mt-5 text-sm text-white/55">
-                Sua conta ainda não tem nenhum pedido?{' '}
-                <a href={whatsapp} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
-                  Peça um link de redefinição à loja pelo WhatsApp
-                </a>
-                .
-              </p>
-            </Panel>
+            <>
+              <Panel id="por-email" title={sent ? 'Verifique seu e-mail' : 'Receber o link por e-mail'}>
+                {sent ? (
+                  <RecoverSent
+                    sent={sent}
+                    onAgain={setSent}
+                    onOther={() => {
+                      setSent(null);
+                      setEmail('');
+                    }}
+                  />
+                ) : (
+                  <form onSubmit={submit} noValidate className="space-y-4">
+                    {mailDown && <InfoLine tone="warn">A recuperação por e-mail está indisponível no momento, porque o envio de e-mails da loja ainda não foi configurado. Use a opção abaixo ou fale com a loja pelo WhatsApp.</InfoLine>}
+                    <Field label="E-mail da conta" error={emailError}>
+                      {(p) => <input {...p} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setEmailError(''); }} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
+                    </Field>
+                    <ErrorLine>{error}</ErrorLine>
+                    <Submit busy={busy}>
+                      {!busy && <Mail className="h-5 w-5" aria-hidden="true" />}
+                      Enviar link de recuperação
+                    </Submit>
+                  </form>
+                )}
+              </Panel>
+
+              <section className="rounded-[1.75rem] border border-white/10 bg-white/[0.03]">
+                <button
+                  type="button"
+                  aria-expanded={altOpen}
+                  aria-controls="sem-email"
+                  onClick={() => setAltOpen((open) => !open)}
+                  className="flex w-full items-center justify-between gap-3 rounded-[1.75rem] px-5 py-4 text-left text-base font-bold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white sm:px-6"
+                >
+                  <span>
+                    Não consigo acessar meu <span className="whitespace-nowrap">e-mail</span>
+                  </span>
+                  <ChevronDown className={`h-5 w-5 shrink-0 text-white/60 transition-transform ${altOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+                </button>
+                {altOpen && (
+                  <div id="sem-email" className="px-5 pb-5 sm:px-6 sm:pb-6">
+                    <RecoverByOrder initialEmail={email.trim()} onDone={() => setDone(true)} />
+                  </div>
+                )}
+              </section>
+            </>
           )}
         </div>
       </div>
@@ -1036,14 +1180,43 @@ export function RecoverPage() {
   );
 }
 
+// Link da recuperação (e-mail ou gerado pela loja): confere se ainda vale ANTES de pedir a senha nova.
 export function ResetPage({ token }: { token: string }) {
+  const [phase, setPhase] = useState<'checking' | 'invalid' | 'form' | 'done'>('checking');
+  const [masked, setMasked] = useState('');
+  const [invalid, setInvalid] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [done, setDone] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   useEffect(() => {
     document.title = 'Nova senha';
   }, []);
+
+  // Só consulta (não gasta o link): leitores de e-mail que "abrem" links sozinhos não invalidam nada.
+  useEffect(() => {
+    let alive = true;
+    api
+      .post<{ email_masked: string }>('/api/account/reset-check', { token })
+      .then((data) => {
+        if (!alive) return;
+        setMasked(data.email_masked);
+        setPhase('form');
+      })
+      .catch((err) => {
+        if (!alive) return;
+        if (err instanceof ApiError && err.status === 400) {
+          setInvalid(err.message);
+          setPhase('invalid');
+        } else {
+          // Sem conexão agora: mostra o formulário; se o link não valer, o envio avisa.
+          setPhase('form');
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -1051,10 +1224,17 @@ export function ResetPage({ token }: { token: string }) {
     if (password.length < 8) return setError('A senha precisa ter pelo menos 8 caracteres.');
     setBusy(true);
     try {
-      await api.post('/api/account/reset', { token, password });
-      setDone(true);
+      const data = await api.post<{ email?: string; verified?: boolean }>('/api/account/reset', { token, password });
+      if (data.email) setLoginPrefill(data.email);
+      setConfirmed(Boolean(data.verified));
+      setPhase('done');
     } catch (err) {
-      setError(friendlyError(err, 'Não foi possível redefinir a senha agora.'));
+      if (err instanceof ApiError && err.code === 'invalid_link') {
+        setInvalid(err.message);
+        setPhase('invalid');
+      } else {
+        setError(friendlyError(err, 'Não foi possível redefinir a senha agora.'));
+      }
     } finally {
       setBusy(false);
     }
@@ -1065,15 +1245,25 @@ export function ResetPage({ token }: { token: string }) {
       <div className="mx-auto max-w-md">
         <Title>Nova senha</Title>
         <div className="mt-6">
-          {done ? (
+          {phase === 'checking' ? (
+            <Spinner />
+          ) : phase === 'done' ? (
             <Panel id="ok" title="Senha redefinida">
-              <OkLine>Pronto! Entre com a senha nova.</OkLine>
+              <OkLine>{confirmed ? 'Pronto! Sua senha foi alterada e o seu e-mail foi confirmado. Entre com a senha nova.' : 'Pronto! Entre com a senha nova.'}</OkLine>
+              <p className="mt-3 text-sm text-white/55">Por segurança, você foi desconectado dos aparelhos em que estava logado.</p>
               <a href="/conta" className={`${BLUE_BUTTON} mt-4 w-full`}>
                 Entrar
               </a>
             </Panel>
+          ) : phase === 'invalid' ? (
+            <Panel id="vencido" title="Este link não vale mais">
+              <ErrorLine>{invalid}</ErrorLine>
+              <a href="/conta/recuperar" className={`${BLUE_BUTTON} mt-4 w-full`}>
+                Pedir um novo link
+              </a>
+            </Panel>
           ) : (
-            <Panel id="nova" title="Escolha uma senha nova" subtitle="Este link foi gerado pela loja e só vale uma vez.">
+            <Panel id="nova" title="Escolha uma senha nova" subtitle={masked ? `Conta ${masked}. Este link só vale uma vez.` : 'Este link só vale uma vez.'}>
               <form onSubmit={submit} noValidate className="space-y-4">
                 <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
                   {(p) => <input {...p} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" maxLength={200} className={FIELD} />}

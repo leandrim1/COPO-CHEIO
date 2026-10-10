@@ -15,6 +15,8 @@ export type Brand = {
   // WhatsApp, Instagram e endereço, só os que estiverem cadastrados, na ordem em que aparecem no rodapé.
   contacts: Contact[];
   year: number;
+  // Fuso horário da loja (para datas e horas escritas no e-mail).
+  timezone: string;
 };
 
 // Endereço do site nos links e nas imagens do e-mail: SITE_URL (se definida) → domínio de produção da Vercel → endereço
@@ -44,6 +46,7 @@ type Row = {
   state: string | null;
   cep: string | null;
   logo_url: string | null;
+  timezone: string | null;
 };
 
 // "5534999990000" → "(34) 99999-0000"; números de fora do Brasil aparecem com "+".
@@ -90,12 +93,13 @@ export function buildBrand(base: string, row: Row | null, now = new Date()): Bra
     logoUrl,
     contacts,
     year: now.getFullYear(),
+    timezone: row?.timezone || 'America/Sao_Paulo',
   };
 }
 
 export async function loadBrand(req: Request): Promise<Brand> {
   const row = await one<Row>(
-    `select s.store_name, s.tagline, s.whatsapp, s.instagram, s.address, s.city, s.state, s.cep, t.logo_url
+    `select s.store_name, s.tagline, s.whatsapp, s.instagram, s.address, s.city, s.state, s.cep, s.timezone, t.logo_url
        from store_settings s left join site_settings t on t.id = 1
       where s.id = 1`,
   );

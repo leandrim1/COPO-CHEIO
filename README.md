@@ -41,7 +41,7 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | `/acompanhar-pedido`            | Sem login: acompanhar sem cadastro (número + código) ou entrar na conta. Com login: só os pedidos em andamento da conta |
 | `/acompanhar-pedido/:codigo`    | Link permanente do pedido: andamento ao vivo, itens, pagamento     |
 | `/conta` · `/conta/pedidos` · `/conta/pedidos/:numero` | Conta (opcional): dados, "Meus pedidos", detalhe e "pedir de novo" |
-| `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha                                      |
+| `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha: link por e-mail (ou, sem e-mail, telefone + pedido) e tela da senha nova |
 | `/conta/verificar/:codigo`                             | Link do e-mail de confirmação (um toque no botão ativa a conta) |
 
 | Painel (só administradores)                    | O que faz                                                   |
@@ -70,7 +70,7 @@ O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blo
    token, com `BLOB_STORE_ID` + OIDC da Vercel (as variáveis `BLOB_STORE_ID` e `BLOB_WEBHOOK_PUBLIC_KEY` indicam o modo
    novo; o projeto precisa estar com *OIDC* ligado em *Settings → Security*). O Blob precisa ser **público** (as fotos
    aparecem no site). `GET /api/health` mostra o que está faltando: `{"database":"ok","blob":"ok","mail":"ok"}`.
-2. **E-mail (necessário para criar contas de clientes)** — veja [Confirmação do e-mail](#confirmação-do-e-mail-contas-de-clientes):
+2. **E-mail (necessário para criar contas de clientes e recuperar a senha por e-mail)** — veja [Confirmação do e-mail](#confirmação-do-e-mail-contas-de-clientes):
    cadastre `SMTP_HOST`, `SMTP_USER` e `SMTP_PASS`. **Enquanto faltarem, ninguém consegue criar conta nem entrar nela**
    (pedir e acompanhar pedidos sem conta continua funcionando, e o painel mostra um aviso com o que falta).
 3. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
@@ -167,10 +167,10 @@ checkout. Comprar como visitante continua sempre possível.
 - **Vincular um pedido de visitante à conta** exige a prova de posse: o **número + o código de acompanhamento** do
   pedido *e* o telefone (ou e-mail) do pedido iguais aos da conta. Pedido já ligado a outra conta, código errado ou
   vencido recebem a mesma resposta ("não encontramos…"). Vincular não altera o pedido.
-- **Esqueci a senha** (o e-mail da loja só manda códigos de confirmação): ou *e-mail + telefone cadastrado + número e
-  código de um pedido que já está na conta* (`/conta/recuperar`), ou a loja gera um **link de nova senha** (uso único,
-  vale 24 h) em *Painel → Clientes* e envia pelo WhatsApp. Redefinir a senha não confirma o e-mail: conta pendente
-  continua pendente.
+- **Esqueci a senha**: o caminho principal é o **link por e-mail** (abaixo). Quem não acessa o e-mail tem duas saídas:
+  *e-mail + telefone cadastrado + número e código de um pedido que já está na conta* (em `/conta/recuperar`, "Não consigo
+  acessar meu e-mail"), ou a loja gera um **link de nova senha** (uso único, vale 24 h) em *Painel → Clientes* e envia pelo
+  WhatsApp. Esses dois caminhos não provam acesso ao e-mail: conta pendente continua pendente.
 - **Excluir a conta** (pelo cliente em `/conta`, ou pelo owner a pedido do titular): apaga cadastro, endereço guardado e
   sessões; os pedidos ficam na loja, sem ligação com a conta, e o link de acompanhamento deles continua valendo.
 - Sessão do cliente: cookie `HttpOnly` + `SameSite=Lax` próprio (`copocheio_cliente`, 30 dias), só o hash no Neon; é
@@ -217,7 +217,8 @@ domínio que existe e e-mail que não é descartável são camadas extras; **nen
   é o código no e-mail).
 - Domínios reservados (`example.com`, `.test`, `.invalid`, `.local`…) são recusados.
 
-**Configurar o envio** (variáveis do **servidor**, nunca chegam ao navegador). O envio usa SMTP comum, que funciona com
+**Configurar o envio** (variáveis do **servidor**, nunca chegam ao navegador; são as mesmas da confirmação de cadastro e da
+recuperação de senha). O envio usa SMTP comum, que funciona com
 qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta **Gmail** da loja:
 
 1. Na conta Google da loja, ligue a *Verificação em duas etapas* e crie uma **senha de app** em
@@ -246,6 +247,38 @@ cadastro (`503 mail_not_configured`) em vez de criar contas que ninguém poderia
 e-mail no próximo login. Conta pendente há mais de 7 dias (30, as antigas), **sem pedidos**, é apagada
 automaticamente. Administradores do painel não passam por isto (só o owner os cria).
 
+### Recuperação de senha por e-mail
+
+`/conta/recuperar` (link "Esqueci minha senha" na tela de entrada): a pessoa informa o e-mail da conta e recebe, na caixa de
+entrada, um **link de uso único** que leva a `/conta/redefinir/<link>`, onde escolhe a senha nova.
+
+1. **Pedir** — `POST /api/account/forgot-password { email }`. A resposta é **sempre a mesma** (`200`), exista a conta ou não,
+   esteja ela ativa, pendente ou desativada, e **demora o mesmo tempo** (no mínimo ~2 s), para a tela não servir para descobrir
+   quem tem cadastro. Só conta ativa recebe o e-mail; o texto da tela diz "se existir uma conta...".
+2. **O link** — 256 bits aleatórios, **só o hash (SHA-256) fica no banco**, vale **60 minutos** e **uma vez**. Um link novo
+   invalida os anteriores (só depois que o e-mail novo realmente saiu; se o envio falhar, o que a pessoa já tinha continua valendo).
+3. **Abrir o link** — a tela consulta (`POST /api/account/reset-check`, que **não gasta** o link, então leitores de e-mail que
+   "abrem" links sozinhos não o invalidam) e mostra a conta (e-mail mascarado) ou, se o link venceu/foi usado/foi trocado,
+   "Este link não vale mais" com o botão **Pedir um novo link** — sem pedir senha à toa.
+4. **Senha nova** — `POST /api/account/reset { token, password }` (mínimo de 8 caracteres): troca a senha, **derruba todas as
+   sessões da conta** (todos os aparelhos), invalida os outros links e libera o login de quem ficou bloqueado por errar a senha.
+   **Não abre sessão**: a pessoa entra com a senha nova (a tela já traz o e-mail preenchido). Em seguida, um e-mail
+   **"Sua senha foi alterada"** (com data e hora) avisa a conta, para quem não foi o autor perceber na hora.
+
+| Regra | Valor |
+| ----- | ----- |
+| Espera entre pedidos | **60 s** por conta; no máximo **5 por hora** e **10 por dia** por conta (decididos dentro do banco, de forma atômica) |
+| Por rede (IP) | 10 pedidos por hora; e os e-mails enviados contam no mesmo limite de **15 por hora** da confirmação de cadastro |
+| Link errado | 10 tentativas por IP a cada 15 min (depois, `429`); consulta do link: 60 por IP a cada 15 min |
+| Quem recebe | só conta **ativa**; conta desativada, inexistente ou com e-mail inválido não recebe nada (e ninguém vê a diferença) |
+| Falha do servidor de e-mail | a resposta continua igual (não revela a falha); sem SMTP configurado, a rota responde `503 mail_not_configured` e a tela abre o caminho "sem e-mail" |
+
+**Conta que nunca confirmou o e-mail** (inclusive as contas antigas, que ficaram pendentes na atualização): o link de e-mail
+também vale como **prova de acesso à caixa**, então redefinir a senha por ele **confirma o e-mail** no mesmo passo (a tela
+diz isso) e a pessoa já entra, sem código. Isso só vale para o link enviado por e-mail: o link gerado pela loja (WhatsApp)
+**não** confirma nada, e o banco ainda confere que o link foi mesmo enviado e que o e-mail da conta é o mesmo para o qual
+ele foi.
+
 ### E-mails da Copo Cheio (layout único da marca)
 
 Todo e-mail do sistema usa o **mesmo layout** (`server/mailLayout.ts`): cabeçalho preto com a **logo oficial** e uma faixa azul
@@ -256,9 +289,10 @@ cadastrado simplesmente não aparece) e uma versão em **texto simples** gerada 
 | Arquivo | O que é |
 | ------- | ------- |
 | `server/mailLayout.ts` | O layout: cabeçalho, rodapé, paleta, modo escuro, ajuste para celular e os blocos (texto, código, botão, link, aviso) em HTML e em texto |
-| `server/mailTemplates.ts` | Os e-mails de hoje: **confirmação de e-mail** e **aviso "você já tem uma conta"** (o de teste do painel é o de confirmação com um código de exemplo) |
+| `server/mailTemplates.ts` | Os e-mails de hoje: **confirmação de e-mail**, aviso **"você já tem uma conta"**, **redefinição de senha** e **"sua senha foi alterada"** (o de teste do painel é o de confirmação com um código de exemplo) |
 | `server/mailBrand.ts` | A marca na hora de enviar: nome, slogan, contatos e logo, vindos do banco (`loadBrand`) |
 | `server/mail.ts` | O envio (SMTP, `nodemailer`) |
+| `server/passwordReset.ts` | Recuperação de senha: pedir o link, enviar o e-mail, aviso de senha alterada |
 | `public/email/logo.png` | A logo oficial reduzida para e-mail |
 
 **Como a logo é carregada.** Leitores de e-mail só mostram imagem com **endereço público** (nada de arquivo anexo ou
@@ -276,7 +310,7 @@ extenso, botão com retângulo arredondado em VML para o Outlook para Windows, `
 sem JavaScript, sem fonte externa e **sem pixel de rastreamento** (a única imagem é a logo). Cerca de 14 KB de HTML por e-mail (o Gmail
 corta acima de ~100 KB). As cores têm contraste WCAG AA nos dois modos.
 
-**Criar um e-mail novo** (por exemplo, quando existir recuperação de senha por e-mail):
+**Criar um e-mail novo** (o de redefinição de senha, em `server/passwordReset.ts`, é um bom exemplo completo):
 
 1. Em `server/mailTemplates.ts`, escreva uma função no formato das que já estão lá: recebe `brand` e os dados e devolve
    `renderEmail(brand, { to, subject, preheader, eyebrow, title, greeting, blocks: [...], reason })`. Os blocos disponíveis
@@ -319,7 +353,7 @@ cliente na próxima consulta.
 
 Público: `GET /api/products` · `GET /api/site` · `POST /api/orders` (devolve `{order, token}`) · `GET /api/health`
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
-Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|recover|reset` · `GET /api/account/me` ·
+Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim`
 Painel, sessão: `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password`
@@ -341,6 +375,9 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
   vincular pedido, trocar senha, excluir conta e a ligação do pedido à conta exigem `active` **e** `email_verified_at`
   (as funções do banco repetem a regra). Chamar a API direto, forjar cookie ou ter uma sessão antiga não contorna isso.
   Códigos e links só existem no banco como hash. Nenhuma chave de e-mail vai para o navegador.
+- **Recuperação de senha**: link de 256 bits só como hash, 60 minutos, uso único, derruba todas as sessões, resposta idêntica
+  e com o mesmo tempo exista a conta ou não, limites por conta, por IP e por link errado (acima). O link de e-mail é a única
+  coisa que confirma o e-mail numa troca de senha; o gerado pela loja nunca confirma.
 - Escritas administrativas só aceitam a própria origem do site (defesa extra contra CSRF).
 - Toda entrada é validada no servidor (tipos, tamanhos, links `https://`) e o banco repete os limites. Consultas sempre
   parametrizadas.
@@ -355,7 +392,7 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
 `admins`, `admin_sessions`, `categories`, `products`, `payment_methods`, `orders`, `order_items`, `order_status_history`,
 `store_settings`, `delivery_zones`, `site_settings`, `hero_settings`, `banners`, **`order_tracking_tokens`**
 (hash dos códigos), **`customers`** (com `status` e `email_verified_at`), **`customer_sessions`**,
-**`customer_password_resets`**, **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso)
+**`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso)
 (+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
 última atualização.
@@ -368,6 +405,9 @@ A migration `0005_email_verification.sql` acrescenta o status da conta (`pending
 coluna gerada a partir de `active` e `email_verified_at`, então nunca fica fora de sincronia), a tabela
 `email_verifications`, as funções que emitem e conferem códigos de forma atômica (limites de reenvio e tentativas dentro
 do banco) e encerra as sessões de cliente abertas antes dela.
+A migration `0006_password_reset_email.sql` acrescenta a `customer_password_resets` de onde veio o link (`via`: `admin` ou
+`email`), para qual e-mail foi e quando foi enviado, e as funções atômicas que pedem o link (espera de 60 s, limites por
+hora e por dia), registram o envio e usam o link (trocar a senha, derrubar sessões e, só para link de e-mail enviado, confirmar o e-mail).
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
@@ -388,6 +428,7 @@ dashboard) são funções do banco chamadas só pelo servidor.
 api/index.ts      função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/verification.ts confirmação do e-mail: códigos, links, reenvio e limites
+server/passwordReset.ts recuperação de senha por e-mail: link, envio, limites e aviso de senha alterada
 server/mail*.ts        envio SMTP, layout e textos dos e-mails (mailLayout, mailTemplates, mailBrand), domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
 server/emailAddress.ts formato, normalização e máscara do e-mail
 db/migrations/         tabelas, funções e conteúdo inicial do Neon

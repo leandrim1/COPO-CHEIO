@@ -53,9 +53,9 @@ function mailFailure(error: unknown): HttpError {
 
 export type Issue = { sent: boolean; reason?: 'cooldown' | 'limit' | 'not_pending'; retryAfter?: number };
 
-// Limite por IP de e-mails de confirmação pedidos (cadastro, reenvio e login), contado só quando o e-mail saiu.
-const MAIL_IP_BUCKET = 'mail-ip';
-const MAIL_IP_MAX = 15;
+// Limite por IP de e-mails pedidos (confirmação de cadastro, reenvio, login e recuperação de senha), contado só quando o e-mail saiu.
+export const MAIL_IP_BUCKET = 'mail-ip';
+export const MAIL_IP_MAX = 15;
 
 type Begin = { ok: true; id: string; email: string; name: string } | { ok: false; reason: 'not_pending' | 'cooldown' | 'hourly' | 'daily'; retry_after?: number };
 

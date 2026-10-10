@@ -61,3 +61,10 @@ export const setLoginPrefill = (email: string) => {
   loginPrefill = email;
 };
 export const getLoginPrefill = (): string => loginPrefill;
+
+// E-mail digitado na tela de entrada, levado para "Esqueci minha senha" (só na memória desta aba).
+let recoverPrefill = '';
+export const setRecoverPrefill = (email: string) => {
+  recoverPrefill = email;
+};
+export const getRecoverPrefill = (): string => recoverPrefill;

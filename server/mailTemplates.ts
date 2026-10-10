@@ -73,3 +73,54 @@ export function alreadyRegisteredMessage(brand: Brand, o: { to: string; name: st
     reason: 'Esta mensagem foi enviada porque este endereço de e-mail foi usado em uma tentativa de cadastro.',
   });
 }
+
+// Recuperação de senha: o link leva à tela de nova senha. Vale por pouco tempo e uma vez só.
+export function passwordResetMessage(brand: Brand, o: { to: string; name: string; link: string; minutes: number }): Message {
+  const hi = greetingName(o.name);
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `Redefinir sua senha – ${brand.name}`,
+    preheader: `Use o link para criar uma senha nova. Ele vale por ${o.minutes} minutos.`,
+    eyebrow: 'Recuperação de senha',
+    title: 'Redefina sua senha',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    blocks: [
+      { kind: 'text', text: 'Recebemos um pedido para redefinir a senha da sua conta. Toque no botão abaixo para escolher uma senha nova.' },
+      { kind: 'button', label: 'Criar nova senha', url: o.link },
+      { kind: 'text', tone: 'muted', text: `Este link vale por **${o.minutes} minutos** e só pode ser usado uma vez.` },
+      {
+        kind: 'link',
+        text: 'Se o botão não funcionar, cole este endereço no navegador:',
+        url: o.link,
+        plainText: `Se o link acima não abrir, copie e cole o endereço no navegador. Ele vale por ${o.minutes} minutos e só pode ser usado uma vez.`,
+      },
+      { kind: 'notice', text: '**Não pediu para redefinir a senha?** Ignore este e-mail: a sua senha continua a mesma. Por segurança, não encaminhe este link a ninguém.' },
+    ],
+    reason: 'Esta mensagem foi enviada porque alguém pediu a redefinição da senha desta conta.',
+  });
+}
+
+// Aviso depois que a senha foi trocada pelo link de e-mail: quem não foi o autor da troca percebe na hora.
+export function passwordChangedMessage(brand: Brand, o: { to: string; name: string; loginUrl: string; when: Date }): Message {
+  const hi = greetingName(o.name);
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: brand.timezone }).formatToParts(o.when).map((part) => [part.type, part.value]),
+  );
+  // "10/10/2026 às 11:32", no fuso horário da loja (montado peça por peça: não depende de como cada versão do Node escreve a data).
+  const when = `${parts.day}/${parts.month}/${parts.year} às ${parts.hour}:${parts.minute}`;
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `Sua senha foi alterada – ${brand.name}`,
+    preheader: 'A senha da sua conta foi redefinida agora há pouco.',
+    eyebrow: 'Segurança da conta',
+    title: 'Senha alterada',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    blocks: [
+      { kind: 'text', text: `A senha da sua conta foi redefinida em **${when}**. Você foi desconectado dos aparelhos em que estava logado.` },
+      { kind: 'text', text: 'Se foi você, não precisa fazer mais nada: é só entrar com a senha nova.' },
+      { kind: 'button', label: 'Entrar na minha conta', url: o.loginUrl },
+      { kind: 'notice', text: '**Não foi você?** Use “Esqueci minha senha” na página de entrada para criar outra senha agora e fale com a loja pelos contatos abaixo.' },
+    ],
+    reason: 'Esta mensagem foi enviada para avisar que a senha desta conta foi alterada.',
+  });
+}

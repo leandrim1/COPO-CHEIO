@@ -8,6 +8,7 @@ import type { Router } from '../http.js';
 import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
 import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
 import { mailConfigured } from '../mail.js';
+import { RESET_MINUTES, RESET_RESEND_SECONDS, assertMailBudget, padResponse, resetMailUnavailable, sendPasswordChangedNotice, sendPasswordResetEmail } from '../passwordReset.js';
 import { NOT_FOUND, normalizeToken, hashToken } from '../tracking.js';
 import { digits, parse, text } from '../validate.js';
 import type { Spec } from '../validate.js';
@@ -23,6 +24,12 @@ import {
 } from '../verification.js';
 
 const WINDOW = 15 * 60;
+
+// Qualquer troca de senha (logada, por pedido ou pelo link) deixa de valer os links de redefinição que ainda estavam em aberto:
+// quem recuperou a conta não precisa deles, e quem tivesse acesso a eles não pode trocar a senha de novo depois.
+const EXPIRE_OPEN_RESET_LINKS = `update customer_password_resets set expires_at = least(expires_at, now()) where customer_id = $1 and used_at is null and expires_at > now()`;
+
+const RESET_LINK_INVALID = 'Este link de redefinição não vale mais: ele expirou, já foi usado ou foi trocado por um mais novo. Peça um novo link.';
 
 async function limit(bucket: string, key: string, seconds: number, max: number, message: string) {
   if ((await attempts(bucket, key, seconds)) >= max) throw new HttpError(429, message);
@@ -227,6 +234,7 @@ export function registerAccount(r: Router) {
       throw new HttpError(400, 'A senha atual está incorreta.');
     }
     await query('update customers set password_hash = $1 where id = $2', [await hashPassword(next), customer.id]);
+    await query(EXPIRE_OPEN_RESET_LINKS, [customer.id]);
     // Encerra as outras sessões (outros aparelhos); a atual continua.
     const token = readCookie(ctx.req, CUSTOMER_COOKIE);
     if (token) await query('delete from customer_sessions where customer_id = $1 and token_hash <> $2', [customer.id, sha256(token)]);
@@ -282,45 +290,76 @@ export function registerAccount(r: Router) {
     await batch([
       ['update customers set password_hash = $1 where id = $2', [await hashPassword(password), row.id]],
       ['delete from customer_sessions where customer_id = $1', [row.id]],
+      [EXPIRE_OPEN_RESET_LINKS, [row.id]],
     ]);
     return json({ ok: true });
   });
 
-  // Link de redefinição gerado pela loja (painel → Clientes): uso único.
+  // Esqueci a senha, por e-mail: manda um link de uso único (vale 60 minutos) para a caixa de e-mail da conta. A resposta é a
+  // mesma exista a conta ou não (e demora o mesmo tempo), então esta tela não revela quem tem cadastro. Contas que ainda não
+  // confirmaram o e-mail também recebem o link: usá-lo prova o acesso à caixa e confirma o e-mail ao mesmo tempo.
+  r.post('/api/account/forgot-password', 'public', async (ctx) => {
+    const startedAt = Date.now();
+    const body = await readJson(ctx.req, 2 * 1024);
+    if (!mailConfigured()) throw resetMailUnavailable();
+    // Mais tolerante que o cadastro: contas antigas podem ter e-mails que o formato novo recusaria.
+    const email = normalizeLoginEmail(body.email);
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      throw new HttpError(400, 'Confira o e-mail: ele precisa ter o formato nome@dominio.com (por exemplo, maria@gmail.com).', { code: 'invalid_email' });
+    }
+    await limit('forgot-ip', ctx.ip, 3600, 10, 'Muitos pedidos de recuperação desta rede. Aguarde um pouco e tente de novo.');
+    await assertMailBudget(ctx.ip);
+    await recordAttempt('forgot-ip', ctx.ip);
+    const account = await one<{ id: string }>('select id from customers where lower(email) = $1 and active', [email]);
+    if (account) await sendPasswordResetEmail(ctx.req, ctx.ip, account);
+    await padResponse(startedAt);
+    return json({ ok: true, resend_in: RESET_RESEND_SECONDS, minutes: RESET_MINUTES });
+  });
+
+  // A tela do link pergunta se ele ainda vale antes de pedir a senha nova (não gasta o link). Mesma resposta para link
+  // vencido, usado, trocado ou inventado.
+  r.post('/api/account/reset-check', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    await limit('reset-check-ip', ctx.ip, WINDOW, 60, 'Muitas consultas. Aguarde alguns minutos e tente de novo.');
+    await recordAttempt('reset-check-ip', ctx.ip);
+    const token = typeof body.token === 'string' && /^[A-Za-z0-9_-]{20,100}$/.test(body.token) ? body.token : '';
+    const row = token
+      ? await one<{ email: string }>(
+          `select c.email from customer_password_resets r join customers c on c.id = r.customer_id
+            where r.token_hash = $1 and r.used_at is null and r.expires_at > now()`,
+          [sha256(token)],
+        )
+      : null;
+    if (!row) throw new HttpError(400, RESET_LINK_INVALID, { code: 'invalid_link' });
+    return json({ valid: true, email_masked: maskEmail(row.email) });
+  });
+
+  // Link de redefinição (enviado por e-mail ou gerado pela loja no painel → Clientes): uso único. Troca a senha, derruba
+  // todas as sessões da conta e invalida os outros links. Link de e-mail também confirma o e-mail da conta.
   r.post('/api/account/reset', 'public', async (ctx) => {
     const body = await readJson(ctx.req, 4 * 1024);
     await limit('cust-reset', ctx.ip, WINDOW, 10, 'Muitas tentativas. Aguarde alguns minutos e tente de novo.');
     const password = checkNewPassword(body.password);
     const token = typeof body.token === 'string' && body.token.length <= 100 ? body.token : '';
     const hash = sha256(token);
-    const expired = 'Este link de redefinição não vale mais. Peça um novo à loja.';
+    const invalid = new HttpError(400, RESET_LINK_INVALID, { code: 'invalid_link' });
     // Confere o link antes de gastar tempo calculando o hash da senha (link inválido não custa CPU).
     const valid = await one('select 1 as ok from customer_password_resets where token_hash = $1 and used_at is null and expires_at > now()', [hash]);
     if (!valid) {
       await recordAttempt('cust-reset', ctx.ip);
-      throw new HttpError(400, expired);
+      throw invalid;
     }
-    // Uma instrução só: usa o link, troca a senha e encerra as sessões, tudo ou nada.
-    const [result] = await batch([
-      [
-        `with used as (
-           update customer_password_resets set used_at = now()
-            where token_hash = $1 and used_at is null and expires_at > now()
-            returning customer_id
-         ), pass as (
-           update customers c set password_hash = $2 from used where c.id = used.customer_id returning c.id
-         ), sessions as (
-           delete from customer_sessions s using used where s.customer_id = used.customer_id returning s.token_hash
-         )
-         select (select count(*) from used) as n`,
-        [hash, await hashPassword(password)],
-      ],
-    ]);
-    if (!result[0]?.n) {
+    type Done = { email: string; name: string; verified: boolean; via: 'admin' | 'email'; active: boolean; confirmed: boolean };
+    const row = await one<{ r: Done | null }>('select reset_customer_password($1, $2) as r', [hash, await hashPassword(password)]);
+    const done = row?.r;
+    if (!done) {
       await recordAttempt('cust-reset', ctx.ip);
-      throw new HttpError(400, expired);
+      throw invalid;
     }
-    return json({ ok: true });
+    // Quem ficou bloqueado por errar a senha muitas vezes volta a poder entrar com a senha nova.
+    await clearAttempts('cust-login-email', done.email.toLowerCase());
+    if (done.via === 'email' && done.active && done.confirmed) await sendPasswordChangedNotice(ctx.req, done);
+    return json({ ok: true, email: done.email, email_masked: maskEmail(done.email), verified: done.verified });
   });
 
   // ---- Meus pedidos --------------------------------------------------------------------------------
