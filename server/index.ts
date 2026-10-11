@@ -1,27 +1,35 @@
 // API do COPO CHEIO: um único handler (Request → Response) para todas as rotas /api/*.
 // Roda como função da Vercel (api/index.ts) e também no servidor de desenvolvimento do Vite.
+import { randomUUID } from 'node:crypto';
 import { adminFromRequest } from './auth.js';
+import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
-import { mailConfigured } from './mail.js';
+import { mailConfigured, mailMissing } from './mail.js';
+import { siteUrl } from './mailBrand.js';
 import { HttpError, Router, json } from './http.js';
-import type { Access, Ctx } from './http.js';
+import type { Access, Admin, Ctx } from './http.js';
 import { registerAccount } from './routes/account.js';
+import { registerAudit } from './routes/audit.js';
 import { registerCatalog } from './routes/catalog.js';
 import { registerContent } from './routes/content.js';
 import { registerOrders } from './routes/orders.js';
+import { registerPrivacy } from './routes/privacy.js';
 import { registerPublic } from './routes/public.js';
+import { registerSeo } from './routes/seo.js';
 import { registerSession } from './routes/session.js';
 import { registerCustomers } from './routes/customers.js';
 import { registerMailAdmin } from './routes/mailadmin.js';
 import { registerTeam } from './routes/team.js';
 import { registerTracking } from './routes/tracking.js';
+import { registerTwoFactor } from './routes/twofactor.js';
 import { registerUpload } from './routes/upload.js';
 import { one } from './db.js';
 
 const router = new Router();
 
-// Sem banco ou sem Blob configurados, diz exatamente qual variável falta (sem mostrar valores).
-router.get('/api/health', 'public', async () => {
+// Estado do sistema. Mostra o que falta (sem valores) só para quem precisa saber: o painel (administrador logado) e quem roda o
+// site no próprio computador. O endereço público na internet só diz se está de pé.
+async function systemStatus(req: Request) {
   let database: 'ok' | 'missing' | 'error' = 'missing';
   if (databaseUrl()) {
     try {
@@ -31,11 +39,34 @@ router.get('/api/health', 'public', async () => {
       database = 'error';
     }
   }
-  return json({ database, blob: blobConfigured() ? 'ok' : 'missing', mail: mailConfigured() ? 'ok' : 'missing' });
+  let site: 'ok' | 'missing' = 'ok';
+  try {
+    siteUrl(req);
+  } catch {
+    site = 'missing';
+  }
+  const missing = [
+    ...(databaseUrl() ? [] : ['DATABASE_URL']),
+    ...(blobConfigured() ? [] : ['BLOB_READ_WRITE_TOKEN (ou BLOB_STORE_ID)']),
+    ...mailMissing(),
+    ...(site === 'ok' ? [] : ['SITE_URL']),
+  ];
+  return { database, blob: blobConfigured() ? 'ok' : 'missing', mail: mailConfigured() ? 'ok' : 'missing', site_url: site, missing };
+}
+
+router.get('/api/health', 'public', async (ctx) => {
+  const status = await systemStatus(ctx.req);
+  // Na Vercel o endereço é público: só "está de pé ou não" (503 se o banco não responde, para monitores de disponibilidade).
+  if (process.env.VERCEL) return json({ ok: status.database === 'ok' }, status.database === 'ok' ? 200 : 503);
+  return json({ ok: status.database === 'ok', database: status.database, blob: status.blob, mail: status.mail, site_url: status.site_url });
 });
+
+// Mesmo resultado detalhado, mas só para administradores logados (inclui o nome das variáveis que faltam).
+router.get('/api/admin/health', 'admin', async (ctx) => json(await systemStatus(ctx.req)));
 
 registerPublic(router);
 registerSession(router);
+registerTwoFactor(router);
 registerTracking(router);
 registerAccount(router);
 registerOrders(router);
@@ -44,9 +75,10 @@ registerContent(router);
 registerTeam(router);
 registerCustomers(router);
 registerMailAdmin(router);
+registerAudit(router);
+registerPrivacy(router);
+registerSeo(router);
 registerUpload(router);
-
-const clientIp = (req: Request) => req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
 
 // Constraints do banco que merecem uma mensagem própria.
 const CONSTRAINT_MESSAGES: Record<string, string> = {
@@ -60,15 +92,29 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
   banners_cover_needs_image: 'O banner da capa precisa de uma imagem.',
 };
 
-function failure(error: unknown): Response {
-  if (error instanceof HttpError) return json({ error: error.message, ...error.extra }, error.status);
+function failure(error: unknown, admin: Admin | null, requestId: string): Response {
+  if (error instanceof HttpError) return json({ error: error.message, ...error.extra }, error.status, error.headers);
   if (error instanceof MissingConfig) {
+    // O servidor sempre registra o que falta. Quem está na internet só vê "indisponível"; o nome das variáveis vai para
+    // quem está logado no painel e para quem roda o site no próprio computador.
+    console.error(JSON.stringify({ level: 'error', msg: 'configuração ausente', missing: error.missing, request_id: requestId }));
+    if (process.env.VERCEL && !admin) return json({ error: 'O serviço está temporariamente indisponível. Tente novamente em instantes.', code: 'not_configured' }, 503);
     return json({ error: error.message, code: 'not_configured', missing: error.missing }, 503);
   }
-  const e = error as { code?: string; message?: string; constraint?: string };
+  const e = error as { code?: string; message?: string; constraint?: string; detail?: string };
   switch (e?.code) {
     case 'P0001': // regras de negócio do banco, já em português
       return json({ error: e.message }, 400);
+    case 'CC409': {
+      // Conflito que o site resolve com a pessoa (ex.: o preço mudou antes de enviar o pedido). Os detalhes vêm em JSON.
+      let detail: Record<string, unknown> = {};
+      try {
+        detail = JSON.parse(e.detail ?? '{}') as Record<string, unknown>;
+      } catch {
+        /* sem detalhes */
+      }
+      return json({ error: e.message, ...detail }, 409);
+    }
     case '23505':
       return json({ error: (e.constraint && CONSTRAINT_MESSAGES[e.constraint]) || 'Já existe um item com esse nome ou código.' }, 409);
     case '23514':
@@ -80,10 +126,15 @@ function failure(error: unknown): Response {
     case '22007':
       return json({ error: 'Algum valor enviado é inválido.' }, 400);
     case '42P01':
-      return json({ error: 'O banco ainda não foi preparado. Rode as migrations (npm run db:migrate).', code: 'not_migrated' }, 503);
+      console.error(JSON.stringify({ level: 'error', msg: 'banco sem migrations', request_id: requestId }));
+      return json(
+        { error: process.env.VERCEL && !admin ? 'O serviço está temporariamente indisponível. Tente novamente em instantes.' : 'O banco ainda não foi preparado. Rode as migrations (npm run db:migrate).', code: 'not_migrated' },
+        503,
+      );
   }
+  console.error(JSON.stringify({ level: 'error', msg: 'erro inesperado', request_id: requestId, code: e?.code, error: e?.message ?? String(error) }));
   console.error('[api] erro inesperado:', error);
-  return json({ error: 'Erro interno. Tente novamente em instantes.' }, 500);
+  return json({ error: 'Erro interno. Tente novamente em instantes.', request_id: requestId }, 500);
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
@@ -102,6 +153,8 @@ function foreignOrigin(req: Request, url: URL): boolean {
 export async function handle(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
+  const requestId = randomUUID();
+  let admin: Admin | null = null;
   try {
     // %00 (caractere nulo) no endereço nunca é legítimo e o Postgres o recusa: responde 400 em vez de estourar lá dentro.
     if (/%00/i.test(req.url)) throw new HttpError(400, 'Endereço inválido.');
@@ -117,11 +170,16 @@ export async function handle(req: Request): Promise<Response> {
     const ctx: Ctx = { req, url, params, ip: clientIp(req), admin: null };
     if (access !== 'public') {
       ctx.admin = await adminFromRequest(req);
+      admin = ctx.admin;
       if (!ctx.admin) throw new HttpError(401, 'Faça login para continuar.');
       if (access === 'owner' && ctx.admin.role !== 'owner') throw new HttpError(403, 'Só o owner pode fazer isso.');
     }
-    return await route.handler(ctx);
+    const response = await route.handler(ctx);
+    response.headers.set('x-request-id', requestId);
+    return response;
   } catch (error) {
-    return failure(error);
+    const response = failure(error, admin, requestId);
+    response.headers.set('x-request-id', requestId);
+    return response;
   }
 }

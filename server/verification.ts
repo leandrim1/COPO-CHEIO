@@ -4,7 +4,7 @@
 // de 6 dígitos e um link; o banco guarda só o hash de cada um (com validade, uso único, limite de tentativas e
 // de reenvios). Nada aqui confia no navegador: login e rotas da conta conferem `email_verified_at` no servidor.
 import { createHmac, randomBytes, randomInt } from 'node:crypto';
-import { attempts, recordAttempt, sha256 } from './auth.js';
+import { refund, reserve, sha256 } from './auth.js';
 import { one, query } from './db.js';
 import { databaseUrl } from './env.js';
 import { HttpError } from './http.js';
@@ -63,15 +63,15 @@ type Begin = { ok: true; id: string; email: string; name: string } | { ok: false
 // limites por hora/dia ou conta já confirmada): devolve { sent: false }, e a tela mostra a mesma coisa de qualquer jeito.
 export async function sendVerificationEmail(req: Request, ip: string, customer: { id: string; email: string }): Promise<Issue> {
   if (!mailConfigured()) throw mailNotConfigured();
-  if ((await attempts(MAIL_IP_BUCKET, ip, 3600)) >= MAIL_IP_MAX) {
-    throw new HttpError(429, 'Muitos e-mails de confirmação pedidos desta rede. Aguarde um pouco e tente de novo.', { code: 'rate_limited' });
-  }
+  // A vaga do limite por rede é reservada antes (atômico) e devolvida se nenhum e-mail chegar a sair.
+  await reserve(MAIL_IP_BUCKET, ip, 3600, MAIL_IP_MAX, 'Muitos e-mails de confirmação pedidos desta rede. Aguarde um pouco e tente de novo.');
   const code = newCode();
   const token = newLinkToken();
   // O código é amarrado ao endereço em minúsculas (é assim que a pessoa o digita ao confirmar).
   const row = await one<{ r: Begin }>('select begin_email_verification($1::uuid, $2, $3, $4, $5) as r', [customer.id, codeHash(customer.email.toLowerCase(), code), sha256(token), CODE_MINUTES, LINK_HOURS]);
   const begin = row!.r;
   if (!begin.ok) {
+    await refund(MAIL_IP_BUCKET, ip);
     if (begin.reason === 'cooldown') return { sent: false, reason: 'cooldown', retryAfter: begin.retry_after };
     return { sent: false, reason: begin.reason === 'not_pending' ? 'not_pending' : 'limit' };
   }
@@ -90,21 +90,21 @@ export async function sendVerificationEmail(req: Request, ip: string, customer: 
   } catch (error) {
     // O código novo é descartado; o que a pessoa já tinha continua valendo.
     await query('select finish_email_verification($1::uuid, false)', [begin.id]);
+    await refund(MAIL_IP_BUCKET, ip);
     throw mailFailure(error);
   }
   await query('select finish_email_verification($1::uuid, true)', [begin.id]);
-  await recordAttempt(MAIL_IP_BUCKET, ip);
   return { sent: true };
 }
 
 // Aviso para quem já tem conta e foi usado num cadastro: vai só para a caixa do dono (no máximo 1 por hora por endereço).
 export async function sendAlreadyRegisteredNotice(req: Request, customer: { email: string; name: string }): Promise<void> {
   if (!mailConfigured()) return;
-  if ((await attempts('notice-email', customer.email, 3600)) >= 1) return;
   try {
+    // No máximo 1 aviso por hora por endereço (a reserva é atômica: cadastros simultâneos não mandam vários).
+    await reserve('notice-email', customer.email, 3600, 1, 'aviso já enviado');
     const brand = await loadBrand(req);
     await sendMail(alreadyRegisteredMessage(brand, { to: customer.email, name: customer.name, loginUrl: `${brand.siteUrl}/conta` }));
-    await recordAttempt('notice-email', customer.email);
   } catch {
     /* quem tentou o cadastro não pode saber se o endereço já existe: falha de envio aqui não vira erro na tela */
   }
@@ -119,8 +119,25 @@ export async function checkCode(email: string, code: string): Promise<CodeResult
   return row!.r;
 }
 
+export type BoundCode = { result: CodeResult; bound?: boolean; customer_id?: string };
+
+// Confirma com o código e, na mesma transação, descarta a senha do cadastro se a confirmação não veio do navegador que fez o
+// cadastro (`nonceHash` é o hash do cookie secreto do cadastro). `bound: false` = a pessoa precisa criar uma senha agora.
+export async function checkCodeBound(email: string, code: string, nonceHash: string | null): Promise<BoundCode> {
+  const row = await one<{ r: BoundCode }>('select verify_email_code_bound($1, $2, $3) as r', [email, codeHash(email, code), nonceHash]);
+  return row!.r;
+}
+
 export async function checkLink(token: string): Promise<string | null> {
   if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return null;
   const row = await one<{ r: string | null }>('select verify_email_link($1) as r', [sha256(token)]);
+  return row?.r ?? null;
+}
+
+export type BoundLink = { email: string; bound: boolean; customer_id: string };
+
+export async function checkLinkBound(token: string, nonceHash: string | null): Promise<BoundLink | null> {
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(token)) return null;
+  const row = await one<{ r: BoundLink | null }>('select verify_email_link_bound($1, $2) as r', [sha256(token), nonceHash]);
   return row?.r ?? null;
 }

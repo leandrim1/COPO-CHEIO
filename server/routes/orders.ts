@@ -1,4 +1,5 @@
 // Painel: pedidos, status, dashboard e o "ao vivo" (polling) que avisa de pedido novo.
+import { audit } from '../audit.js';
 import { batch, one } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
@@ -9,12 +10,15 @@ const PAYMENT_STATUSES = ['pending', 'paid', 'refunded'] as const;
 
 export function registerOrders(r: Router) {
   r.get('/api/admin/dashboard', 'admin', async (ctx) => {
-    const days = Number(ctx.url.searchParams.get('days') ?? 7);
-    const [dash, recent] = await batch([
+    // Valor que não é um número inteiro (days=abc) cai nos 7 dias padrão; o banco ainda aceita só 1, 7 ou 30.
+    const asked = Number(ctx.url.searchParams.get('days') ?? 7);
+    const days = Number.isInteger(asked) ? asked : 7;
+    const [dash, recent, privacy] = await batch([
       ['select admin_dashboard($1) as dashboard', [days]],
       ['select * from orders order by created_at desc limit 8'],
+      ["select count(*) as n from privacy_requests where status = 'open'"],
     ]);
-    return json({ ...dash[0].dashboard, recent });
+    return json({ ...dash[0].dashboard, recent, privacy_open: privacy[0]?.n ?? 0 });
   });
 
   // Lista com filtro de status, busca (número, nome ou telefone) e contagem por status.
@@ -117,6 +121,13 @@ export function registerOrders(r: Router) {
       if (!exists) throw new HttpError(404, 'Pedido não encontrado.');
       throw new HttpError(409, 'Este pedido já tem muitos links ativos. Use "Trocar link" para invalidar os anteriores.');
     }
+    const numbered = await one<{ order_number: number }>('select order_number from orders where id = $1', [id]);
+    await audit(ctx, {
+      action: 'order.tracking_link',
+      summary: `Gerou um link de acompanhamento do pedido #${numbered?.order_number ?? ''}${replace ? ' e invalidou os anteriores' : ''}`,
+      entity: 'order',
+      entityId: id,
+    });
     return json({ token, replaced: revoked.length }, 201);
   });
 
@@ -133,7 +144,12 @@ export function registerOrders(r: Router) {
       if (typeof body.payment_status !== 'string' || !PAYMENT_STATUSES.includes(body.payment_status as (typeof PAYMENT_STATUSES)[number])) {
         throw new HttpError(400, 'Status de pagamento inválido.');
       }
-      order = await one('update orders set payment_status = $2 where id = $1 returning *', [id, body.payment_status]);
+      // As regras (cancelado não vira "pago"; só se reembolsa o que estava pago) ficam no banco.
+      order = await one<{ order_number: number; payment_status: string }>('select * from admin_set_payment_status($1::uuid, $2, $3::uuid)', [id, body.payment_status, ctx.admin!.id]);
+      if (order) {
+        const label = { pending: 'pendente', paid: 'pago', refunded: 'reembolsado' }[body.payment_status as 'pending' | 'paid' | 'refunded'];
+        await audit(ctx, { action: 'order.payment', summary: `Marcou o pagamento do pedido #${order.order_number} como ${label}`, entity: 'order', entityId: id });
+      }
     }
     if (body.status === undefined && body.payment_status === undefined) throw new HttpError(400, 'Nada para atualizar.');
     if (!order) throw new HttpError(404, 'Pedido não encontrado.');

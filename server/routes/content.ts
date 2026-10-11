@@ -1,6 +1,9 @@
 // Painel: conteúdo do site (logo, Hero, textos, SEO), banners, loja, entrega e pagamento.
+import { audit, changedFields } from '../audit.js';
+import type { FieldLabels } from '../audit.js';
 import { releaseImages } from '../blob.js';
 import { batch, insertRow, one, query, updateRow } from '../db.js';
+import type { Row } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
 import {
@@ -98,6 +101,28 @@ const paymentSpec: Spec = {
   details: text('Chave PIX', { max: 100, nullable: true }),
 };
 
+// Rótulos do histórico de atividades: valores curtos aparecem de → para; textos longos e imagens só dizem que mudaram.
+const STORE_LABELS: FieldLabels = {
+  store_name: { label: 'nome da loja' },
+  whatsapp: { label: 'WhatsApp' },
+  instagram: { label: 'Instagram' },
+  address: { label: 'endereço' },
+  cep: { label: 'CEP' },
+  city: { label: 'cidade' },
+  state: { label: 'estado' },
+  opening_hours: { label: 'horário de funcionamento', format: 'changed', json: true },
+  orders_paused: { label: 'pausar pedidos pelo site', format: 'bool' },
+  delivery_enabled: { label: 'entrega ativa', format: 'bool' },
+  pickup_enabled: { label: 'retirada ativa', format: 'bool' },
+  delivery_fee: { label: 'taxa de entrega', format: 'money' },
+  min_order: { label: 'pedido mínimo', format: 'money' },
+  delivery_time: { label: 'tempo de entrega' },
+  tracking_retention_days: { label: 'validade do link de acompanhamento (dias)' },
+};
+const longLabels = (spec: Spec): FieldLabels => Object.fromEntries(Object.entries(spec).map(([key, field]) => [key, { label: field.label.toLowerCase(), format: 'changed' as const }]));
+const SITE_LABELS = longLabels(siteSpec);
+const HERO_LABELS = longLabels(heroSpec);
+
 // O trecho em destaque precisa aparecer escrito igual no título (é ele que fica azul).
 function checkHighlights(values: Record<string, unknown>, pairs: [title: string, highlight: string, label: string][]) {
   for (const [title, highlight, label] of pairs) {
@@ -122,9 +147,38 @@ export function registerContent(r: Router) {
     return json({ store: store[0], site: site[0], hero: hero[0], payments, zones });
   });
 
+  // Salva as configurações da loja. Se o painel mandar `expected_updated_at` (a versão que ele tinha na tela), a gravação só vale se
+  // ninguém mudou as configurações nesse meio-tempo: assim uma tela antiga (aba esquecida, outro administrador) não desfaz horários,
+  // pausa de pedidos ou taxas que mudaram depois. Conferência e gravação são um único comando no banco.
   r.patch('/api/admin/store', 'admin', async (ctx) => {
-    const { values, cast } = parse(storeSpec, await readJson(ctx.req, 16 * 1024), { partial: true });
-    return json({ store: await updateRow('store_settings', { column: 'id', value: 1 }, values, cast) });
+    const body = await readJson(ctx.req, 16 * 1024);
+    const { values, cast } = parse(storeSpec, body, { partial: true });
+    const expectedRaw = typeof body.expected_updated_at === 'string' ? new Date(body.expected_updated_at) : null;
+    const expected = expectedRaw && !Number.isNaN(expectedRaw.getTime()) ? expectedRaw.toISOString() : null;
+    const before = await one<Row>('select * from store_settings where id = 1');
+    const keys = Object.keys(values);
+    let store: Row | null;
+    if (!keys.length) store = before;
+    else {
+      const sets = keys.map((key, i) => `${key} = $${i + 1}${cast[key] ? `::${cast[key]}` : ''}`).join(', ');
+      const params: unknown[] = [...keys.map((key) => values[key]), expected];
+      // Diferença de até 2 ms é a mesma versão (o JavaScript guarda milissegundos; o banco, microssegundos).
+      store = await one<Row>(
+        `update store_settings set ${sets}
+          where id = 1 and ($${keys.length + 1}::timestamptz is null or abs(extract(epoch from (updated_at - $${keys.length + 1}::timestamptz))) < 0.002)
+          returning *`,
+        params,
+      );
+      if (!store) {
+        throw new HttpError(409, 'Estas configurações foram alteradas por outra pessoa (ou em outra aba) depois que você abriu a tela. Recarreguei os dados atuais: confira e salve de novo.', {
+          code: 'stale_settings',
+          store: await one('select * from store_settings where id = 1'),
+        });
+      }
+    }
+    const diff = changedFields(before, values, STORE_LABELS);
+    if (diff) await audit(ctx, { action: 'store.update', summary: `Configurações da loja: ${diff.text}`, entity: 'store', details: diff.details });
+    return json({ store });
   });
 
   r.patch('/api/admin/site', 'admin', async (ctx) => {
@@ -134,18 +188,22 @@ export function registerContent(r: Router) {
       ['contato_title', 'contato_highlight', 'Contato'],
       ['cta_title', 'cta_highlight', 'Chamada final'],
     ]);
-    const before = await one<{ logo_url: string | null; og_image_url: string | null; favicon_url: string | null }>('select logo_url, og_image_url, favicon_url from site_settings where id = 1');
+    const before = await one<Row>('select * from site_settings where id = 1');
     const site = await updateRow('site_settings', { column: 'id', value: 1 }, values);
     if (before) await releaseImages([before.logo_url, before.og_image_url, before.favicon_url]);
+    const diff = changedFields(before, values, SITE_LABELS);
+    if (diff) await audit(ctx, { action: 'site.update', summary: `Textos e SEO do site: ${diff.text}`, entity: 'site', details: diff.details });
     return json({ site });
   });
 
   r.patch('/api/admin/hero', 'admin', async (ctx) => {
     const { values, cast } = parse(heroSpec, await readJson(ctx.req, 16 * 1024), { partial: true });
     checkHighlights(values, [['title', 'title_highlight', 'Hero']]);
-    const before = await one<{ images: string[] }>('select images from hero_settings where id = 1');
+    const before = await one<Row>('select * from hero_settings where id = 1');
     const hero = await updateRow('hero_settings', { column: 'id', value: 1 }, values, cast);
-    if (before) await releaseImages(before.images);
+    if (before) await releaseImages(before.images as string[]);
+    const diff = changedFields(before, values, HERO_LABELS);
+    if (diff) await audit(ctx, { action: 'hero.update', summary: `Hero do site: ${diff.text}`, entity: 'hero', details: diff.details });
     return json({ hero });
   });
 
@@ -158,8 +216,11 @@ export function registerContent(r: Router) {
       const others = await one<{ n: number }>('select count(*) as n from payment_methods where enabled and code <> $1', [code]);
       if (!others?.n) throw new HttpError(400, 'Mantenha pelo menos uma forma de pagamento ativa.');
     }
+    const before = await one<Row>('select * from payment_methods where code = $1', [code]);
     const payment = await updateRow('payment_methods', { column: 'code', value: code }, values);
     if (!payment) throw new HttpError(404, 'Forma de pagamento não encontrada.');
+    const diff = changedFields(before, values, { enabled: { label: 'ativa', format: 'bool' }, details: { label: 'chave PIX', format: 'changed' } });
+    if (diff) await audit(ctx, { action: 'payment.update', summary: `Pagamento ${before?.label ?? code}: ${diff.text}`, entity: 'payment', entityId: code });
     return json({ payment });
   });
 
@@ -172,18 +233,27 @@ export function registerContent(r: Router) {
     if (values.position === undefined) {
       values.position = (await one<{ n: number }>('select coalesce(max(position), -1) + 1 as n from delivery_zones'))?.n ?? 0;
     }
-    return json({ zone: await insertRow('delivery_zones', values) }, 201);
+    const zone = await insertRow<{ id: string }>('delivery_zones', values);
+    await audit(ctx, { action: 'zone.create', summary: `Cadastrou o bairro ${values.name} com taxa de R$ ${Number(values.fee).toFixed(2).replace('.', ',')}`, entity: 'zone', entityId: zone?.id });
+    return json({ zone }, 201);
   });
 
   r.patch('/api/admin/zones/:id', 'admin', async (ctx) => {
+    const id = uuidParam(ctx);
     const { values } = parse(zoneSpec, await readJson(ctx.req, 4 * 1024), { partial: true });
-    const zone = await updateRow('delivery_zones', { column: 'id', value: uuidParam(ctx) }, values);
+    const before = await one<Row>('select * from delivery_zones where id = $1', [id]);
+    const zone = await updateRow('delivery_zones', { column: 'id', value: id }, values);
     if (!zone) throw new HttpError(404, 'Bairro não encontrado.');
+    const diff = changedFields(before, values, { name: { label: 'nome' }, fee: { label: 'taxa', format: 'money' }, active: { label: 'ativo', format: 'bool' }, position: { label: 'ordem' } });
+    if (diff) await audit(ctx, { action: 'zone.update', summary: `Bairro ${before?.name}: ${diff.text}`, entity: 'zone', entityId: id, details: diff.details });
     return json({ zone });
   });
 
   r.delete('/api/admin/zones/:id', 'admin', async (ctx) => {
-    if (!(await one('delete from delivery_zones where id = $1 returning id', [uuidParam(ctx)]))) throw new HttpError(404, 'Bairro não encontrado.');
+    const id = uuidParam(ctx);
+    const removed = await one<{ name: string }>('delete from delivery_zones where id = $1 returning name', [id]);
+    if (!removed) throw new HttpError(404, 'Bairro não encontrado.');
+    await audit(ctx, { action: 'zone.delete', summary: `Removeu o bairro ${removed.name}`, entity: 'zone', entityId: id });
     return json({ ok: true });
   });
 
@@ -198,7 +268,9 @@ export function registerContent(r: Router) {
   r.post('/api/admin/banners', 'admin', async (ctx) => {
     const { values } = parse(bannerSpec, await readJson(ctx.req, 8 * 1024));
     if (values.position === undefined) values.position = await nextBannerPosition(values.placement);
-    return json({ banner: await insertRow('banners', values) }, 201);
+    const banner = await insertRow<{ id: string }>('banners', values);
+    await audit(ctx, { action: 'banner.create', summary: `Criou um banner (${values.placement === 'cover' ? 'capa' : 'cardápio'})${values.title ? ` “${values.title}”` : ''}`, entity: 'banner', entityId: banner?.id });
+    return json({ banner }, 201);
   });
 
   r.put('/api/admin/banners/order', 'admin', async (ctx) => {
@@ -214,6 +286,7 @@ export function registerContent(r: Router) {
         where b.id = o.id`,
       [ids],
     );
+    await audit(ctx, { action: 'banner.reorder', summary: 'Mudou a ordem dos banners', entity: 'banner' });
     return json({ ok: true });
   });
 
@@ -231,16 +304,30 @@ export function registerContent(r: Router) {
     }
     const banner = await updateRow('banners', { column: 'id', value: id }, values);
     await releaseImages([before.image_desktop_url, before.image_mobile_url]);
+    const diff = changedFields(before, values, {
+      placement: { label: 'lugar' },
+      title: { label: 'título' },
+      subtitle: { label: 'subtítulo', format: 'changed' },
+      image_desktop_url: { label: 'imagem desktop', format: 'changed' },
+      image_mobile_url: { label: 'imagem celular', format: 'changed' },
+      button_text: { label: 'botão' },
+      link: { label: 'link' },
+      active: { label: 'ativo', format: 'bool' },
+      position: { label: 'ordem' },
+    });
+    if (diff) await audit(ctx, { action: 'banner.update', summary: `Banner: ${diff.text}`, entity: 'banner', entityId: id, details: diff.details });
     return json({ banner });
   });
 
   r.delete('/api/admin/banners/:id', 'admin', async (ctx) => {
-    const removed = await one<{ image_desktop_url: string | null; image_mobile_url: string | null }>(
-      'delete from banners where id = $1 returning image_desktop_url, image_mobile_url',
-      [uuidParam(ctx)],
+    const id = uuidParam(ctx);
+    const removed = await one<{ image_desktop_url: string | null; image_mobile_url: string | null; title: string | null }>(
+      'delete from banners where id = $1 returning image_desktop_url, image_mobile_url, title',
+      [id],
     );
     if (!removed) throw new HttpError(404, 'Banner não encontrado.');
     await releaseImages([removed.image_desktop_url, removed.image_mobile_url]);
+    await audit(ctx, { action: 'banner.delete', summary: `Excluiu um banner${removed.title ? ` “${removed.title}”` : ''}`, entity: 'banner', entityId: id });
     return json({ ok: true });
   });
 }

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { query } from './db.js';
 import { MissingConfig, blobConfigured, blobToken } from './env.js';
 import { HttpError } from './http.js';
+import { inspectImage } from './images.js';
 
 export const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // a Vercel limita o corpo de uma função a 4,5 MB
 export const FOLDERS = ['products', 'banners', 'hero', 'site'] as const;
@@ -12,15 +13,10 @@ export type Folder = (typeof FOLDERS)[number];
 
 const EXTENSION: Record<string, string> = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/avif': 'avif' };
 
-// O tipo vem dos primeiros bytes do arquivo, não do que o navegador diz (e SVG nunca entra: pode carregar script).
+// O tipo e o tamanho vêm da ESTRUTURA do arquivo (cabeçalho, dimensões e fim do arquivo no lugar: veja images.ts), não do que o
+// navegador diz nem só dos primeiros bytes. SVG nunca entra: pode carregar script.
 export function sniffImage(b: Uint8Array): string | null {
-  const ascii = (from: number, to: number) => String.fromCharCode(...b.subarray(from, to));
-  if (b.length > 12 && ascii(0, 4) === 'RIFF' && ascii(8, 12) === 'WEBP') return 'image/webp';
-  if (b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
-  if (b.length > 8 && b[0] === 0x89 && ascii(1, 4) === 'PNG') return 'image/png';
-  if (b.length > 6 && (ascii(0, 6) === 'GIF87a' || ascii(0, 6) === 'GIF89a')) return 'image/gif';
-  if (b.length > 12 && ascii(4, 8) === 'ftyp' && (ascii(8, 12) === 'avif' || ascii(8, 12) === 'avis')) return 'image/avif';
-  return null;
+  return inspectImage(b)?.type ?? null;
 }
 
 // Com token clássico passa o token; sem ele o SDK usa OIDC + BLOB_STORE_ID sozinho.
@@ -33,8 +29,9 @@ export async function uploadImage(folder: Folder, bytes: Uint8Array): Promise<{ 
   if (!blobConfigured()) {
     throw new MissingConfig(['BLOB_READ_WRITE_TOKEN'], 'Falta a credencial do Vercel Blob: conecte o armazenamento copocheio-uploads ao projeto (variável BLOB_READ_WRITE_TOKEN ou BLOB_STORE_ID).');
   }
-  const type = sniffImage(bytes);
-  if (!type) throw new HttpError(400, 'Envie uma imagem JPG, PNG, WebP, GIF ou AVIF.');
+  const info = inspectImage(bytes);
+  if (!info) throw new HttpError(400, 'O arquivo não é uma imagem válida (ou é grande demais em pixels). Envie uma imagem JPG, PNG, WebP, GIF ou AVIF.');
+  const type = info.type;
   try {
     const blob = await put(`${folder}/${randomUUID()}.${EXTENSION[type]}`, Buffer.from(bytes), {
       ...auth(),

@@ -39,7 +39,8 @@ export function text(label: string, o: TextOpts): Field {
   };
 }
 
-export function money(label: string, o: { nullable?: boolean; required?: boolean } = {}): Field {
+// `positive`: o valor precisa ser maior que zero (preço de produto: R$ 0,00 quase sempre é esquecimento de preencher).
+export function money(label: string, o: { nullable?: boolean; required?: boolean; positive?: boolean } = {}): Field {
   return {
     label,
     required: o.required ?? false,
@@ -49,7 +50,25 @@ export function money(label: string, o: { nullable?: boolean; required?: boolean
       if (typeof n !== 'number' || !Number.isFinite(n)) throw bad(label, 'valor inválido.');
       if (n < 0) throw bad(label, 'não pode ser negativo.');
       if (n > 1_000_000) throw bad(label, 'valor alto demais.');
-      return Math.round(n * 100) / 100;
+      const cents = Math.round(n * 100) / 100;
+      if (o.positive && cents <= 0) throw bad(label, 'precisa ser maior que zero.');
+      return cents;
+    },
+  };
+}
+
+// Data e hora com fuso (ISO 8601, ex.: 2026-12-24T18:00:00-03:00). Guarda em UTC. Vazio vira null quando permitido.
+export function dateTime(label: string, o: { nullable?: boolean } = {}): Field {
+  return {
+    label,
+    required: false,
+    cast: 'timestamptz',
+    parse(value) {
+      if ((value === null || value === undefined || value === '') && o.nullable) return null;
+      if (typeof value !== 'string' || value.length > 40) throw bad(label, 'data inválida.');
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime()) || d.getFullYear() < 2000 || d.getFullYear() > 2100) throw bad(label, 'data inválida.');
+      return d.toISOString();
     },
   };
 }

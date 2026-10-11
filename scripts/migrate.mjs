@@ -34,6 +34,13 @@ if (!url) {
   process.exit(1);
 }
 
+// Migrations mexem no banco de verdade. Na Vercel, só o deploy de PRODUÇÃO as aplica: um deploy de teste (preview, branch ou PR) que
+// compartilhe o banco de produção poderia alterar o banco da loja ao vivo com uma migration ainda não revisada. Nos previews elas só
+// são conferidas (lista o que está pendente). Quem usa um banco separado para previews liga MIGRATE_ON_PREVIEW=1 para aplicá-las.
+const onVercel = Boolean(process.env.VERCEL);
+const production = process.env.VERCEL_ENV === 'production';
+const applyHere = !onVercel || production || process.env.MIGRATE_ON_PREVIEW === '1';
+
 const sql = neon(url);
 const BREAKPOINT = /^\s*--\s*statement-breakpoint\s*$/m;
 
@@ -49,6 +56,14 @@ const applied = new Set((await sql.query('select version from schema_migrations'
 const files = readdirSync(join(root, 'db/migrations'))
   .filter((f) => f.endsWith('.sql'))
   .sort();
+
+if (!applyHere) {
+  const pending = files.map((f) => f.replace(/\.sql$/, '')).filter((version) => !applied.has(version));
+  console.log(`[db:migrate] Deploy de teste na Vercel (VERCEL_ENV=${process.env.VERCEL_ENV ?? '?'}): migrations NÃO aplicadas, para não mexer no banco de produção.`);
+  console.log(pending.length ? `[db:migrate] Pendentes neste banco: ${pending.join(', ')}.` : '[db:migrate] Nenhuma pendente.');
+  console.log('[db:migrate] Se este deploy usa um banco só de testes, defina MIGRATE_ON_PREVIEW=1 nas variáveis do projeto (Preview).');
+  process.exit(0);
+}
 
 let ran = 0;
 for (const file of files) {

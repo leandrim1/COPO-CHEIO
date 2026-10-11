@@ -1,5 +1,24 @@
 {
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": "dist/index.html"
+    }
+  },
   "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000" },
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob: https://d8j0ntlcm91z4.cloudfront.net; font-src 'self' data:; connect-src 'self'; frame-src https://www.google.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests; report-uri /api/csp-report"
+        }
+      ]
+    },
     {
       "source": "/(acompanhar-pedido|pedido|conta)(/.*)?",
       "headers": [
@@ -7,10 +26,55 @@
         { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
         { "key": "Cache-Control", "value": "no-store" }
       ]
+    },
+    {
+      "source": "/admin(/.*)?",
+      "headers": [
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+    },
+    {
+      "source": "/(img|email)/(.*)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+    },
+    {
+      "source": "/(logo\\.png|gelo\\.webp|logo-[0-9]+\\.webp|icon-[0-9]+\\.png|apple-touch-icon\\.png)",
+      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(WhatsApp|facebookexternalhit|Facebot|Twitterbot|TelegramBot|Slackbot|LinkedInBot|Discordbot|Pinterest|Embedly|SkypeUriPreview|vkShare).*"
+        }
+      ],
+      "destination": "/api?__path=__page&__from=/",
+      "permanent": false
     }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api?__path=$1" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!api/|assets/|img/|email/)[^.]*)",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(WhatsApp|facebookexternalhit|Facebot|Twitterbot|TelegramBot|Slackbot|LinkedInBot|Discordbot|Pinterest|Embedly|SkypeUriPreview|vkShare|Googlebot|bingbot|Applebot|DuckDuckBot|YandexBot).*"
+        }
+      ],
+      "destination": "/api?__path=__page&__from=/$1"
+    },
+    { "source": "/((?!api/)[^.]*)", "destination": "/index.html" }
   ]
 }

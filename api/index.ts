@@ -8,14 +8,26 @@ import { Readable } from 'node:stream';
 import { handle } from '../server/index.js';
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
-  const proto = String(req.headers['x-forwarded-proto'] ?? 'https').split(',')[0].trim();
   const host = String(req.headers['x-forwarded-host'] ?? req.headers.host ?? 'localhost').split(',')[0].trim();
+  // Na Vercel o x-forwarded-proto sempre vem (https). Sem ele, só o computador local usa http; qualquer outro endereço presume https.
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+  const proto = String(req.headers['x-forwarded-proto'] ?? (local ? 'http' : 'https')).split(',')[0].trim();
   const method = req.method ?? 'GET';
   const hasBody = method !== 'GET' && method !== 'HEAD';
 
   const url = new URL(req.url ?? '/', `${proto}://${host}`);
   const routed = url.searchParams.get('__path');
   if (routed !== null) {
+    // O caminho de verdade nunca tem "\" nem segmentos "." ou "..": o que vier assim é lixo ou tentativa de enganar o roteador e é
+    // recusado aqui. (O "/" codificado como %2F continua valendo: a Vercel pode entregar assim os caminhos de várias partes,
+    // como /api/auth/login, e ele chega ao roteador igual ao "/" normal, que passa pelas mesmas regras de acesso.)
+    if (routed.includes('\\') || routed.split('/').some((segment) => segment === '.' || segment === '..')) {
+      res.statusCode = 400;
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.setHeader('cache-control', 'no-store');
+      res.end(JSON.stringify({ error: 'Endereço inválido.' }));
+      return;
+    }
     url.pathname = `/api/${routed}`;
     url.searchParams.delete('__path');
   }

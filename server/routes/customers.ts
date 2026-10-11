@@ -1,11 +1,29 @@
 // Painel: contas de clientes (suporte). A loja não vê senhas; só gera link de redefinição e desativa/exclui contas.
 import { randomBytes } from 'node:crypto';
+import { audit } from '../audit.js';
 import { sha256 } from '../auth.js';
 import { batch, one, query } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
-import type { Router } from '../http.js';
+import type { Ctx, Router } from '../http.js';
+import { mailConfigured, sendMail } from '../mail.js';
+import { loadBrand, siteUrl } from '../mailBrand.js';
+import { adminResetLinkNoticeMessage } from '../mailTemplates.js';
 
 const RESET_HOURS = 24;
+
+// Avisa a pessoa, na caixa de e-mail da conta, que a loja gerou um link para trocar a senha dela. Melhor esforço: se o e-mail não
+// puder sair, o link continua valendo e a resposta diz que o aviso não foi enviado.
+async function noticeCustomer(ctx: Ctx, customer: { name: string; email: string; email_verified_at: string | null }): Promise<boolean> {
+  if (!customer.email_verified_at || !mailConfigured()) return false;
+  try {
+    const brand = await loadBrand(ctx.req);
+    await sendMail(adminResetLinkNoticeMessage(brand, { to: customer.email, name: customer.name, when: new Date(), loginUrl: `${siteUrl(ctx.req)}/conta` }));
+    return true;
+  } catch {
+    console.error('[clientes] o aviso do link de nova senha não foi enviado');
+    return false;
+  }
+}
 
 export function registerCustomers(r: Router) {
   r.get('/api/admin/customers', 'admin', async (ctx) => {
@@ -34,9 +52,10 @@ export function registerCustomers(r: Router) {
     return json({ customers: rows.slice(0, limit), has_more: rows.length > limit });
   });
 
-  // Link de redefinição de senha (uso único, vale 24 horas). A loja confirma quem é a pessoa e envia o link
-  // por um canal que já conhece (WhatsApp do pedido). O código só aparece nesta resposta.
-  r.post('/api/admin/customers/:id/reset-link', 'admin', async (ctx) => {
+  // Link de redefinição de senha (uso único, vale 24 horas). SÓ O OWNER gera: quem tem o link assume a conta, então a ação fica
+  // restrita, registrada no histórico de atividades e avisada por e-mail ao próprio cliente. A loja confirma quem é a pessoa e
+  // envia o link por um canal que já conhece (WhatsApp do pedido). O código só aparece nesta resposta.
+  r.post('/api/admin/customers/:id/reset-link', 'owner', async (ctx) => {
     const id = uuidParam(ctx);
     const token = randomBytes(24).toString('base64url');
     const [, created] = await batch([
@@ -49,7 +68,16 @@ export function registerCustomers(r: Router) {
       ],
     ]);
     if (!created.length) throw new HttpError(404, 'Cliente não encontrado.');
-    return json({ token, expires_at: created[0].expires_at }, 201);
+    const customer = await one<{ name: string; email: string; email_verified_at: string | null }>('select name, email, email_verified_at from customers where id = $1', [id]);
+    const notified = customer ? await noticeCustomer(ctx, customer) : false;
+    await audit(ctx, {
+      action: 'customer.reset_link',
+      summary: `Gerou um link de nova senha para o cliente ${customer?.name ?? ''} (${customer?.email ?? ''})${notified ? ' e avisou o cliente por e-mail' : ''}`,
+      entity: 'customer',
+      entityId: id,
+      details: { notified },
+    });
+    return json({ token, expires_at: created[0].expires_at, notified }, 201);
   });
 
   r.patch('/api/admin/customers/:id', 'admin', async (ctx) => {
@@ -59,6 +87,7 @@ export function registerCustomers(r: Router) {
     const customer = await one('update customers set active = $2 where id = $1 returning id, name, email, phone, active, status, email_verified_at', [id, body.active]);
     if (!customer) throw new HttpError(404, 'Cliente não encontrado.');
     if (!body.active) await query('delete from customer_sessions where customer_id = $1', [id]);
+    await audit(ctx, { action: 'customer.update', summary: `${body.active ? 'Reativou' : 'Desativou'} a conta do cliente ${customer.name} (${customer.email})`, entity: 'customer', entityId: id });
     return json({ customer });
   });
 
@@ -66,7 +95,9 @@ export function registerCustomers(r: Router) {
   // obrigações fiscais) e perdem a ligação com a conta.
   r.delete('/api/admin/customers/:id', 'owner', async (ctx) => {
     const id = uuidParam(ctx);
-    if (!(await one('delete from customers where id = $1 returning id', [id]))) throw new HttpError(404, 'Cliente não encontrado.');
+    const removed = await one<{ name: string; email: string }>('delete from customers where id = $1 returning name, email', [id]);
+    if (!removed) throw new HttpError(404, 'Cliente não encontrado.');
+    await audit(ctx, { action: 'customer.delete', summary: `Excluiu a conta do cliente ${removed.name} (${removed.email})`, entity: 'customer', entityId: id });
     return json({ ok: true });
   });
 }

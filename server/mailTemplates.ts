@@ -124,3 +124,54 @@ export function passwordChangedMessage(brand: Brand, o: { to: string; name: stri
     reason: 'Esta mensagem foi enviada para avisar que a senha desta conta foi alterada.',
   });
 }
+
+// "10/10/2026 às 11:32", no fuso da loja (montado peça por peça: não depende de como cada versão do Node escreve a data).
+export function whenText(date: Date, timezone: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: timezone }).formatToParts(date).map((part) => [part.type, part.value]),
+  );
+  return `${parts.day}/${parts.month}/${parts.year} às ${parts.hour}:${parts.minute}`;
+}
+
+// Alguém entrou no painel de um aparelho que ainda não conhecíamos: quem não foi o autor percebe na hora.
+export function newAdminLoginMessage(brand: Brand, o: { to: string; name: string; when: Date; device: string; ip: string; panelUrl: string }): Message {
+  const hi = greetingName(o.name);
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `Novo acesso ao painel – ${brand.name}`,
+    preheader: `Entraram no painel de ${o.device}. Se não foi você, troque a senha agora.`,
+    eyebrow: 'Segurança do painel',
+    title: 'Novo acesso ao painel',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    blocks: [
+      { kind: 'text', text: `A sua conta entrou no painel de ${brand.name} em **${whenText(o.when, brand.timezone)}**.` },
+      { kind: 'text', text: `Aparelho: **${o.device}**` },
+      ...(o.ip && o.ip !== 'unknown' ? [{ kind: 'text' as const, text: `Rede (IP): **${o.ip}**` }] : []),
+      { kind: 'text', text: 'Se foi você, não precisa fazer nada: este aviso só aparece quando você entra de um aparelho novo.', tone: 'muted' },
+      { kind: 'notice', text: '**Não foi você?** Entre agora no painel, troque a senha em Configurações → Painel → Minha conta e ative a verificação em duas etapas. Isso desconecta os outros aparelhos.' },
+      { kind: 'button', label: 'Abrir o painel', url: o.panelUrl },
+    ],
+    reason: 'Esta mensagem foi enviada porque a conta de administrador deste endereço de e-mail entrou no painel.',
+  });
+}
+
+// A loja gerou um link para o cliente criar uma senha nova: o cliente é avisado na caixa de e-mail da conta, para que ninguém
+// consiga tomar a conta dele em silêncio.
+export function adminResetLinkNoticeMessage(brand: Brand, o: { to: string; name: string; when: Date; loginUrl: string }): Message {
+  const hi = greetingName(o.name);
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `A loja gerou um link para trocar sua senha – ${brand.name}`,
+    preheader: 'Se foi você quem pediu ajuda à loja, está tudo certo. Se não, avise a loja.',
+    eyebrow: 'Segurança da conta',
+    title: 'Link de nova senha gerado pela loja',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    blocks: [
+      { kind: 'text', text: `A loja gerou, em **${whenText(o.when, brand.timezone)}**, um link para criar uma senha nova na sua conta. Isso acontece quando você pede ajuda à loja para recuperar o acesso.` },
+      { kind: 'text', text: 'A senha atual continua valendo até alguém usar esse link. Ele vale por 24 horas e só pode ser usado uma vez.', tone: 'muted' },
+      { kind: 'notice', text: '**Não pediu ajuda à loja?** Fale com a loja pelos contatos abaixo e use “Esqueci minha senha” na página de entrada para criar outra senha agora.' },
+      { kind: 'button', label: 'Entrar na minha conta', url: o.loginUrl },
+    ],
+    reason: 'Esta mensagem foi enviada porque a loja gerou um link de redefinição de senha para a conta deste endereço de e-mail.',
+  });
+}

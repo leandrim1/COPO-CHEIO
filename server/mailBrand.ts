@@ -3,6 +3,7 @@
 // Tudo vem do banco (Painel → Configurações e Site) ou do próprio site; o que não estiver cadastrado simplesmente não aparece.
 // Nada aqui inventa endereço, telefone, rede social ou link.
 import { one } from './db.js';
+import { MissingConfig } from './env.js';
 
 export type Contact = { label: string; text: string; url?: string };
 
@@ -19,14 +20,40 @@ export type Brand = {
   timezone: string;
 };
 
-// Endereço do site nos links e nas imagens do e-mail: SITE_URL (se definida) → domínio de produção da Vercel → endereço
-// da própria requisição.
+// Endereço do site nos links e nas imagens do e-mail: SITE_URL (se definida) → domínio de produção da Vercel → endereço da
+// implantação na Vercel. NUNCA vem do cabeçalho da requisição (Host / X-Forwarded-Host): quem controla a requisição controlaria o
+// link que chega por e-mail (por exemplo, o de "Esqueci minha senha") e o levaria a um site falso. A única exceção é o computador de
+// quem desenvolve (fora da Vercel), onde vale o endereço local (localhost).
+const loopback = (host: string) => host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+
+// "https://meusite.com.br/" → "https://meusite.com.br". Aceita sem o "https://" na frente e ignora o resto do caminho.
+function baseOf(value: string): string | null {
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || !url.hostname) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 export function siteUrl(req: Request): string {
-  const configured = (process.env.SITE_URL ?? '').trim();
-  if (configured) return configured.replace(/\/+$/, '');
+  const configured = baseOf((process.env.SITE_URL ?? '').trim());
+  if (configured) return configured;
   const production = (process.env.VERCEL_PROJECT_PRODUCTION_URL ?? '').trim();
-  if (process.env.VERCEL_ENV === 'production' && production) return `https://${production}`;
-  return new URL(req.url).origin;
+  if (process.env.VERCEL_ENV === 'production' && production) {
+    const base = baseOf(production);
+    if (base) return base;
+  }
+  if (process.env.VERCEL) {
+    const deployment = baseOf((process.env.VERCEL_URL ?? '').trim());
+    if (deployment) return deployment;
+  } else {
+    const origin = new URL(req.url);
+    if (loopback(origin.hostname)) return origin.origin;
+  }
+  console.error('[config] Falta a variável SITE_URL (endereço do site, ex.: https://www.seusite.com.br): sem ela os links dos e-mails não podem ser montados.');
+  throw new MissingConfig(['SITE_URL'], 'Falta definir o endereço do site para montar os links dos e-mails (variável SITE_URL).');
 }
 
 // Logo oficial reduzida para e-mail (mesma arte de public/logo.png, 256×256 = 2x do tamanho exibido, PNG de 32 bits com

@@ -5,9 +5,10 @@
 // • No banco fica só o SHA-256 dele (order_tracking_tokens.token_hash). Quem tiver o banco não consegue
 //   montar os links dos clientes.
 // • Os links antigos (/pedido/<uuid>) continuam valendo: o UUID também é aceito e comparado pelo hash.
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { attempts, recordAttempt } from './auth.js';
 import type { Statement } from './db.js';
+import { databaseUrl } from './env.js';
 import { HttpError } from './http.js';
 import type { Ctx } from './http.js';
 
@@ -15,8 +16,7 @@ const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const LENGTH = 20;
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export function newTrackingToken(): string {
-  const bytes = randomBytes(13); // 104 bits; usamos 100
+function encodeToken(bytes: Uint8Array): string {
   let bits = 0n;
   for (const byte of bytes) bits = (bits << 8n) | BigInt(byte);
   bits >>= 4n;
@@ -26,6 +26,16 @@ export function newTrackingToken(): string {
     bits >>= 5n;
   }
   return out.match(/.{5}/g)!.join('-');
+}
+
+export const newTrackingToken = (): string => encodeToken(randomBytes(13)); // 104 bits; usamos 100
+
+// Código de acompanhamento DERIVADO da chave de idempotência do pedido (HMAC com uma chave que só o servidor conhece): se o envio
+// do pedido se repete com a mesma chave (a resposta se perdeu na rede, a pessoa tocou duas vezes), o servidor devolve o mesmo código
+// e o link que a pessoa já recebeu continua valendo. Sem a chave do servidor ninguém consegue calcular o código de outro pedido.
+export function trackingTokenFromKey(key: string): string {
+  const pepper = createHmac('sha256', 'copocheio:tracking-token:v1').update(databaseUrl() ?? '').digest();
+  return encodeToken(createHmac('sha256', pepper).update(`order:${key}`).digest().subarray(0, 13));
 }
 
 // Forma canônica do que a pessoa digitou ou colou, ou null se não parece um código. Aceita minúsculas,

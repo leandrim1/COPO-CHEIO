@@ -5,7 +5,7 @@
 // entre pedidos e os limites por hora/dia. A resposta da rota é a mesma exista a conta ou não, e demora o mesmo tempo
 // (veja `padResponse`), para que ninguém use esta tela para descobrir quem tem conta.
 import { randomBytes } from 'node:crypto';
-import { attempts, recordAttempt, sha256 } from './auth.js';
+import { reserve, sha256 } from './auth.js';
 import { one, query } from './db.js';
 import { HttpError } from './http.js';
 import { mailConfigured, sendMail } from './mail.js';
@@ -34,11 +34,10 @@ export async function padResponse(startedAt: number): Promise<void> {
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 }
 
-// Vale para os dois lados da rota (mesma resposta para todo mundo): o limite por rede.
+// Vale para os dois lados da rota (mesma resposta para todo mundo): o limite por rede. Reserva a vaga (atômico); quem chama devolve
+// com `refund(MAIL_IP_BUCKET, ip)` se nenhum e-mail chegar a sair.
 export async function assertMailBudget(ip: string): Promise<void> {
-  if ((await attempts(MAIL_IP_BUCKET, ip, 3600)) >= MAIL_IP_MAX) {
-    throw new HttpError(429, 'Muitos e-mails pedidos desta rede. Aguarde um pouco e tente de novo.', { code: 'rate_limited' });
-  }
+  await reserve(MAIL_IP_BUCKET, ip, 3600, MAIL_IP_MAX, 'Muitos e-mails pedidos desta rede. Aguarde um pouco e tente de novo.');
 }
 
 type Begin = { ok: true; email: string; name: string } | { ok: false; reason: 'not_eligible' | 'cooldown' | 'hourly' | 'daily'; retry_after?: number };
@@ -46,7 +45,7 @@ type Begin = { ok: true; email: string; name: string } | { ok: false; reason: 'n
 // Cria o link, manda o e-mail e só então invalida os links anteriores. Devolve true se um e-mail saiu. Não lança erro por
 // regra de negócio (conta desativada, espera de 60 s, limites) nem por falha do servidor de e-mail: a rota responde igual
 // em todos os casos, e quem não recebeu pede de novo.
-export async function sendPasswordResetEmail(req: Request, ip: string, customer: { id: string }): Promise<boolean> {
+export async function sendPasswordResetEmail(req: Request, _ip: string, customer: { id: string }): Promise<boolean> {
   const token = newResetToken();
   const hash = sha256(token);
   const row = await one<{ r: Begin }>('select begin_password_reset($1::uuid, $2, $3) as r', [customer.id, hash, RESET_MINUTES]);
@@ -63,7 +62,6 @@ export async function sendPasswordResetEmail(req: Request, ip: string, customer:
     return false;
   }
   await query('select finish_password_reset($1, true)', [hash]);
-  await recordAttempt(MAIL_IP_BUCKET, ip);
   return true;
 }
 

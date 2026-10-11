@@ -6,6 +6,8 @@ export class HttpError extends Error {
     public status: number,
     message: string,
     public extra?: Row,
+    // Cabeçalhos da resposta (ex.: Retry-After nos erros 429).
+    public headers?: Record<string, string>,
   ) {
     super(message);
   }
@@ -20,7 +22,11 @@ const JSON_HEADERS = {
 
 export function json(data: unknown, status = 200, headers: Record<string, string | string[]> = {}): Response {
   const h = new Headers(JSON_HEADERS);
-  for (const [k, v] of Object.entries(headers)) for (const item of Array.isArray(v) ? v : [v]) h.append(k, item);
+  for (const [k, v] of Object.entries(headers)) {
+    // Quem pede outro cache-control (as listas públicas do site, por exemplo) substitui o "no-store" padrão em vez de somar com ele.
+    if (k.toLowerCase() === 'cache-control') h.set(k, Array.isArray(v) ? v.join(', ') : v);
+    else for (const item of Array.isArray(v) ? v : [v]) h.append(k, item);
+  }
   return new Response(JSON.stringify(data), { status, headers: h });
 }
 
@@ -50,7 +56,7 @@ export async function readJson(req: Request, maxBytes = 256 * 1024): Promise<Row
 
 // ---- Roteador ------------------------------------------------------------------------------------
 
-export type Admin = { id: string; name: string; email: string; role: 'owner' | 'admin' };
+export type Admin = { id: string; name: string; email: string; role: 'owner' | 'admin'; two_factor?: boolean };
 export type Access = 'public' | 'admin' | 'owner';
 
 export type Ctx = {

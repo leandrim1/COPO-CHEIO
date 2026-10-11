@@ -1,5 +1,5 @@
 // Painel: estado do envio de e-mails (confirmação de conta) e e-mail de teste.
-import { attempts, recordAttempt } from '../auth.js';
+import { reserve } from '../auth.js';
 import { HttpError, json } from '../http.js';
 import type { Router } from '../http.js';
 import { MailError, mailMissing, mailStatus, sendMail } from '../mail.js';
@@ -16,8 +16,7 @@ export function registerMailAdmin(r: Router) {
     if (mailMissing().length) {
       throw new HttpError(503, `O envio de e-mails ainda não está configurado. Faltam na Vercel: ${mailMissing().join(', ')}.`, { code: 'mail_not_configured', missing: mailMissing() });
     }
-    if ((await attempts('mail-test', ctx.admin!.id, 3600)) >= 10) throw new HttpError(429, 'Muitos testes seguidos. Aguarde um pouco.');
-    await recordAttempt('mail-test', ctx.admin!.id);
+    await reserve('mail-test', ctx.admin!.id, 3600, 10, 'Muitos testes seguidos. Aguarde um pouco.');
     // O e-mail de teste é o de confirmação de verdade (mesmo layout, logo e rodapé), com um código de exemplo e um aviso no topo:
     // assim a loja vê no Gmail/Outlook exatamente o que o cliente recebe.
     try {
