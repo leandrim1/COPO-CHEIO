@@ -1013,7 +1013,7 @@ function BebidasPage() {
                 <Flame className="h-5 w-5 text-[#2563FF]" aria-hidden="true" />
                 {site.featured_title}
               </h2>
-              <ul className="-mx-4 -mb-6 mt-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-10 [scrollbar-width:none] sm:-mx-6 sm:px-6 [&::-webkit-scrollbar]:hidden">
+              <ul className="cc-hscroll -mx-4 mt-4 flex gap-3 overflow-x-auto px-4 pb-10 sm:-mx-6 sm:px-6">
                 {featured.map((product) => (
                   <FeaturedCard
                     key={product.id}

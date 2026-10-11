@@ -1,3 +1,55 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  /* Lista que rola na horizontal (ex.: "Os favoritos da galera"). No celular não há barra (o dedo rola e cada item encaixa
+     no lugar). Com mouse, aparece uma barra fina na cor da marca e o encaixe sai: arrastar a barra rola a lista na mesma
+     medida e ela para onde você soltar (com o encaixe, a lista voltaria sozinha para o card mais perto). */
+  .cc-hscroll {
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    margin-bottom: -1.5rem;
+  }
+  .cc-hscroll::-webkit-scrollbar {
+    display: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .cc-hscroll {
+      scroll-snap-type: none;
+      scrollbar-width: auto;
+      /* a barra ocupa o pé da lista: sobra um pouco mais de espaço antes da próxima seção */
+      margin-bottom: -0.5rem;
+    }
+    /* Chrome, Edge e Safari */
+    .cc-hscroll::-webkit-scrollbar {
+      display: block;
+      height: 10px;
+    }
+    .cc-hscroll::-webkit-scrollbar-track {
+      margin-inline: 1rem;
+      border-radius: 9999px;
+      background: rgb(255 255 255 / 0.08);
+    }
+    .cc-hscroll::-webkit-scrollbar-thumb {
+      border-radius: 9999px;
+      background: #2563ff;
+    }
+    .cc-hscroll::-webkit-scrollbar-thumb:hover {
+      background: #5b8cff;
+    }
+    @media (min-width: 640px) {
+      .cc-hscroll::-webkit-scrollbar-track {
+        margin-inline: 1.5rem;
+      }
+    }
+    /* Firefox não entende ::-webkit-scrollbar */
+    @supports (-moz-appearance: none) {
+      .cc-hscroll {
+        scrollbar-width: thin;
+        scrollbar-color: #2563ff rgb(255 255 255 / 0.1);
+      }
+    }
+  }
+}
