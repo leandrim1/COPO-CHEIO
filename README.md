@@ -200,8 +200,22 @@ produto e envie a foto.
   precisa ser menor que o preço, e o fim depois do início. Produto com nome e categoria repetidos pede confirmação antes de salvar.
 - **Entrega**: taxa única, ou taxa por bairro (*Configurações → Entrega → Taxa por bairro*). Com bairros cadastrados,
   o cliente escolhe o bairro numa lista.
-- **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo).
-  Ainda não há pagamento online; a chave PIX (opcional) aparece para o cliente depois do pedido.
+- **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo). A chave PIX
+  (opcional) aparece para o cliente depois do pedido. O **Pix online** (pagar pelo site) tem a base pronta, mas está **desligado e sem
+  operadora conectada**: veja o item abaixo.
+- **Pagamento online (Pix pelo site)** — **a base da loja está pronta e testada com um SIMULADOR de operadora; a ValidaPay ainda NÃO está
+  conectada** (a documentação oficial não pôde ser consultada, então nada dela foi presumido). O "Pix online" nasce desligado e o painel
+  não deixa ligá-lo sem operadora e conta aprovada. O que existe, o que falta, o contrato do adaptador e os passos para ligar:
+  [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md). Em resumo:
+  - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e
+    só vira **novo** quando a operadora confirma (aviso verificado **e** consulta da cobrança), na mesma transação do banco. Sem pagamento
+    a tempo, é cancelado e o estoque volta uma vez só.
+  - **Comissão de 5%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`); só vira "efetivada" com a
+    confirmação do repasse pela operadora (antes disso é "calculada").
+  - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
+    pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
+  - Só o **owner** vê comissão, tarifas e a página *Pagamentos* e liga o Pix online. **Cartão online e cadastro da subconta não existem
+    ainda.**
 - **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
@@ -457,6 +471,9 @@ cliente na próxima consulta.
 Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e `cover_banners` da capa) · `POST /api/orders` (devolve `{order, token}`; aceita `idempotency_key` e `expected_total`) · `GET /api/health` · `POST /api/privacy/request`
 Técnico (público): `GET /api/__page` (HTML para robôs) · `POST /api/csp-report` · `POST /api/client-error`
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
+Pagamento online (sem login, pelo código do pedido ou pela própria conta): `GET|POST /api/tracking/:codigo/payment` ·
+`GET|POST /api/account/orders/:numero/payment` · aviso da operadora: `POST /api/payments/webhook` (nada é gravado antes de a operadora provar
+que o aviso é dela; sem operadora conectada responde `503 payments_unavailable`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim`
@@ -464,9 +481,11 @@ Painel, sessão: `POST /api/auth/login` · `POST /api/auth/login/2fa` · `POST /
 verificação em duas etapas: `GET /api/auth/2fa` · `POST /api/auth/2fa/setup|enable|disable|recovery-codes`
 Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner), `products`
 (+ `POST products/import`, que devolve o relatório linha a linha), `categories`, `banners`, `settings`, `store` (`PATCH` aceita `expected_updated_at`: se outra pessoa salvou antes, responde `409` em vez de sobrescrever),
-`site`, `hero`, `payments`, `zones`, `upload`, `health` (estado do sistema, com o nome das variáveis que faltam), `privacy`
+`site`, `hero`, `payments` (formas de pagamento), `zones`, `upload`, `health` (estado do sistema, com o nome das variáveis que faltam), `privacy`
 Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
-excluir cliente, gerar link de nova senha de cliente, e-mail de teste.
+excluir cliente, gerar link de nova senha de cliente, e-mail de teste e os **pagamentos online**: `GET /api/admin/payments` (operadora, conta,
+resumo, comissão calculada × efetivada, cobranças) · `GET /api/admin/payments/:id` · `POST /api/admin/payments/:id/refresh|ack` ·
+`POST /api/admin/payments/sweep` (a forma "Pix online" só o owner liga: `PATCH /api/admin/payments/pix_online`).
 
 Toda resposta traz `x-request-id` (um erro `500` mostra o mesmo número no corpo: serve para achar a linha nos logs). A API nunca vai
 para a CDN, exceto as duas listas públicas (10 s); o resto responde `Cache-Control: no-store`.
@@ -569,7 +588,8 @@ cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na
 (hash dos códigos), **`customers`** (com `status` e `email_verified_at`), **`customer_sessions`**,
 **`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso),
 **`audit_log`** (registro de atividades do painel), **`admin_recovery_codes`**, **`admin_login_challenges`** e **`admin_devices`**
-(verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares)
+(verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares), **`merchant_accounts`** (conta da
+loja na operadora de pagamento), **`payments`** (cobranças online, em centavos) e **`payment_events`** (avisos da operadora)
 (+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
 última atualização.
@@ -602,10 +622,17 @@ A migration `0013_ice_choice.sql` acrescenta `categories.ice_choice_required` e 
 grava a escolha do gelo) e `order_json` (a escolha chega ao cliente) e marca as categorias "Copão" e "Copão com Monster". É a única
 migration que **escreve um dado** (um `UPDATE` que liga a marca nessas duas categorias, achadas pelo nome só nesse momento); nenhum
 pedido, produto, preço ou estoque é alterado.
-As migrations 0009 a 0013 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments` e `payment_events`, o status de pedido
+`awaiting_payment`, o meio de pagamento `pix_online` (**desligado**) e as funções de pagamento (`payment_begin`, `payment_apply`,
+`payment_expire_local`, `orders_cancel_unpaid`, o cálculo da comissão de 5% e outras); troca `create_order`, `order_json`,
+`admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
+operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
+[`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
+As migrations 0009 a 0014 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
-pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md).
+pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
+da 0014**: depois de um rollback do código, o painel antigo lista o "Pix online" e não conhece a trava que impede ligá-lo; não o ligue.
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
@@ -619,8 +646,12 @@ dashboard) são funções do banco chamadas só pelo servidor.
   responde "tente de novo" em vez de criar conta sem confirmação.
 - A prévia de links e o HTML para o Google dependem de regras do `vercel.json` que só foram testadas com o pacote de roteamento da
   Vercel e um servidor local (veja [Robôs e prévia de links](#robôs-e-prévia-de-links)): confira depois do deploy.
-- Não há captcha nem pagamento online. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
+- Não há captcha. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
   abas diferentes valem os limites por rede e por telefone.
+- **Pagamento online**: a operadora (ValidaPay) **não está conectada** e nada dela foi testado de verdade (só um simulador); não existem o
+  cadastro da subconta, o cartão online nem o estorno pela API. Se o cartão terá divisão automática da comissão é uma pergunta **em
+  aberto** (depende da documentação oficial). Não há agendador: pedidos online não pagos são encerrados de passagem, quando o painel está
+  aberto ou entra movimento (veja [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)). O checkout não coleta CPF/CNPJ do pagador.
 - A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
   [Segurança](#segurança) e [Privacidade (LGPD)](#privacidade-lgpd)).
 - Acessibilidade: o Hero (aprovado, não alterado) ainda tem apontamentos de leitor de tela (nome do link que não repete o texto
@@ -652,7 +683,8 @@ guardado: [`docs/OPERACAO.md`](docs/OPERACAO.md).
 api/index.ts           função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/routes/         uma pasta de rotas por assunto (public, orders, catalog, content, session, twofactor, account, tracking, customers,
-                       team, audit, privacy, seo, upload, mailadmin)
+                       team, audit, privacy, seo, upload, mailadmin, payments)
+server/payments/       pagamento online: contrato da operadora (types.ts), fábrica (factory.ts: sem operadora ainda), serviço (service.ts)
 server/auth.ts         senhas (scrypt), sessões, limites de tentativa atômicos · passwordPolicy.ts / commonPasswords.ts: regra de senha forte
 server/totp.ts         verificação em duas etapas (TOTP, códigos de recuperação) · adminAccess.ts: aparelhos conhecidos e aviso de acesso novo
 server/audit.ts        registro de atividades do painel · clientIp.ts: IP de quem acessa · images.ts: conferência das imagens enviadas
@@ -672,5 +704,6 @@ src/lib/               cliente da API, tipos, formatação, horários, rotas
 src/admin/             painel (carregado só em /admin)
 tests/                 testes unitários, de API e de navegador, com o servidor de teste (veja tests/README.md)
 docs/OPERACAO.md       variáveis, deploy, monitoramento, backup, o que fazer quando algo quebra, prazos dos dados
+docs/PAGAMENTO-ONLINE.md  Pix online: o que existe, o que falta (ValidaPay), regras, contrato do adaptador, como ligar
 .github/workflows/     ci.yml: tipos, build e testes a cada envio ao GitHub
 ```

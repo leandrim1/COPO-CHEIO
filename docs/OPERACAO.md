@@ -26,6 +26,10 @@ nunca vão para o Git (`.env*` está no `.gitignore`; só o `.env.example` é ve
 
 Definidas pela própria Vercel (não cadastre): `VERCEL`, `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`.
 
+**Pagamento online:** **ainda não existe variável de operadora de pagamento**, porque a ValidaPay não está conectada (o adaptador não foi
+escrito; veja [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md)). Quando existir, as credenciais ficam **só no servidor** (nunca `VITE_`) e os
+nomes entram nesta tabela e no `.env.example`. Não cadastre nada com nome inventado: sem adaptador, nenhuma variável é lida.
+
 **Por que `SITE_URL` importa:** o servidor **nunca** monta o link de um e-mail a partir do que o navegador envia (`Host`,
 `X-Forwarded-Host`). Se montasse, quem pedisse "esqueci a senha" com um cabeçalho forjado faria o e-mail da vítima apontar para um
 site falso. Por isso o endereço vem de `SITE_URL` → domínio de produção da Vercel → endereço do deploy. Em domínio próprio,
@@ -85,6 +89,19 @@ ressalvas que você precisa conhecer:
    site novo entrar no ar e (b) **depois de um rollback do código**. O resto do site (outras categorias) segue normal. Para voltar o código
    sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
    voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
+
+**A migration 0014 (pagamento online).** Segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
+e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
+`pix_online`) e troca cinco funções (`create_order`, `order_json`, `admin_set_order_status`, `admin_set_payment_status`, `admin_dashboard`)
+por versões que se comportam igual para tudo o que já existe. Escreve **uma linha de dados**: o meio `pix_online`, **desligado**. Enquanto
+ele estiver desligado, nenhum cliente vê mudança e nenhum pedido existente é tocado; e ele **não pode ser ligado** sem operadora
+configurada e conta aprovada (a verificação é do servidor novo). Dois cuidados:
+
+1. Depois de um **rollback do código para antes desta versão**, o painel antigo lista "Pix online" entre as formas de pagamento e não
+   conhece essa trava: **não o ligue**. Um pedido assim ficaria "aguardando pagamento" sem tela para pagar (seria cancelado pelo sistema
+   depois de 30 minutos, com o estoque devolvido).
+2. Quando o Pix online for ligado, **recarregue o painel em todos os aparelhos**: uma aba aberta de antes da versão não conhece o status
+   "aguardando pagamento".
 
 **Ver o que está pendente / aplicar manualmente:** `vercel env pull .env.local` e `npm run db:migrate` (aplica no banco do
 `.env.local`; confirme que não é o de produção se estiver testando).
@@ -159,6 +176,10 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | Cliente diz que o pedido "sumiu" | Busque o número em *Pedidos*. Sem o link do acompanhamento, o painel gera um novo (*Pedido → Acompanhamento do cliente*) |
 | Cliente diz que não consegue adicionar ou finalizar um copão ("Escolha o tipo de gelo para continuar.") | É a regra da escolha do gelo. No site novo, a pergunta aparece ao tocar em "Adicionar"; se a pessoa está com uma aba aberta de antes do deploy, basta recarregar. Confira em *Categorias* quais categorias têm "Pede o gelo" (liga e desliga em *Editar*). Depois de um rollback do código, veja o item 3 |
 | Cliente viu o aviso de que o valor mudou ("Confirmar novo total") | É esperado: o total mostrado precisa bater com o do servidor (`409 price_changed`: preço, promoção ou taxa mudaram). A tela mostra o que mudou e pede a confirmação; nenhum pedido foi criado até ali |
+| *Pagamentos* mostra cobranças em "Pedem conferência" (só quando o Pix online estiver ligado) | O dinheiro entrou, mas algo não fecha: pago **depois** de o pedido ser cancelado, pago **em duplicidade**, valor diferente do cobrado, ou repasse da comissão que falhou. O pedido **não** é reaberto sozinho. Nos três primeiros casos há dinheiro do cliente a conferir/devolver: faça pelo painel da operadora (o sistema só registra) e marque como conferido em *Pagamentos*. Se foi só o repasse da comissão que falhou, o pedido segue normal e a comissão fica "Falhou" (não "Efetivada"): resolva com a operadora |
+| Pedido "Aguardando pagamento" parado (só com Pix online ligado) | Normal por até 15 minutos (validade do Pix) + 10 de nova tentativa; depois o pedido é cancelado e o estoque volta. Se ficar mais tempo, abra *Pagamentos → Conferir agora* (não há agendador: a conferência roda quando o painel está aberto ou entra pedido) |
+| Cliente diz que pagou o Pix e o pedido não avançou (só com Pix online ligado) | Em *Pagamentos* (ou no detalhe do pedido), use **Atualizar pagamento** na cobrança (consulta a operadora). Pagamento só conta quando a operadora confirma: ver o QR Code ou a tela "Já paguei" não confirma nada. Confira também se o webhook da operadora está cadastrado e apontando para `/api/payments/webhook` |
+| "O pagamento online não está disponível agora" no checkout | Não há operadora conectada neste servidor (ou ela não respondeu). O Pix online não deve estar ligado sem adaptador: confira *Pagamentos* e desligue o "Pix online no site" até resolver |
 | Pedido de privacidade (LGPD) | *Painel → Clientes → Privacidade*. Responda pelo contato deixado (a política informa até 15 dias). Para quem comprou como visitante, o **owner** usa *Anonimizar uma pessoa* (telefone e/ou e-mail); a conta e os links de acompanhamento são apagados e os pedidos ficam sem dados pessoais (itens, valores, datas e bairro continuam para a contabilidade). Marque como atendido |
 | Suspeita de acesso indevido | 1) Troque a senha do administrador (encerra as sessões). 2) *Configurações → Atividades*: confira entradas e mudanças. 3) Ligue o 2FA. 4) Se houve vazamento de segredo, rotacione (abaixo) |
 | Depois de um deploy algo quebrou | *Vercel → Deployments →* promova o deploy anterior (rollback). O banco não volta; as migrations são compatíveis com a versão anterior |
@@ -200,6 +221,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
    e o pedido de teste mostra a escolha em *Pedidos*.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
+7. Depois da migration 0014: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*,
+   que deve mostrar "Operadora de pagamento: Não conectada". Com Pix online desligado, os pedidos seguem como antes.
 
 ## 9. O que este guia não cobre
 
