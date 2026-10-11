@@ -499,7 +499,7 @@ export function CheckoutPage() {
           </Card>
 
           <Card step={4} title="Pagamento">
-            <div className="grid gap-3 sm:grid-cols-3" role="radiogroup" aria-label="Forma de pagamento">
+            <div className={`grid gap-3 ${paymentOptions.length > 3 ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`} role="radiogroup" aria-label="Forma de pagamento">
               {paymentOptions.map((p) => (
                 <Choice
                   key={p}
@@ -507,12 +507,30 @@ export function CheckoutPage() {
                   value={p}
                   checked={payment === p}
                   onChange={() => set('payment', p)}
-                  icon={p === 'pix' ? <QrCode className="h-5 w-5" aria-hidden="true" /> : p === 'cash' ? <Banknote className="h-5 w-5" aria-hidden="true" /> : <CreditCard className="h-5 w-5" aria-hidden="true" />}
+                  icon={p === 'pix' || p === 'pix_online' ? <QrCode className="h-5 w-5" aria-hidden="true" /> : p === 'cash' ? <Banknote className="h-5 w-5" aria-hidden="true" /> : <CreditCard className="h-5 w-5" aria-hidden="true" />}
                   title={PAYMENT_LABEL[p]}
-                  subtitle={p === 'card' ? (delivery === 'delivery' ? 'Na entrega' : 'Na retirada') : p === 'pix' ? (pixKey ? 'Chave na confirmação' : 'Combine pelo WhatsApp') : undefined}
+                  subtitle={
+                    p === 'card'
+                      ? delivery === 'delivery'
+                        ? 'Na entrega'
+                        : 'Na retirada'
+                      : p === 'pix'
+                        ? pixKey
+                          ? 'Chave na confirmação'
+                          : 'Combine pelo WhatsApp'
+                        : p === 'pix_online'
+                          ? 'Pague agora, pelo site'
+                          : undefined
+                  }
                 />
               ))}
             </div>
+            {payment === 'pix_online' && (
+              <p className="mt-4 flex items-start gap-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
+                <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
+                <span>Você paga na próxima tela, com QR Code ou Pix copia e cola. O pedido só é enviado para a loja depois que o pagamento for confirmado.</span>
+              </p>
+            )}
             {payment === 'cash' && (
               <Field label="Troco para quanto? (opcional)" error={errors.change} hint="Deixe em branco se não precisar de troco." className="mt-4 sm:max-w-xs">
                 {(p) => <input {...p} value={form.change} onChange={(e) => set('change', e.target.value)} inputMode="decimal" className={FIELD} placeholder="R$ 50,00" />}
@@ -613,7 +631,7 @@ export function CheckoutPage() {
                 ) : priceNotice ? (
                   <>Confirmar novo total · {money(priceNotice.current)}</>
                 ) : (
-                  <>Finalizar pedido · {money(total)}</>
+                  <>{payment === 'pix_online' ? 'Finalizar e pagar com Pix' : 'Finalizar pedido'} · {money(total)}</>
                 )}
               </button>
               <p className="text-center text-xs text-white/60">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>

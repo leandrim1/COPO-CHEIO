@@ -1,4 +1,4 @@
-import { ArrowRight, Bike, CheckCircle2, ChefHat, Clock3, Inbox, PackageCheck, ShieldAlert, ShoppingBag } from 'lucide-react';
+import { ArrowRight, Bike, CheckCircle2, ChefHat, Clock3, Inbox, PackageCheck, ShieldAlert, ShoppingBag, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
@@ -13,6 +13,8 @@ type Dashboard = {
   cards: {
     today_orders: number;
     pending: number;
+    // Pedidos de pagamento online que ainda não foram pagos (não contam como venda nem como "pendentes").
+    awaiting_payment?: number;
     confirmed: number;
     preparing: number;
     out_for_delivery: number;
@@ -109,6 +111,22 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeader title="Dashboard" description={today} />
+
+      {Number(c?.awaiting_payment) > 0 && (
+        <a
+          href="/admin/pedidos?status=awaiting_payment"
+          className="mb-3 flex items-center gap-3 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-[#CFE0FF] transition-colors hover:bg-[#145CFF]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]"
+        >
+          <Wallet className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <strong>
+              {c!.awaiting_payment} {c!.awaiting_payment === 1 ? 'pedido aguarda' : 'pedidos aguardam'} o pagamento do Pix.
+            </strong>{' '}
+            Eles só chegam à loja depois de pagos.
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+        </a>
+      )}
 
       {Number(data?.privacy_open) > 0 && (
         <a

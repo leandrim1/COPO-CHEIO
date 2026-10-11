@@ -105,7 +105,7 @@ export function normalizeHero(raw: unknown): HeroSettings {
 
 const bannerOk = (item: unknown) => isObject(item) && typeof item.id === 'string';
 const zoneOk = (item: unknown) => isObject(item) && typeof item.id === 'string' && typeof item.name === 'string' && item.name.trim() !== '' && Number.isFinite(Number(item.fee));
-const paymentOk = (item: unknown) => isObject(item) && (item.code === 'pix' || item.code === 'cash' || item.code === 'card');
+const paymentOk = (item: unknown) => isObject(item) && (item.code === 'pix' || item.code === 'cash' || item.code === 'card' || item.code === 'pix_online');
 
 type ContentFromApi = {
   store?: unknown;
