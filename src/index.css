@@ -45,6 +45,22 @@
         margin-inline: 1.5rem;
       }
     }
+    /* A página Bebidas, no computador, ganha respiro maior nas laterais (veja WIDE em App.tsx). */
+    @media (min-width: 1024px) {
+      .cc-hscroll::-webkit-scrollbar-track {
+        margin-inline: 2.5rem;
+      }
+    }
+    @media (min-width: 1280px) {
+      .cc-hscroll::-webkit-scrollbar-track {
+        margin-inline: 3.5rem;
+      }
+    }
+    @media (min-width: 1536px) {
+      .cc-hscroll::-webkit-scrollbar-track {
+        margin-inline: 5rem;
+      }
+    }
     /* Firefox não entende ::-webkit-scrollbar */
     @supports (-moz-appearance: none) {
       .cc-hscroll {

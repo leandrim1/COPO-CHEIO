@@ -131,11 +131,20 @@ público continuam funcionando — para guardá-las no Blob, abra o produto e en
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
   quem pediu menos animação e enquanto o mouse ou o teclado está em cima). **Sem banner ativo, ou se a imagem não abrir,
-  a página mostra a capa azul com os gelos, como antes.** Tamanhos ideais: 1200 × 540 px (celular) e 1400 × 420 px
-  (computador). A altura da capa é fixa (a imagem é cortada para caber, sempre centralizada) e os botões "Início" e
-  "Acompanhar" (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas.
-  A capa e o carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o
-  outro é só escolher *Onde aparece* ao editar.
+  a página mostra a capa azul com os gelos, como antes.** Tamanhos ideais: 1200 × 540 px (celular) e 1920 × 480 px
+  (computador, proporção 4:1). No celular e no tablet a altura da capa é fixa e a imagem é cortada para caber, sempre
+  centralizada; no computador (a partir de 1024 px) a capa ocupa a largura toda e mostra a imagem inteira, sem cortes: se
+  a proporção não for a ideal, os lados são preenchidos com a própria imagem desfocada. Os botões "Início" e "Acompanhar"
+  (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas. A capa e o
+  carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o outro é só
+  escolher *Onde aparece* ao editar.
+- **Página Bebidas no computador**: a partir de 1024 px de largura a página ocupa a tela toda (a coluna estreita de 44 rem
+  continua valendo abaixo disso, no celular e no tablet, que não mudam em nada). A capa vira uma faixa em largura total; o
+  cabeçalho da loja (logo, nome, horário, aberto/fechado e busca) fica à esquerda e o carrossel de banners à direita (sem
+  banners, a busca vai para a direita do título); as categorias ficam numa fileira fixa em largura total; os favoritos
+  mostram mais cards por tela; as bebidas se organizam em 2 colunas (3 a partir de 1800 px); o botão "Ver pedido" vai para o
+  canto de baixo, à direita, para não cobrir as categorias nem o meio da página. O respiro das laterais cresce com a tela
+  (2,5 rem, 3,5 rem e 5 rem) e o conteúdo só para de esticar em telas maiores que 1920 px.
 - **Site sempre em dia**: o site lê a API ao abrir e de novo quando a pessoa volta para a aba; guarda uma cópia no
   navegador para abrir rápido.
 - **Textos sem quebrar o layout**: cada texto tem limite de tamanho (no painel, na API e no banco). O "trecho em azul" de

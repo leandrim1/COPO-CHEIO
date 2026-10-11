@@ -151,12 +151,14 @@ export function SoldOutBadge({ className = '' }: { className?: string }) {
   );
 }
 
-export function Footer() {
+// `wide`: no computador (a partir de 1024 px) o rodapé acompanha a largura da página Bebidas (tela toda, com respiro nas laterais).
+export function Footer({ wide = false }: { wide?: boolean } = {}) {
   const { store, logo } = useShop();
   const handle = instagramHandle(store);
+  const lateral = wide ? 'lg:max-w-[120rem] lg:px-10 xl:px-14 2xl:px-20' : 'lg:px-12';
   return (
     <footer className="border-t border-white/10 bg-[#050505] py-10">
-      <div className="mx-auto flex max-w-7xl flex-col items-center gap-6 px-5 text-center sm:px-8 md:flex-row md:justify-between md:text-left lg:px-12">
+      <div className={`mx-auto flex max-w-7xl flex-col items-center gap-6 px-5 text-center sm:px-8 md:flex-row md:justify-between md:text-left ${lateral}`}>
         <a href="/" className="flex items-center gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
           <img src={logo} alt="" width={44} height={44} loading="lazy" className="h-11 w-11 rounded-full object-contain ring-1 ring-white/15" />
           <span className="flex flex-col items-start leading-none">
@@ -192,7 +194,7 @@ export function Footer() {
           )}
         </nav>
       </div>
-      <p className="mx-auto mt-8 max-w-7xl px-5 text-center text-xs text-white/40 sm:px-8 md:text-left lg:px-12">
+      <p className={`mx-auto mt-8 max-w-7xl px-5 text-center text-xs text-white/40 sm:px-8 md:text-left ${lateral}`}>
         © {new Date().getFullYear()} {store.store_name} {store.tagline}. Todos os direitos reservados.
       </p>
     </footer>

@@ -504,7 +504,7 @@ function OpenStatus() {
 
 // ---- Banners (cadastrados no painel) -----------------------------------------------------------
 
-function BannerCarousel({ banners }: { banners: Banner[] }) {
+function BannerCarousel({ banners, className = '' }: { banners: Banner[]; className?: string }) {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
   const current = active < banners.length ? active : 0;
@@ -522,7 +522,7 @@ function BannerCarousel({ banners }: { banners: Banner[] }) {
       aria-roledescription="carrossel"
       onPointerEnter={(e) => e.pointerType === 'mouse' && setPaused(true)}
       onPointerLeave={() => setPaused(false)}
-      className="relative mt-6 aspect-[4/3] overflow-hidden rounded-[1.75rem] border border-white/10 bg-gradient-to-br from-[#145CFF]/40 via-[#0B1230] to-[#050505] shadow-[0_24px_60px_-30px_rgba(20,92,255,0.8)] sm:aspect-[21/8]"
+      className={`relative mt-6 aspect-[4/3] overflow-hidden rounded-[1.75rem] border border-white/10 bg-gradient-to-br from-[#145CFF]/40 via-[#0B1230] to-[#050505] shadow-[0_24px_60px_-30px_rgba(20,92,255,0.8)] sm:aspect-[21/8] ${className}`}
     >
       {banners.map((banner, i) => {
         const isActive = i === current;
@@ -605,13 +605,13 @@ function BannerCarousel({ banners }: { banners: Banner[] }) {
 function CoverDecoration({ visible }: { visible: boolean }) {
   return (
     <div aria-hidden="true" className={`pointer-events-none absolute inset-0 transition-opacity duration-500 ${visible ? 'opacity-100' : 'opacity-0'}`}>
-      <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/30" />
-      <div className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/20" />
-      <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/[0.12]" />
-      <div className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2563FF]/40 blur-3xl" />
-      <IceCube className="left-[14%] top-[34%] h-10 w-10 opacity-60" delay="-2s" />
-      <IceCube className="right-[13%] top-[24%] h-12 w-12 opacity-55" delay="-4s" />
-      <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#050505]/60 to-transparent" />
+      <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/30 lg:h-56 lg:w-56" />
+      <div className="absolute left-1/2 top-1/2 h-72 w-72 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/20 lg:h-[26rem] lg:w-[26rem]" />
+      <div className="absolute left-1/2 top-1/2 h-[26rem] w-[26rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#5B8CFF]/[0.12] lg:h-[40rem] lg:w-[40rem]" />
+      <div className="absolute left-1/2 top-1/2 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#2563FF]/40 blur-3xl lg:h-72 lg:w-72" />
+      <IceCube className="left-[14%] top-[34%] h-10 w-10 opacity-60 lg:h-16 lg:w-16" delay="-2s" />
+      <IceCube className="right-[13%] top-[24%] h-12 w-12 opacity-55 lg:h-20 lg:w-20" delay="-4s" />
+      <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#050505]/60 to-transparent lg:h-24" />
     </div>
   );
 }
@@ -640,9 +640,18 @@ function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isA
         decoding="async"
         onLoad={() => setLoaded(true)}
         onError={() => onBroken(banner)}
-        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 motion-reduce:transition-none ${loaded ? 'opacity-100' : 'opacity-0'}`}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 motion-reduce:transition-none lg:object-contain ${loaded ? 'opacity-100' : 'opacity-0'}`}
       />
     </picture>
+  );
+  // No computador (a partir de 1024 px) a capa é larga e mostra a imagem inteira, sem cortes; o que sobra nos lados é
+  // preenchido com a própria imagem desfocada. No celular e no tablet este elemento nem existe na tela (display: none).
+  const backdrop = (
+    <span
+      aria-hidden="true"
+      className="absolute inset-0 hidden scale-110 bg-cover bg-center opacity-70 blur-2xl lg:block"
+      style={{ backgroundImage: `url("${banner.image_desktop_url ?? banner.image_mobile_url}")` }}
+    />
   );
   const layer = `absolute inset-0 transition-opacity duration-700 motion-reduce:transition-none ${isActive ? 'opacity-100' : 'pointer-events-none opacity-0'}`;
   return banner.link ? (
@@ -654,10 +663,12 @@ function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isA
       tabIndex={isActive ? 0 : -1}
       className={`${layer} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white`}
     >
+      {backdrop}
       {picture}
     </a>
   ) : (
     <div aria-hidden={!isActive} className={layer}>
+      {backdrop}
       {picture}
     </div>
   );
@@ -720,7 +731,7 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
       {/* Um véu no alto mantém "Início" e "Acompanhar" legíveis até sobre uma imagem toda branca. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/45 to-transparent" />
       {many && (
-        <div className="absolute bottom-2 right-3 flex items-center">
+        <div className="absolute bottom-2 right-3 flex items-center lg:bottom-4 lg:right-10">
           {slides.map((banner, i) => (
             <button
               key={banner.id}
@@ -742,6 +753,11 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
 }
 
 // ---- Página Bebidas (/bebidas) -----------------------------------------------------------------
+
+// Largura do conteúdo no computador (a partir de 1024 px): a página usa a tela toda, com um respiro nas laterais que cresce
+// junto com ela, e só para de esticar em telas gigantes (120rem = 1920 px). Abaixo de 1024 px (celular e tablet) nada disto
+// vale: a coluna de 44rem continua a de sempre.
+const WIDE = 'lg:mx-auto lg:max-w-[120rem] lg:px-10 xl:px-14 2xl:px-20';
 
 const categoryId = (name: string) => `cat-${normalizeText(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
 
@@ -834,6 +850,7 @@ function BebidasPage() {
   ].filter(Boolean) as { icon: ReactNode; text: string }[];
   const hours = openHoursSummary(store.opening_hours);
   const loadFailed = failed && products.length === 0;
+  const hasBanners = banners.length > 0;
 
   return (
     <div className="relative min-h-[100dvh] overflow-x-clip bg-[#050505]">
@@ -842,33 +859,38 @@ function BebidasPage() {
         <div className="absolute -right-40 top-2/3 h-96 w-96 rounded-full bg-[#2563FF]/10 blur-3xl cc-glow [animation-delay:2s]" />
       </div>
 
-      <div className="relative mx-auto w-full max-w-[44rem]">
-        <div className="relative h-44 overflow-hidden rounded-b-[2rem] bg-gradient-to-b from-[#0E36B8] via-[#0A2273] to-[#07123A] sm:h-52">
+      <div className="relative mx-auto w-full max-w-[44rem] lg:max-w-none">
+        <div className="relative h-44 overflow-hidden rounded-b-[2rem] bg-gradient-to-b from-[#0E36B8] via-[#0A2273] to-[#07123A] sm:h-52 lg:aspect-[4/1] lg:h-auto lg:max-h-[32rem] lg:w-full">
           <CoverBackground ready={ready} banners={coverBanners} />
           <a
             href="/"
-            className="absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:left-10 lg:top-6 xl:left-14 2xl:left-20"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Início
           </a>
           <a
             href="/acompanhar-pedido"
-            className="absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:right-10 lg:top-6 xl:right-14 2xl:right-20"
           >
             Acompanhar<span className="max-[420px]:sr-only">&nbsp;pedido</span>
           </a>
         </div>
 
-        <div className="px-4 sm:px-6">
+        <div
+          className={`px-4 sm:px-6 ${WIDE} lg:grid lg:items-start lg:gap-x-10 ${
+            hasBanners ? 'lg:grid-cols-[minmax(20rem,5fr)_minmax(0,7fr)]' : 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)]'
+          }`}
+        >
+          <div className="contents lg:col-start-1 lg:row-start-1 lg:block">
           <img
             src={logo}
             alt={`${store.store_name.toUpperCase()} – ${store.tagline}`}
             width={96}
             height={96}
-            className="relative -mt-12 h-24 w-24 rounded-full object-contain shadow-[0_0_50px_-4px_rgba(20,92,255,0.8)] ring-4 ring-[#050505]"
+            className="relative -mt-12 h-24 w-24 rounded-full object-contain shadow-[0_0_50px_-4px_rgba(20,92,255,0.8)] ring-4 ring-[#050505] lg:-mt-16 lg:h-32 lg:w-32"
           />
-          <h1 className="mt-4 text-3xl font-black tracking-tight text-white">
+          <h1 className="mt-4 text-3xl font-black tracking-tight text-white lg:text-4xl">
             <BrandName name={store.store_name} />
           </h1>
           {store.tagline && <p className="mt-0.5 text-sm font-medium text-white/60">{store.tagline}</p>}
@@ -890,7 +912,7 @@ function BebidasPage() {
           </div>
 
           <div className="mt-8">
-            <h2 className="text-balance text-2xl font-black leading-tight tracking-tight text-white sm:text-3xl">
+            <h2 className="text-balance text-2xl font-black leading-tight tracking-tight text-white sm:text-3xl lg:text-3xl xl:text-4xl">
               <Highlight
                 text={site.bebidas_title}
                 highlight={site.bebidas_highlight}
@@ -901,11 +923,16 @@ function BebidasPage() {
               <p className="mt-2 text-balance text-sm leading-relaxed text-white/65 sm:text-[15px]">{site.bebidas_subtitle}</p>
             )}
           </div>
+          </div>
 
-          <BannerCarousel banners={banners} />
+          <BannerCarousel banners={banners} className="lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start" />
 
           {ready && products.length > 0 && (
-            <label className="relative mt-6 block">
+            <label
+              className={`relative mt-6 block ${
+                hasBanners ? 'lg:col-start-1 lg:row-start-2' : 'lg:col-start-2 lg:row-start-1 lg:mt-0 lg:self-end'
+              }`}
+            >
               <span className="sr-only">Buscar no cardápio</span>
               <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-white/40" aria-hidden="true" />
               <input
@@ -925,7 +952,7 @@ function BebidasPage() {
               ref={chipsRef}
               role="group"
               aria-label="Categorias"
-              className="cc-hscroll relative flex gap-2 overflow-x-auto px-4 py-3 sm:px-6 [@media(hover:hover)_and_(pointer:fine)]:pb-1.5"
+              className={`cc-hscroll relative flex gap-2 overflow-x-auto px-4 py-3 sm:px-6 [@media(hover:hover)_and_(pointer:fine)]:pb-1.5 ${WIDE}`}
             >
               {groups.map(([name]) => {
                 const current = name === activeCategory;
@@ -949,9 +976,9 @@ function BebidasPage() {
           </div>
         )}
 
-        <div className="px-4 pb-32 pt-2 sm:px-6">
+        <div className={`px-4 pb-32 pt-2 sm:px-6 ${WIDE}`}>
           {!ready && !loadFailed && (
-            <ul className="mt-6 space-y-3" aria-busy="true">
+            <ul className="mt-6 space-y-3 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 min-[1800px]:grid-cols-3" aria-busy="true">
               {Array.from({ length: 5 }, (_, i) => (
                 <SkeletonRow key={i} />
               ))}
@@ -959,7 +986,7 @@ function BebidasPage() {
           )}
 
           {loadFailed && (
-            <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12" role="alert">
+            <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12 lg:mx-auto lg:max-w-3xl" role="alert">
               <h3 className="text-xl font-black text-white">Não conseguimos carregar o cardápio</h3>
               <p className="mx-auto mt-2 max-w-md text-white/65">Verifique sua conexão e tente de novo, ou fale com a gente pelo WhatsApp.</p>
               <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
@@ -981,7 +1008,7 @@ function BebidasPage() {
           )}
 
           {ready && !loadFailed && products.length === 0 && (
-            <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12">
+            <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12 lg:mx-auto lg:max-w-3xl">
               <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#145CFF]/15 text-[#2563FF] shadow-[0_0_40px_-8px_rgba(20,92,255,0.8)] ring-1 ring-[#145CFF]/40">
                 <GlassWater className="h-8 w-8" aria-hidden="true" />
               </div>
@@ -1013,14 +1040,14 @@ function BebidasPage() {
                 <Flame className="h-5 w-5 text-[#2563FF]" aria-hidden="true" />
                 {site.featured_title}
               </h2>
-              <ul className="cc-hscroll cc-hsnap -mx-4 mt-4 flex gap-3 overflow-x-auto px-4 pb-10 sm:-mx-6 sm:px-6">
+              <ul className="cc-hscroll cc-hsnap -mx-4 mt-4 flex gap-3 overflow-x-auto px-4 pb-10 sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10 xl:-mx-14 xl:px-14 2xl:-mx-20 2xl:px-20">
                 {featured.map((product) => (
                   <FeaturedCard
                     key={product.id}
                     product={product}
                     qty={quantities[product.id] ?? 0}
                     onChange={(qty) => setQty(product.id, qty)}
-                    className="w-[62%] shrink-0 snap-start sm:w-[44%]"
+                    className="w-[62%] shrink-0 snap-start sm:w-[44%] lg:w-72 xl:w-80"
                   />
                 ))}
               </ul>
@@ -1033,7 +1060,7 @@ function BebidasPage() {
                 {name}
                 <span className="text-sm font-medium text-white/40">{items.length}</span>
               </h2>
-              <ul className="mt-4 space-y-3">
+              <ul className="mt-4 space-y-3 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 min-[1800px]:grid-cols-3">
                 {items.map((product) => (
                   <ProductRow
                     key={product.id}
@@ -1048,7 +1075,7 @@ function BebidasPage() {
         </div>
       </div>
 
-      <Footer />
+      <Footer wide />
     </div>
   );
 }
@@ -1294,19 +1321,21 @@ function StickyNav({ visible, count, onOrder }: { visible: boolean; count: numbe
   );
 }
 
-function OrderBar({ show, count, total, onOpen }: { show: boolean; count: number; total: number; onOpen: () => void }) {
+// `corner`: no computador (a partir de 1024 px) o botão vai para o canto de baixo, à direita, em vez do centro, para não cobrir
+// o meio da página (categorias, produtos); a faixa em volta dele deixa passar o clique. No celular continua embaixo, no centro.
+function OrderBar({ show, count, total, onOpen, corner = false }: { show: boolean; count: number; total: number; onOpen: () => void; corner?: boolean }) {
   return (
     <div
       aria-hidden={!show}
       inert={!show}
       className={`fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-[max(1rem,env(safe-area-inset-bottom))] transition-all duration-300 ${
         show ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-6 opacity-0'
-      }`}
+      } ${corner ? 'lg:pointer-events-none lg:justify-end lg:px-8 lg:pb-8' : ''}`}
     >
       <button
         type="button"
         onClick={onOpen}
-        className="group flex w-full max-w-md items-center justify-between gap-4 rounded-full bg-[#145CFF] py-3 pl-4 pr-6 text-white shadow-[0_18px_50px_-12px_rgba(20,92,255,0.95)] ring-1 ring-white/20 transition-all duration-200 hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white active:scale-[0.99]"
+        className={`group flex w-full max-w-md items-center justify-between gap-4 rounded-full bg-[#145CFF] py-3 pl-4 pr-6 text-white shadow-[0_18px_50px_-12px_rgba(20,92,255,0.95)] ring-1 ring-white/20 transition-all duration-200 hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white active:scale-[0.99] ${corner ? 'lg:pointer-events-auto lg:max-w-sm' : ''}`}
       >
         <span className="flex items-center gap-3 font-bold">
           <span className="relative grid h-9 w-9 place-items-center rounded-full bg-white/15">
@@ -1811,7 +1840,7 @@ function PublicSite({ pathname }: { pathname: string }) {
       )}
       {showOrder && (
         <>
-          <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} />
+          <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner={page.name === 'bebidas'} />
           <OrderDrawer open={orderOpen} onClose={closeOrder} />
         </>
       )}

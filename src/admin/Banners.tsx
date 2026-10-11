@@ -39,15 +39,16 @@ const imageOf = (b: Banner, view: 'mobile' | 'desktop' = 'mobile') => (view === 
 
 // ---- A capa como o site mostra -------------------------------------------------------------------
 
-// Medidas da capa no site (px): a altura é fixa e a largura vai até 704 px. A prévia usa as mesmas proporções para
-// mostrar onde ficam os botões "Início" e "Acompanhar" e a logo, que cobrem um pedaço da imagem.
+// Medidas da capa no site (px). Celular: altura fixa e a imagem é cortada para caber. Computador (a partir de 1024 px): a capa
+// ocupa a largura toda na proporção 4:1 e mostra a imagem inteira, com os lados preenchidos pela própria imagem desfocada.
+// A prévia usa as mesmas proporções para mostrar onde ficam os botões "Início" e "Acompanhar" e a logo, que cobrem um pedaço
+// da imagem.
 const COVER_VIEWS = {
-  mobile: { label: 'Celular', width: 390, height: 176, track: 132, logoLeft: 16 },
-  desktop: { label: 'Computador', width: 704, height: 208, track: 200, logoLeft: 24 },
+  mobile: { label: 'Celular', width: 390, height: 176, track: 132, inset: 16, top: 16, logoLeft: 16, logo: 96, whole: false },
+  desktop: { label: 'Computador', width: 1440, height: 360, track: 200, inset: 56, top: 24, logoLeft: 56, logo: 128, whole: true },
 } as const;
 type CoverView = keyof typeof COVER_VIEWS;
-const PILL = { inset: 16, height: 38, home: 100 };
-const LOGO_SIZE = 96;
+const PILL = { height: 38, home: 100 };
 const COVER_BACKDROP = 'bg-gradient-to-b from-[#0E36B8] via-[#0A2273] to-[#07123A]';
 
 const pct = (px: number, of: number) => `${(px / of) * 100}%`;
@@ -79,24 +80,27 @@ function CoverPreview({ mobile, desktop, label }: { mobile: ImageValue; desktop:
       <div className="mx-auto" style={{ maxWidth: v.width, containerType: 'inline-size' }}>
         <div data-testid="cover-preview" className={cx('relative overflow-hidden rounded-b-[1.75rem] border border-white/10', COVER_BACKDROP)} style={{ aspectRatio: `${v.width} / ${v.height}` }}>
           {src ? (
-            <img src={src} alt={label ? `Prévia: ${label}` : 'Prévia do banner da capa'} className="absolute inset-0 h-full w-full object-cover" />
+            <>
+              {v.whole && <span aria-hidden="true" className="absolute inset-0 scale-110 bg-cover bg-center opacity-70 blur-xl" style={{ backgroundImage: `url("${src}")` }} />}
+              <img src={src} alt={label ? `Prévia: ${label}` : 'Prévia do banner da capa'} className={cx('absolute inset-0 h-full w-full', v.whole ? 'object-contain' : 'object-cover')} />
+            </>
           ) : (
             <p className="absolute inset-0 grid place-items-center px-6 text-center text-xs text-white/60">Envie uma imagem para ver a prévia.</p>
           )}
           <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/45 to-transparent" style={{ height: pct(80, v.height) }} />
-          <span aria-hidden="true" className={pill} style={{ left: pct(PILL.inset, v.width), top: pct(PILL.inset, v.height), width: pct(PILL.home, v.width), height: pct(PILL.height, v.height), fontSize }}>
+          <span aria-hidden="true" className={pill} style={{ left: pct(v.inset, v.width), top: pct(v.top, v.height), width: pct(PILL.home, v.width), height: pct(PILL.height, v.height), fontSize }}>
             <span className="inline-flex items-center gap-[0.4em]">
               <ArrowLeft className="h-[1.1em] w-[1.1em]" aria-hidden="true" />
               Início
             </span>
           </span>
-          <span aria-hidden="true" className={pill} style={{ right: pct(PILL.inset, v.width), top: pct(PILL.inset, v.height), width: pct(v.track, v.width), height: pct(PILL.height, v.height), fontSize }}>
+          <span aria-hidden="true" className={pill} style={{ right: pct(v.inset, v.width), top: pct(v.top, v.height), width: pct(v.track, v.width), height: pct(PILL.height, v.height), fontSize }}>
             {view === 'mobile' ? 'Acompanhar' : 'Acompanhar pedido'}
           </span>
           <span
             aria-hidden="true"
             className="absolute grid place-items-center rounded-full bg-[#050505]/90 font-semibold text-white/60 ring-2 ring-white/20"
-            style={{ left: pct(v.logoLeft, v.width), top: pct(v.height - LOGO_SIZE / 2, v.height), width: pct(LOGO_SIZE, v.width), aspectRatio: '1', fontSize }}
+            style={{ left: pct(v.logoLeft, v.width), top: pct(v.height - v.logo / 2, v.height), width: pct(v.logo, v.width), aspectRatio: '1', fontSize }}
           >
             <span className="-translate-y-[1.2em]">logo</span>
           </span>
@@ -269,7 +273,8 @@ export default function BannersPage() {
     setSaving(true);
     const uploaded: string[] = [];
     try {
-      const desktop = await commitImage(draft.desktop, 'banners', 1600);
+      // Na capa a imagem de computador ocupa a tela toda (até 1920 px de largura, mais nas telas densas); no cardápio, 1600 px bastam.
+      const desktop = await commitImage(draft.desktop, 'banners', isCover ? 2000 : 1600);
       if (desktop.uploaded) uploaded.push(desktop.url!);
       // Na capa a imagem de celular ocupa a largura toda de telas de até 3× de densidade (1170 px); no carrossel do cardápio, 1000 px bastam.
       const mobile = await commitImage(draft.mobile, 'banners', isCover ? 1200 : 1000);
@@ -461,15 +466,15 @@ export default function BannersPage() {
                     onChange={(v) => setDraft({ ...draft, mobile: v })}
                     aspect="aspect-[390/176]"
                     fit="cover"
-                    hint="Ideal: 1200 × 540 px. Aparece em telas pequenas."
+                    hint="Ideal: 1200 × 540 px. Aparece no celular (telas até 639 px)."
                   />
                   <ImageInput
                     label="Imagem no computador (opcional)"
                     value={draft.desktop}
                     onChange={(v) => setDraft({ ...draft, desktop: v })}
-                    aspect="aspect-[704/208]"
-                    fit="cover"
-                    hint="Ideal: 1400 × 420 px. Sem ela, usa a do celular."
+                    aspect="aspect-[4/1]"
+                    fit="contain"
+                    hint="Ideal: 1920 × 480 px (4:1), em largura total e sem cortes. Em outra proporção a imagem aparece inteira e os lados são preenchidos com ela desfocada. Sem ela, usa a do celular."
                   />
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
