@@ -3,24 +3,25 @@
 @tailwind utilities;
 
 @layer components {
-  /* Lista que rola na horizontal (ex.: "Os favoritos da galera"). No celular não há barra (o dedo rola e cada item encaixa
-     no lugar). Com mouse, aparece uma barra fina na cor da marca e o encaixe sai: arrastar a barra rola a lista na mesma
-     medida e ela para onde você soltar (com o encaixe, a lista voltaria sozinha para o card mais perto). */
+  /* Lista que rola na horizontal (categorias, "Os favoritos da galera"). No celular não há barra (o dedo rola). Com mouse,
+     aparece uma barra fina na cor da marca, alinhada ao conteúdo (a lista tem 1rem de respiro nas pontas, 1,5rem a partir
+     de 640 px). */
   .cc-hscroll {
-    scroll-snap-type: x mandatory;
     scrollbar-width: none;
-    margin-bottom: -1.5rem;
   }
   .cc-hscroll::-webkit-scrollbar {
     display: none;
   }
 
+  /* Cards que encaixam no lugar ao rolar com o dedo ("Os favoritos da galera"). */
+  .cc-hsnap {
+    scroll-snap-type: x mandatory;
+    margin-bottom: -1.5rem;
+  }
+
   @media (hover: hover) and (pointer: fine) {
     .cc-hscroll {
-      scroll-snap-type: none;
       scrollbar-width: auto;
-      /* a barra ocupa o pé da lista: sobra um pouco mais de espaço antes da próxima seção */
-      margin-bottom: -0.5rem;
     }
     /* Chrome, Edge e Safari */
     .cc-hscroll::-webkit-scrollbar {
@@ -50,6 +51,13 @@
         scrollbar-width: thin;
         scrollbar-color: #2563ff rgb(255 255 255 / 0.1);
       }
+    }
+
+    /* Com mouse o encaixe sai: arrastar a barra rola a lista na mesma medida e ela para onde você soltar (com o encaixe,
+       voltaria sozinha para o card mais perto). A barra ocupa o pé da lista, então sobra um pouco mais de espaço depois. */
+    .cc-hsnap {
+      scroll-snap-type: none;
+      margin-bottom: -0.5rem;
     }
   }
 }

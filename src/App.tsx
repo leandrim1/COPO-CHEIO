@@ -920,12 +920,12 @@ function BebidasPage() {
         </div>
 
         {ready && groups.length > 1 && (
-          <div className="sticky top-0 z-30 mt-5 border-b border-white/10 bg-[#050505]/85 backdrop-blur-xl">
+          <div className="sticky top-0 z-30 mt-5 border-b border-white/10 bg-[#050505]/85 backdrop-blur-xl [@media(hover:hover)_and_(pointer:fine)]:pb-2">
             <div
               ref={chipsRef}
               role="group"
               aria-label="Categorias"
-              className="relative flex gap-2 overflow-x-auto px-4 py-3 [scrollbar-width:none] sm:px-6 [&::-webkit-scrollbar]:hidden"
+              className="cc-hscroll relative flex gap-2 overflow-x-auto px-4 py-3 sm:px-6 [@media(hover:hover)_and_(pointer:fine)]:pb-1.5"
             >
               {groups.map(([name]) => {
                 const current = name === activeCategory;
@@ -1013,7 +1013,7 @@ function BebidasPage() {
                 <Flame className="h-5 w-5 text-[#2563FF]" aria-hidden="true" />
                 {site.featured_title}
               </h2>
-              <ul className="cc-hscroll -mx-4 mt-4 flex gap-3 overflow-x-auto px-4 pb-10 sm:-mx-6 sm:px-6">
+              <ul className="cc-hscroll cc-hsnap -mx-4 mt-4 flex gap-3 overflow-x-auto px-4 pb-10 sm:-mx-6 sm:px-6">
                 {featured.map((product) => (
                   <FeaturedCard
                     key={product.id}
