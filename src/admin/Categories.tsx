@@ -54,6 +54,16 @@ export default function CategoriesPage() {
   };
 
   const toggle = async (row: Row, active: boolean) => {
+    // Esconder uma categoria tira do site todos os produtos dela: antes de fazer, a pessoa precisa saber disso.
+    if (!active && row.products > 0) {
+      const ok = await confirm({
+        title: `Ocultar a categoria “${row.name}”?`,
+        description: `Os ${row.products} produto(s) dela deixam de aparecer no site e não podem ser pedidos. Nada é apagado: ao ativar a categoria de novo, tudo volta.`,
+        confirmLabel: 'Ocultar categoria',
+        tone: 'primary',
+      });
+      if (!ok) return;
+    }
     setRows((list) => list?.map((r) => (r.id === row.id ? { ...r, active } : r)) ?? null);
     const failed = await api.patch(`/api/admin/categories/${row.id}`, { active }).then(
       () => false,
@@ -148,11 +158,11 @@ export default function CategoriesPage() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-semibold text-white">{row.name}</p>
-                  <p className="text-xs text-white/45">
+                  <p className="text-xs text-white/60">
                     {row.products} produto(s) {!row.active && <Badge className="ml-1">Oculta no site</Badge>}
                   </p>
                 </div>
-                <Switch checked={row.active} onChange={(v) => void toggle(row, v)} />
+                <Switch checked={row.active} onChange={(v) => void toggle(row, v)} ariaLabel={`Categoria ${row.name}: ativa no site`} />
                 <IconButton label={`Editar ${row.name}`} onClick={() => (setNameError(''), setEditing({ id: row.id, name: row.name, active: row.active }))}>
                   <Pencil className="h-4 w-4" aria-hidden="true" />
                 </IconButton>

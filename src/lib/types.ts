@@ -81,6 +81,9 @@ export type ProductRecord = {
   active: boolean;
   sold_out: boolean;
   position: number;
+  // Janela da promoção (vazio = sem limite de data).
+  promo_starts_at?: string | null;
+  promo_ends_at?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -177,6 +180,36 @@ export type AdminAccount = {
   active: boolean;
   last_login_at: string | null;
   created_at: string;
+  // Verificação em duas etapas ligada?
+  two_factor?: boolean;
+};
+
+// Histórico de atividades do painel (só o owner vê).
+export type AuditEntry = {
+  id: number;
+  created_at: string;
+  actor_id: string | null;
+  actor_name: string | null;
+  actor_email: string | null;
+  action: string;
+  entity: string | null;
+  entity_id: string | null;
+  summary: string;
+  ip: string | null;
+};
+
+// Pedido de acesso, correção ou exclusão de dados (LGPD).
+export type PrivacyRequest = {
+  id: string;
+  created_at: string;
+  kind: 'access' | 'correction' | 'deletion' | 'other';
+  name: string;
+  contact: string;
+  message: string | null;
+  status: 'open' | 'done' | 'rejected';
+  handled_by_name: string | null;
+  handled_at: string | null;
+  handled_note: string | null;
 };
 
 // O pedido como o cliente vê (POST /api/orders, GET /api/tracking/:código e /api/account/orders/:número).

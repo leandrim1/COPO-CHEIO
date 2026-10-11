@@ -1,8 +1,8 @@
 import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { api, friendlyError } from '../lib/api';
-import { money, moneyInput, normalizeText, parseMoney } from '../lib/format';
+import { ApiError, api, friendlyError } from '../lib/api';
+import { isoToLocal, localToIso, money, moneyInput, normalizeText, parseMoney, promoState } from '../lib/format';
 import { navigate } from '../lib/router';
 import type { Category, ProductRecord } from '../lib/types';
 import { commitImage, discardImages, emptyImage } from './client';
@@ -114,136 +114,246 @@ function useProductActions(reload: () => void) {
   return { remove, duplicate };
 }
 
-// ---- Importar produtos (migração do cardápio antigo) -------------------------------------------
+// ---- Importar produtos (cardápio antigo em JSON ou planilha) ----------------------------------
 
-type ImportRow = { name: string; price: number; category: string; description: string | null; image: string | null; featured: boolean; soldOut: boolean };
+type RawRow = Record<string, unknown>;
+type ImportReport = { index: number; name: string; status: 'created' | 'existing' | 'repeated' | 'invalid'; reason?: string }[];
+type ImportResult = { created: number; categories_created: number; existing: number; repeated: number; skipped: number; report: ImportReport };
 
-function parseImport(text: string): { rows: ImportRow[]; skipped: number } {
-  const raw: unknown = JSON.parse(text);
-  const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { produtos?: unknown }).produtos) ? (raw as { produtos: unknown[] }).produtos : null;
-  if (!list) throw new Error('O arquivo precisa ser uma lista de produtos.');
-  const rows: ImportRow[] = [];
-  let skipped = 0;
-  for (const item of list) {
-    if (!item || typeof item !== 'object') {
-      skipped++;
-      continue;
-    }
-    const p = item as Record<string, unknown>;
-    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-    const name = str(p.name) ?? str(p.nome);
-    const priceRaw = p.price ?? p.preco ?? p['preço'];
-    const price = typeof priceRaw === 'number' ? priceRaw : parseMoney(String(priceRaw ?? ''));
-    if (!name || price === null || Number.isNaN(price) || price < 0) {
-      skipped++;
-      continue;
-    }
-    const available = p.available ?? p.disponivel ?? p['disponível'];
-    rows.push({
-      name: name.slice(0, 80),
-      price: Math.round(price * 100) / 100,
-      category: (str(p.category) ?? str(p.categoria) ?? 'Outros').slice(0, 40),
-      description: (str(p.description) ?? str(p.descricao) ?? str(p['descrição']))?.slice(0, 300) ?? null,
-      image: str(p.image) ?? str(p.imagem),
-      featured: p.featured === true || p.destaque === true,
-      soldOut: available === false || p.soldOut === true || p.esgotado === true,
-    });
+const MAX_IMPORT = 500;
+
+// Nome da coluna (sem acento e em minúsculas) → campo que o servidor entende.
+const COLUMN: Record<string, string> = {
+  nome: 'name', name: 'name', produto: 'name',
+  preco: 'price', price: 'price', valor: 'price',
+  promocao: 'promo_price', promo: 'promo_price', 'preco promocional': 'promo_price', promo_price: 'promo_price',
+  categoria: 'category', category: 'category',
+  descricao: 'description', description: 'description',
+  imagem: 'image', image: 'image', foto: 'image',
+  sku: 'sku', codigo: 'sku',
+  estoque: 'stock', stock: 'stock',
+  destaque: 'featured', featured: 'featured',
+  esgotado: 'sold_out', soldout: 'sold_out', sold_out: 'sold_out',
+};
+
+// Uma planilha colada (CSV com ; ou , ou TAB) vira uma lista de linhas de células. Aspas protegem separadores dentro do texto.
+function splitDelimited(text: string): string[][] {
+  const head = text.split(/\r?\n/, 1)[0] ?? '';
+  const delimiter = ['\t', ';', ','].map((d) => [d, head.split(d).length] as const).sort((a, b) => b[1] - a[1])[0][0];
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  const endRow = () => {
+    row.push(cell);
+    cell = '';
+    if (row.some((c) => c.trim() !== '')) rows.push(row);
+    row = [];
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch !== '"') cell += ch;
+      else if (text[i + 1] === '"') (cell += '"', i++);
+      else quoted = false;
+    } else if (ch === '"' && cell === '') quoted = true;
+    else if (ch === delimiter) (row.push(cell), (cell = ''));
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      endRow();
+    } else cell += ch;
   }
-  return { rows, skipped };
+  endRow();
+  return rows;
 }
+
+const YES = new Set(['sim', 's', 'x', '1', 'true', 'verdadeiro', 'yes']);
+
+function parseImport(text: string): { rows: RawRow[]; format: 'json' | 'planilha' } {
+  const trimmed = text.trim();
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    const raw: unknown = JSON.parse(trimmed);
+    const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { produtos?: unknown }).produtos) ? (raw as { produtos: unknown[] }).produtos : null;
+    if (!list) throw new Error('O arquivo precisa ser uma lista de produtos.');
+    const rows = list.map((item): RawRow => {
+      if (!item || typeof item !== 'object') return {};
+      const p = item as Record<string, unknown>;
+      const pick = (...keys: string[]) => keys.map((k) => p[k]).find((v) => v !== undefined && v !== null && v !== '');
+      const available = pick('available', 'disponivel', 'disponível');
+      return {
+        name: pick('name', 'nome'),
+        price: pick('price', 'preco', 'preço'),
+        promo_price: pick('promo_price', 'promocao', 'promoção'),
+        category: pick('category', 'categoria'),
+        description: pick('description', 'descricao', 'descrição'),
+        image: pick('image', 'imagem'),
+        sku: pick('sku'),
+        stock: pick('stock', 'estoque'),
+        featured: p.featured === true || p.destaque === true,
+        sold_out: available === false || p.soldOut === true || p.esgotado === true || p.sold_out === true,
+      };
+    });
+    return { rows, format: 'json' };
+  }
+  const table = splitDelimited(trimmed);
+  if (table.length < 2) throw new Error('A planilha precisa de uma linha de títulos (nome, preço, categoria…) e pelo menos um produto.');
+  const fields = table[0].map((title) => COLUMN[normalizeText(title.trim())] ?? '');
+  if (!fields.includes('name') || !fields.includes('price')) throw new Error('A primeira linha precisa ter as colunas “nome” e “preço”.');
+  const rows = table.slice(1).map((cells): RawRow => {
+    const row: RawRow = {};
+    fields.forEach((field, i) => {
+      const value = (cells[i] ?? '').trim();
+      if (!field || value === '') return;
+      if (field === 'featured' || field === 'sold_out') row[field] = YES.has(normalizeText(value));
+      else if (field === 'price' || field === 'promo_price') row[field] = value.replace(/[^\d.,-]/g, '');
+      else row[field] = value;
+    });
+    return row;
+  });
+  return { rows, format: 'planilha' };
+}
+
+const STATUS_LABEL: Record<ImportReport[number]['status'], string> = { created: 'Criado', existing: 'Já existia', repeated: 'Repetido', invalid: 'Com problema' };
 
 function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
   const toast = useToast();
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [result, setResult] = useState<{ data: ImportResult; format: 'json' | 'planilha' } | null>(null);
   const preview = useMemo(() => {
     if (!text.trim()) return null;
     try {
-      return parseImport(text);
+      const parsed = parseImport(text);
+      if (parsed.rows.length > MAX_IMPORT) return { error: `Envie até ${MAX_IMPORT} produtos por vez (o arquivo tem ${parsed.rows.length}).` };
+      return parsed;
     } catch (e) {
-      return { error: e instanceof Error && e.message.startsWith('O arquivo') ? e.message : 'JSON inválido. Confira o conteúdo.' };
+      return { error: e instanceof Error && /^(O arquivo|A planilha|A primeira)/.test(e.message) ? e.message : 'Não consegui ler o conteúdo. Confira o formato.' };
     }
   }, [text]);
+
+  const close = () => {
+    setResult(null);
+    setError('');
+    onClose();
+  };
 
   const run = async () => {
     if (!preview || 'error' in preview) return;
     setBusy(true);
     setError('');
     try {
-      const result = await api.post<{ created: number; existing: number }>('/api/admin/products/import', {
-        rows: preview.rows.map((r) => ({
-          name: r.name,
-          price: r.price,
-          category: r.category === 'Outros' ? null : r.category,
-          description: r.description,
-          image: r.image,
-          featured: r.featured,
-          sold_out: r.soldOut,
-        })),
-      });
-      toast.success(`${result.created} produto(s) importado(s).`, result.existing ? `${result.existing} já existiam e foram mantidos.` : undefined);
+      const data = await api.post<ImportResult>('/api/admin/products/import', { rows: preview.rows });
+      setResult({ data, format: preview.format });
       setText('');
       onDone();
-      onClose();
+      toast.success(`${data.created} produto(s) importado(s).`, data.skipped ? `${data.skipped} linha(s) com problema: veja o relatório.` : undefined);
     } catch (err) {
-      setError(friendlyError(err, 'Não foi possível importar os produtos.'));
+      // Nenhuma linha valia: o servidor devolve o relatório mesmo assim, para a pessoa saber o motivo de cada uma.
+      const report = err instanceof ApiError ? (err.data.report as ImportReport | undefined) : undefined;
+      if (report && preview) setResult({ data: { created: 0, categories_created: 0, existing: 0, repeated: 0, skipped: report.length, report }, format: preview.format });
+      else setError(friendlyError(err, 'Não foi possível importar os produtos.'));
     } finally {
       setBusy(false);
     }
   };
 
+  const problems = result?.data.report.filter((item) => item.status !== 'created') ?? [];
+  const unit = result?.format === 'json' ? 'Item' : 'Linha';
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={close}
       size="lg"
-      title="Importar produtos"
-      description="Traga os produtos do cardápio antigo (formato do produtos.json). Nada é apagado: produtos com o mesmo nome e categoria são mantidos."
+      title={result ? 'Resultado da importação' : 'Importar produtos'}
+      description={
+        result ? undefined : 'Traga produtos de um arquivo JSON (formato do produtos.json) ou cole uma planilha (CSV ou colunas copiadas do Excel). Nada é apagado: produtos com o mesmo nome e categoria são mantidos.'
+      }
       footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancelar
-          </Button>
-          <Button loading={busy} disabled={!preview || 'error' in preview || preview.rows.length === 0} onClick={() => void run()}>
-            Importar {preview && !('error' in preview) ? preview.rows.length : ''} produtos
-          </Button>
-        </>
+        result ? (
+          <Button onClick={close}>Fechar</Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={close}>
+              Cancelar
+            </Button>
+            <Button loading={busy} disabled={!preview || 'error' in preview || preview.rows.length === 0} onClick={() => void run()}>
+              Importar {preview && !('error' in preview) ? preview.rows.length : ''} produtos
+            </Button>
+          </>
+        )
       }
     >
-      <div className="space-y-3">
-        <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-4 py-3 text-sm font-semibold text-white/70 hover:border-[#2563FF] hover:text-white">
-          <FileUp className="h-4 w-4" aria-hidden="true" />
-          Escolher arquivo .json
-          <input
-            type="file"
-            accept="application/json,.json"
-            className="sr-only"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void file.text().then(setText);
-              e.target.value = '';
-            }}
+      {result ? (
+        <div className="space-y-3">
+          <ul className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            {[
+              ['Criados', result.data.created, 'text-emerald-200'],
+              ['Já existiam', result.data.existing, 'text-white'],
+              ['Repetidos', result.data.repeated, 'text-white'],
+              ['Com problema', result.data.skipped, result.data.skipped ? 'text-amber-200' : 'text-white'],
+            ].map(([label, value, tone]) => (
+              <li key={String(label)} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                <p className={cx('text-2xl font-black tabular-nums', String(tone))}>{String(value)}</p>
+                <p className="text-xs text-white/65">{String(label)}</p>
+              </li>
+            ))}
+          </ul>
+          {result.data.categories_created > 0 && <p className="text-sm text-white/70">{result.data.categories_created} categoria(s) nova(s) criada(s).</p>}
+          {problems.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-sm font-semibold text-white">O que não entrou, e por quê</p>
+              <ul className="max-h-64 divide-y divide-white/[0.06] overflow-y-auto rounded-xl border border-white/10" aria-label="Itens que não foram criados">
+                {problems.map((item) => (
+                  <li key={`${item.index}-${item.status}`} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2 text-sm">
+                    <span className="w-16 shrink-0 text-xs tabular-nums text-white/60">
+                      {unit} {item.index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1 break-words text-white/85">{item.name || '(sem nome)'}</span>
+                    <Badge tone={item.status === 'invalid' ? 'amber' : 'gray'}>{STATUS_LABEL[item.status]}</Badge>
+                    {item.reason && <span className="basis-full text-xs text-white/65 sm:ml-[4.75rem]">{item.reason}</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 px-4 py-3 text-sm font-semibold text-white/70 hover:border-[#2563FF] hover:text-white">
+            <FileUp className="h-4 w-4" aria-hidden="true" />
+            Escolher arquivo (.json, .csv ou .txt)
+            <input
+              type="file"
+              accept="application/json,.json,text/csv,.csv,text/plain,.txt,.tsv"
+              className="sr-only"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void file.text().then(setText);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={9}
+            spellCheck={false}
+            aria-label="Conteúdo a importar (JSON ou planilha)"
+            placeholder={'Planilha (primeira linha com os títulos):\nnome;preço;categoria;estoque\nCoca-Cola 2L;12,50;Refrigerantes;24\n\nou JSON:\n[{ "name": "Coca-Cola 2L", "price": 12.5, "category": "Refrigerantes" }]'}
+            className={cx(INPUT, 'font-mono text-xs')}
           />
-        </label>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={9}
-          spellCheck={false}
-          aria-label="Conteúdo JSON dos produtos"
-          placeholder={'[\n  { "name": "Coca-Cola 2L", "price": 12, "category": "Refrigerantes", "image": "https://...", "description": "..." }\n]'}
-          className={cx(INPUT, 'font-mono text-xs')}
-        />
-        {preview && 'error' in preview && <p className="text-sm text-rose-300">{preview.error}</p>}
-        {preview && !('error' in preview) && (
-          <p className="text-sm text-white/65">
-            {preview.rows.length} produto(s) prontos em {new Set(preview.rows.map((r) => r.category)).size} categoria(s)
-            {preview.skipped ? ` · ${preview.skipped} ignorado(s) sem nome ou preço` : ''}.
-          </p>
-        )}
-        {error && <p className="text-sm text-rose-300">{error}</p>}
-      </div>
+          <p className="text-xs text-white/60">Colunas aceitas: nome, preço, preço promocional, categoria, descrição, imagem (endereço), SKU, estoque, destaque e esgotado (sim/não). Até {MAX_IMPORT} produtos por vez.</p>
+          {preview && 'error' in preview && <p className="text-sm text-rose-300">{preview.error}</p>}
+          {preview && !('error' in preview) && (
+            <p className="text-sm text-white/70">
+              {preview.rows.length} {preview.format === 'json' ? 'item(ns)' : 'linha(s)'} lido(s). Cada uma é conferida pelo servidor: o relatório mostra o que entrou e o que ficou de fora.
+            </p>
+          )}
+          {error && <p className="text-sm text-rose-300">{error}</p>}
+        </div>
+      )}
     </Modal>
   );
 }
@@ -312,20 +422,28 @@ export function ProductsPage() {
     void patch(p, { featured: !p.featured }, p.featured ? 'Produto removido dos destaques.' : 'Produto marcado como destaque.');
   };
 
+  const categoryLabel = (p: ProductRecord) => (p.category_id ? (categoryName.get(p.category_id)?.name ?? '—') : 'Outros');
+  // Produto numa categoria oculta não aparece no site, mesmo ativo e com estoque.
+  const hiddenByCategory = (p: ProductRecord) => Boolean(p.category_id && categoryName.get(p.category_id)?.active === false);
+
   const statusBadges = (p: ProductRecord) => (
     <div className="flex flex-wrap gap-1">
       {!p.active && <Badge>Inativo</Badge>}
       {isSoldOut(p) && <Badge tone="red">Esgotado</Badge>}
       {p.featured && <Badge tone="blue">Destaque</Badge>}
-      {p.active && !isSoldOut(p) && <Badge tone="green">Disponível</Badge>}
+      {promoState(p) === 'scheduled' && <Badge tone="violet">Promoção agendada</Badge>}
+      {promoState(p) === 'expired' && <Badge>Promoção encerrada</Badge>}
+      {p.active && hiddenByCategory(p) && <Badge tone="amber">Categoria oculta</Badge>}
+      {p.active && !hiddenByCategory(p) && !isSoldOut(p) && <Badge tone="green">Disponível</Badge>}
     </div>
   );
 
+  // O preço riscado só aparece enquanto a promoção está valendo (agendada ou encerrada, vale o preço normal).
   const price = (p: ProductRecord) =>
-    p.promo_price !== null ? (
+    promoState(p) === 'active' ? (
       <span>
         <span className="font-bold text-white">{money(Number(p.promo_price))}</span>{' '}
-        <s className="text-xs text-white/40">{money(Number(p.price))}</s>
+        <s className="text-xs text-white/60">{money(Number(p.price))}</s>
       </span>
     ) : (
       <span className="font-bold text-white">{money(Number(p.price))}</span>
@@ -351,7 +469,7 @@ export function ProductsPage() {
       <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto]">
         <label className="relative block">
           <span className="sr-only">Buscar produtos</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" aria-hidden="true" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar por nome ou SKU" className={cx(INPUT, 'pl-9')} />
         </label>
         <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Filtrar por categoria" className={cx(INPUT, 'sm:w-48')}>
@@ -405,14 +523,25 @@ export function ProductsPage() {
       ) : (
         <>
           <div className="hidden overflow-visible rounded-2xl border border-white/[0.08] bg-[#0C1018] lg:block">
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-white/[0.06] text-xs uppercase tracking-wide text-white/45">
+            {/* Colunas de largura fixa: o nome (a única coluna flexível) é cortado com "…" em vez de empurrar "Ativo" e "Ações" para fora
+                da tela. Categoria, estoque e situação ganham coluna própria só a partir de 1536 px; antes disso aparecem sob o nome. */}
+            <table className="w-full table-fixed text-left text-sm">
+              <colgroup>
+                <col />
+                <col className="hidden w-36 2xl:table-column" />
+                <col className="w-36" />
+                <col className="hidden w-20 2xl:table-column" />
+                <col className="hidden w-44 2xl:table-column" />
+                <col className="w-20" />
+                <col className="w-60" />
+              </colgroup>
+              <thead className="border-b border-white/[0.06] text-xs uppercase tracking-wide text-white/60">
                 <tr>
                   <th scope="col" className="px-4 py-3 font-semibold">Produto</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">Categoria</th>
+                  <th scope="col" className="hidden px-4 py-3 font-semibold 2xl:table-cell">Categoria</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Preço</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">Estoque</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">Situação</th>
+                  <th scope="col" className="hidden px-4 py-3 font-semibold 2xl:table-cell">Estoque</th>
+                  <th scope="col" className="hidden px-4 py-3 font-semibold 2xl:table-cell">Situação</th>
                   <th scope="col" className="px-4 py-3 font-semibold">Ativo</th>
                   <th scope="col" className="px-4 py-3 text-right font-semibold">Ações</th>
                 </tr>
@@ -421,22 +550,27 @@ export function ProductsPage() {
                 {visible.map((p) => (
                   <tr key={p.id} className={cx('hover:bg-white/[0.02]', !p.active && 'opacity-60')}>
                     <td className="px-4 py-2.5">
-                      <a href={`/admin/produtos/${p.id}`} className="flex items-center gap-3">
+                      <a href={`/admin/produtos/${p.id}`} title={p.name} className="flex items-center gap-3">
                         <Thumb url={p.image_url} name={p.name} soldOut={isSoldOut(p)} />
-                        <span className="min-w-0">
-                          <span className="block truncate font-semibold text-white hover:text-[#8FB1FF]">{p.name}</span>
-                          {p.sku && <span className="block text-xs text-white/40">SKU {p.sku}</span>}
-                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-white hover:text-[#8FB1FF]">{p.name}</p>
+                          {p.sku && <p className="truncate text-xs text-white/60">SKU {p.sku}</p>}
+                          <p className="truncate text-xs text-white/60 2xl:hidden">
+                            {categoryLabel(p)}
+                            {p.stock !== null ? ` · estoque ${p.stock}` : ''}
+                          </p>
+                          <div className="mt-1 2xl:hidden">{statusBadges(p)}</div>
+                        </div>
                       </a>
                     </td>
-                    <td className="px-4 py-2.5 text-white/65">{p.category_id ? (categoryName.get(p.category_id)?.name ?? '—') : 'Outros'}</td>
+                    <td className="hidden truncate px-4 py-2.5 text-white/70 2xl:table-cell">{categoryLabel(p)}</td>
                     <td className="px-4 py-2.5">{price(p)}</td>
-                    <td className="px-4 py-2.5 tabular-nums text-white/70">{p.stock === null ? <span className="text-white/35">—</span> : p.stock}</td>
-                    <td className="px-4 py-2.5">{statusBadges(p)}</td>
+                    <td className="hidden px-4 py-2.5 tabular-nums text-white/70 2xl:table-cell">{p.stock === null ? <span className="text-white/55">—</span> : p.stock}</td>
+                    <td className="hidden px-4 py-2.5 2xl:table-cell">{statusBadges(p)}</td>
                     <td className="px-4 py-2.5">
-                      <Switch checked={p.active} onChange={(v) => void patch(p, { active: v }, v ? 'Produto ativado no site.' : 'Produto desativado: saiu do site.')} label={undefined} />
+                      <Switch checked={p.active} onChange={(v) => void patch(p, { active: v }, v ? 'Produto ativado no site.' : 'Produto desativado: saiu do site.')} ariaLabel={`${p.name}: ativo no site`} />
                     </td>
-                    <td className="px-4 py-2.5">
+                    <td className="px-2 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
                           type="button"
@@ -444,7 +578,7 @@ export function ProductsPage() {
                           aria-pressed={p.featured}
                           aria-label={p.featured ? `Tirar ${p.name} dos destaques` : `Destacar ${p.name}`}
                           title={p.featured ? 'Tirar dos destaques' : 'Marcar como destaque'}
-                          className={cx('grid h-9 w-9 place-items-center rounded-xl hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]', p.featured ? 'text-amber-300' : 'text-white/40')}
+                          className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-xl hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]', p.featured ? 'text-amber-300' : 'text-white/55')}
                         >
                           <Star className="h-[18px] w-[18px]" fill={p.featured ? 'currentColor' : 'none'} aria-hidden="true" />
                         </button>
@@ -468,7 +602,7 @@ export function ProductsPage() {
                     <Thumb url={p.image_url} name={p.name} soldOut={isSoldOut(p)} />
                     <span className="min-w-0">
                       <span className="block truncate font-semibold text-white">{p.name}</span>
-                      <span className="block text-xs text-white/45">
+                      <span className="block text-xs text-white/60">
                         {p.category_id ? (categoryName.get(p.category_id)?.name ?? '—') : 'Outros'}
                         {p.stock !== null ? ` · estoque ${p.stock}` : ''}
                       </span>
@@ -485,14 +619,14 @@ export function ProductsPage() {
                       onClick={() => toggleFeatured(p)}
                       aria-pressed={p.featured}
                       aria-label={p.featured ? `Tirar ${p.name} dos destaques` : `Destacar ${p.name}`}
-                      className={cx('grid h-9 w-9 place-items-center rounded-xl hover:bg-white/[0.08]', p.featured ? 'text-amber-300' : 'text-white/40')}
+                      className={cx('grid h-9 w-9 place-items-center rounded-xl hover:bg-white/[0.08]', p.featured ? 'text-amber-300' : 'text-white/60')}
                     >
                       <Star className="h-[18px] w-[18px]" fill={p.featured ? 'currentColor' : 'none'} aria-hidden="true" />
                     </button>
                     <Button size="sm" variant="ghost" onClick={() => void patch(p, { sold_out: !p.sold_out }, p.sold_out ? 'Produto disponível novamente.' : 'Produto marcado como esgotado.')}>
                       {p.sold_out ? 'Disponibilizar' : 'Esgotar'}
                     </Button>
-                    <Switch checked={p.active} onChange={(v) => void patch(p, { active: v }, v ? 'Produto ativado no site.' : 'Produto desativado: saiu do site.')} />
+                    <Switch checked={p.active} onChange={(v) => void patch(p, { active: v }, v ? 'Produto ativado no site.' : 'Produto desativado: saiu do site.')} ariaLabel={`${p.name}: ativo no site`} />
                   </div>
                 </div>
               </li>
@@ -513,6 +647,8 @@ type Form = {
   description: string;
   price: string;
   promo: string;
+  promoFrom: string;
+  promoUntil: string;
   category_id: string;
   sku: string;
   trackStock: boolean;
@@ -529,6 +665,8 @@ const EMPTY_FORM: Form = {
   description: '',
   price: '',
   promo: '',
+  promoFrom: '',
+  promoUntil: '',
   category_id: '',
   sku: '',
   trackStock: false,
@@ -543,6 +681,7 @@ const EMPTY_FORM: Form = {
 export function ProductFormPage({ id }: { id: string }) {
   const isNew = id === 'novo';
   const toast = useToast();
+  const confirm = useConfirm();
   const [original, setOriginal] = useState<ProductRecord | null>(null);
   const [form, setForm] = useState<Form | null>(isNew ? EMPTY_FORM : null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -581,6 +720,8 @@ export function ProductFormPage({ id }: { id: string }) {
         description: product.description ?? '',
         price: moneyInput(Number(product.price)),
         promo: moneyInput(product.promo_price === null ? null : Number(product.promo_price)),
+        promoFrom: isoToLocal(product.promo_starts_at),
+        promoUntil: isoToLocal(product.promo_ends_at),
         category_id: product.category_id ?? '',
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
@@ -632,8 +773,13 @@ export function ProductFormPage({ id }: { id: string }) {
     const stock = form.trackStock ? Number(form.stock || '0') : null;
     const position = Number(form.position || '0');
     if (!form.name.trim()) next.name = 'Informe o nome.';
-    if (price === null || Number.isNaN(price)) next.price = 'Informe o preço. Ex.: 12,50';
-    if (promo !== null && (Number.isNaN(promo) || (price !== null && promo >= price))) next.promo = 'O preço promocional precisa ser menor que o preço.';
+    if (price === null || Number.isNaN(price) || price <= 0) next.price = 'Informe um preço maior que zero. Ex.: 12,50';
+    if (promo !== null && (Number.isNaN(promo) || promo <= 0 || (price !== null && !Number.isNaN(price) && promo >= price))) next.promo = promo !== null && promo <= 0 ? 'O preço promocional precisa ser maior que zero.' : 'O preço promocional precisa ser menor que o preço.';
+    const promoFrom = promo !== null && form.promoFrom ? localToIso(form.promoFrom) : null;
+    const promoUntil = promo !== null && form.promoUntil ? localToIso(form.promoUntil) : null;
+    if (promo !== null && form.promoFrom && !promoFrom) next.promoFrom = 'Data inválida.';
+    if (promo !== null && form.promoUntil && !promoUntil) next.promoUntil = 'Data inválida.';
+    if (promoFrom && promoUntil && new Date(promoUntil) <= new Date(promoFrom)) next.promoUntil = 'O fim precisa ser depois do início.';
     if (stock !== null && (!Number.isInteger(stock) || stock < 0)) next.stock = 'Use um número inteiro (0 ou mais).';
     if (!Number.isInteger(position)) next.position = 'Use um número inteiro.';
     setErrors(next);
@@ -656,6 +802,9 @@ export function ProductFormPage({ id }: { id: string }) {
       description: form.description.trim() || null,
       price: price!,
       promo_price: promo,
+      // Sem preço promocional, as datas não valem: o servidor também zera.
+      promo_starts_at: promo === null ? null : promoFrom,
+      promo_ends_at: promo === null ? null : promoUntil,
       category_id: form.category_id || null,
       sku: form.sku.trim() || null,
       stock,
@@ -665,10 +814,29 @@ export function ProductFormPage({ id }: { id: string }) {
       position,
       image_url: image.url,
     };
-    try {
+    const send = (extra: { confirm_duplicate?: boolean } = {}) =>
       // A URL do Blob fica no Neon; o servidor apaga do Blob a foto antiga que ficou sem uso.
-      if (isNew) await api.post('/api/admin/products', row);
-      else await api.patch(`/api/admin/products/${id}`, row);
+      isNew ? api.post('/api/admin/products', { ...row, ...extra }) : api.patch(`/api/admin/products/${id}`, { ...row, ...extra });
+    try {
+      try {
+        await send();
+      } catch (err) {
+        // Já existe outro produto com este nome nesta categoria: só cadastra se a pessoa confirmar.
+        if (err instanceof ApiError && err.code === 'duplicate_product') {
+          const again = await confirm({
+            title: 'Já existe um produto com este nome',
+            description: `${err.message} Duplicados confundem o cliente e o estoque.`,
+            confirmLabel: 'Salvar mesmo assim',
+            tone: 'primary',
+          });
+          if (!again) {
+            setSaving(false);
+            if (image.uploaded) await discardImages([image.url]);
+            return;
+          }
+          await send({ confirm_duplicate: true });
+        } else throw err;
+      }
     } catch (err) {
       setSaving(false);
       if (image.uploaded) await discardImages([image.url]);
@@ -722,6 +890,16 @@ export function ProductFormPage({ id }: { id: string }) {
               <Field label="Preço promocional" error={errors.promo} hint="Opcional. O site mostra o preço antigo riscado.">
                 {(p) => <input {...p} value={form.promo} inputMode="decimal" onChange={(e) => set('promo', e.target.value)} className={INPUT} placeholder="0,00" />}
               </Field>
+              {form.promo.trim() !== '' && (
+                <>
+                  <Field label="A promoção começa em" error={errors.promoFrom} hint="Opcional. Vazio = já vale. Horário de Brasília.">
+                    {(p) => <input {...p} type="datetime-local" value={form.promoFrom} onChange={(e) => set('promoFrom', e.target.value)} className={cx(INPUT, '[color-scheme:dark]')} />}
+                  </Field>
+                  <Field label="A promoção termina em" error={errors.promoUntil} hint="Opcional. Vazio = sem data para acabar. Depois dela, volta o preço normal sozinho.">
+                    {(p) => <input {...p} type="datetime-local" value={form.promoUntil} onChange={(e) => set('promoUntil', e.target.value)} className={cx(INPUT, '[color-scheme:dark]')} />}
+                  </Field>
+                </>
+              )}
               <Field label="Categoria" className="sm:col-span-2" hint={newCategory === null ? 'Sem categoria, o produto aparece em “Outros”.' : undefined}>
                 {(p) =>
                   newCategory === null ? (

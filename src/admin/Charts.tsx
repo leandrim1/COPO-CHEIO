@@ -74,11 +74,11 @@ export function ColumnChart({
     <div>
       <div ref={wrapRef} className="relative w-full" style={{ height }}>
         {width > 0 && (
-          <svg width={width} height={height} role="img" aria-label={`${title}. Valores na tabela abaixo.`} className="block">
+          <svg width={width} height={height} role="group" aria-label={`${title}. Valores também na tabela abaixo.`} className="block">
             {ticks.map((t) => (
               <g key={t}>
                 <line x1={left} x2={width} y1={y(t)} y2={y(t)} stroke={GRID} strokeWidth={1} />
-                <text x={left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-white/40 text-[10px] tabular-nums">
+                <text x={left - 8} y={y(t)} dy="0.32em" textAnchor="end" className="fill-white/60 text-[10px] tabular-nums">
                   {axisFormat(t)}
                 </text>
               </g>
@@ -90,7 +90,7 @@ export function ColumnChart({
                 <g key={d.label}>
                   {h > 0 && <path d={columnPath(x, y(d.value), barW, h)} fill={hover === i ? BAR_HOVER : BAR} />}
                   {i % labelEvery === 0 && (
-                    <text x={left + i * band + band / 2} y={height - 8} textAnchor="middle" className="fill-white/40 text-[10px]">
+                    <text x={left + i * band + band / 2} y={height - 8} textAnchor="middle" className="fill-white/60 text-[10px]">
                       {d.tick}
                     </text>
                   )}
@@ -101,6 +101,7 @@ export function ColumnChart({
                     height={plotH}
                     fill="transparent"
                     tabIndex={0}
+                    role="img"
                     aria-label={`${d.label}: ${format(d.value)}`}
                     onPointerEnter={() => setHover(i)}
                     onPointerLeave={() => setHover(null)}
@@ -154,7 +155,7 @@ export function BarList({ rows }: { rows: { label: string; value: number; valueT
         <li key={row.label} title={row.detail ? `${row.label}: ${row.valueText} · ${row.detail}` : undefined}>
           <div className="flex items-baseline justify-between gap-3 text-sm">
             <span className="min-w-0 truncate font-medium text-white/85">
-              <span className="mr-2 text-white/35 tabular-nums">{i + 1}.</span>
+              <span className="mr-2 text-white/55 tabular-nums">{i + 1}.</span>
               {row.label}
             </span>
             <span className="shrink-0 text-xs text-white/50">{row.detail}</span>

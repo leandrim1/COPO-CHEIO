@@ -57,6 +57,27 @@ export function timeAgo(iso: string, now = Date.now()): string {
 
 export const STATUS_FLOW: OrderStatus[] = ['new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered'];
 
+// As mesmas regras do banco (admin_set_order_status): o painel não oferece o que o servidor vai recusar.
+// Para a frente vale pular etapas; para trás, só uma etapa; entregue só volta para "saiu para entrega" e não cancela; cancelado não reabre.
+export function statusMoveProblem(from: OrderStatus, to: OrderStatus): string | null {
+  if (from === to) return null;
+  if (from === 'cancelled') return 'Este pedido foi cancelado e não pode ser reaberto.';
+  if (from === 'delivered') {
+    if (to === 'cancelled') return 'Pedido entregue não pode ser cancelado. Para devolver o dinheiro, marque o pagamento como reembolsado.';
+    return to === 'out_for_delivery' ? null : 'Pedido entregue só pode voltar para “Saiu para entrega” (se o clique foi por engano).';
+  }
+  if (to === 'cancelled') return null;
+  return STATUS_FLOW.indexOf(to) < STATUS_FLOW.indexOf(from) - 1 ? 'O pedido só pode voltar uma etapa de cada vez.' : null;
+}
+
+// Regras do pagamento (admin_set_payment_status): cancelado não vira "pago"; só se reembolsa o que estava pago.
+export function paymentMoveProblem(order: { order_status: OrderStatus; payment_status: PaymentStatus }, to: PaymentStatus): string | null {
+  if (order.payment_status === to) return null;
+  if (to === 'paid' && order.order_status === 'cancelled') return 'Pedido cancelado não pode ser marcado como pago. Se houve pagamento, marque como reembolsado.';
+  if (to === 'refunded' && order.payment_status !== 'paid') return 'Só dá para reembolsar um pedido que estava marcado como pago.';
+  return null;
+}
+
 export const STATUS: Record<OrderStatus, { label: string; action: string; badge: string; dot: string }> = {
   new: {
     label: 'NOVO',
@@ -134,3 +155,51 @@ export function addressLines(o: {
 
 export const normalizeText = (text: string) =>
   text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+// ---- Fuso da loja e janela de promoção --------------------------------------------------------------
+
+export const STORE_TIMEZONE = 'America/Sao_Paulo';
+
+// Quanto o relógio do fuso está à frente (ou atrás) do UTC naquele instante, em milissegundos.
+function zoneOffsetMs(ts: number, timeZone: string): number {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      .formatToParts(new Date(ts))
+      .map((part) => [part.type, part.value]),
+  );
+  return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second)) - Math.floor(ts / 1000) * 1000;
+}
+
+// "2026-12-24T18:00" digitado no painel vale como horário da LOJA (não do computador de quem digita) → instante ISO em UTC.
+export function localToIso(value: string, timeZone = STORE_TIMEZONE): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(value);
+  if (!m) return null;
+  const asUtc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  let ts = asUtc - zoneOffsetMs(asUtc, timeZone);
+  ts = asUtc - zoneOffsetMs(ts, timeZone);
+  const date = new Date(ts);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+// O contrário: instante guardado → "AAAA-MM-DDTHH:mm" no horário da loja, para o campo de data e hora.
+export function isoToLocal(iso: string | null | undefined, timeZone = STORE_TIMEZONE): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+export type PromoState = 'none' | 'scheduled' | 'active' | 'expired';
+
+// Situação da promoção do produto agora: sem preço promocional, agendada (ainda não começou), valendo ou encerrada.
+export function promoState(p: { promo_price: number | null; promo_starts_at?: string | null; promo_ends_at?: string | null }, now = Date.now()): PromoState {
+  if (p.promo_price === null || p.promo_price === undefined) return 'none';
+  if (p.promo_starts_at && new Date(p.promo_starts_at).getTime() > now) return 'scheduled';
+  if (p.promo_ends_at && new Date(p.promo_ends_at).getTime() <= now) return 'expired';
+  return 'active';
+}

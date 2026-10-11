@@ -106,7 +106,7 @@ function CoverPreview({ mobile, desktop, label }: { mobile: ImageValue; desktop:
           </span>
         </div>
       </div>
-      <p className="mt-2 text-xs text-white/45">Os botões “Início” e “Acompanhar” e a logo ficam por cima da imagem: deixe essas áreas sem texto importante.</p>
+      <p className="mt-2 text-xs text-white/60">Os botões “Início” e “Acompanhar” e a logo ficam por cima da imagem: deixe essas áreas sem texto importante.</p>
     </div>
   );
 }
@@ -131,8 +131,8 @@ function BannerActions({ banner, index, count, onMove, onToggle, onEdit, onRemov
       <IconButton label="Descer" disabled={index === count - 1} onClick={() => onMove(1)}>
         <ArrowDown className="h-4 w-4" aria-hidden="true" />
       </IconButton>
-      <span className="min-w-0 flex-1 truncate px-1 text-xs text-white/45">{banner.link ?? 'Sem link'}</span>
-      <Switch checked={banner.active} onChange={onToggle} />
+      <span className="min-w-0 flex-1 truncate px-1 text-xs text-white/60">{banner.link ?? 'Sem link'}</span>
+      <Switch checked={banner.active} onChange={onToggle} ariaLabel={banner.title ? `Banner “${banner.title}”: ativo no site` : 'Banner: ativo no site'} />
       <IconButton label="Editar banner" onClick={onEdit}>
         <Pencil className="h-4 w-4" aria-hidden="true" />
       </IconButton>

@@ -1,4 +1,4 @@
-import { ArrowRight, Bike, CheckCircle2, ChefHat, Clock3, Inbox, PackageCheck, ShoppingBag } from 'lucide-react';
+import { ArrowRight, Bike, CheckCircle2, ChefHat, Clock3, Inbox, PackageCheck, ShieldAlert, ShoppingBag } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
@@ -26,6 +26,8 @@ type Dashboard = {
   series: { bucket: string; orders: number; revenue: number }[];
   top_products: { name: string; quantity: number; revenue: number }[];
   recent: Order[];
+  // Pedidos de privacidade (LGPD) esperando resposta.
+  privacy_open?: number;
 };
 
 const RANGES = [
@@ -108,6 +110,22 @@ export default function DashboardPage() {
     <>
       <PageHeader title="Dashboard" description={today} />
 
+      {Number(data?.privacy_open) > 0 && (
+        <a
+          href="/admin/clientes"
+          className="mb-3 flex items-center gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100 transition-colors hover:bg-amber-400/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]"
+        >
+          <ShieldAlert className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <strong>
+              {data!.privacy_open} {data!.privacy_open === 1 ? 'pedido de privacidade espera' : 'pedidos de privacidade esperam'} resposta.
+            </strong>{' '}
+            A lei dá prazo para atender: veja em Clientes.
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+        </a>
+      )}
+
       {/* Operação agora */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         {c ? (
@@ -130,17 +148,17 @@ export default function DashboardPage() {
           <div aria-hidden="true" className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-[#2563FF]/30 blur-3xl" />
           <p className="relative text-[13px] font-semibold text-white/70">Faturamento do dia</p>
           {c ? <p className="relative mt-2 text-5xl font-black tracking-tight text-white">{money(Number(c.revenue_today))}</p> : <Skeleton className="mt-3 h-12 w-48" />}
-          <p className="relative mt-2 text-xs text-white/50">Pedidos não cancelados</p>
+          <p className="relative mt-2 text-xs text-white/65">Não conta pedidos cancelados nem estornados</p>
         </div>
         <div className="rounded-2xl border border-white/[0.08] bg-[#0C1018] p-5">
           <p className="text-[13px] font-semibold text-white/60">Faturamento da semana</p>
           {c ? <p className="mt-2 text-3xl font-black tracking-tight text-white">{money(Number(c.revenue_week))}</p> : <Skeleton className="mt-3 h-9 w-36" />}
-          <p className="mt-2 text-xs text-white/45">Desde segunda-feira</p>
+          <p className="mt-2 text-xs text-white/60">Desde segunda-feira</p>
         </div>
         <div className="rounded-2xl border border-white/[0.08] bg-[#0C1018] p-5">
           <p className="text-[13px] font-semibold text-white/60">Faturamento do mês</p>
           {c ? <p className="mt-2 text-3xl font-black tracking-tight text-white">{money(Number(c.revenue_month))}</p> : <Skeleton className="mt-3 h-9 w-36" />}
-          <p className="mt-2 text-xs text-white/45">Desde o dia 1º</p>
+          <p className="mt-2 text-xs text-white/60">Desde o dia 1º</p>
         </div>
       </div>
 
@@ -202,7 +220,7 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : data.top_products.length === 0 ? (
-            <p className="py-8 text-center text-sm text-white/45">Nenhuma venda no período.</p>
+            <p className="py-8 text-center text-sm text-white/60">Nenhuma venda no período.</p>
           ) : (
             <BarList
               rows={data.top_products.map((p) => ({
@@ -243,7 +261,7 @@ export default function DashboardPage() {
                     <span className="w-14 shrink-0 text-sm font-black text-white">#{o.order_number}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm font-semibold text-white">{o.customer_name}</span>
-                      <span className="block text-xs text-white/45">
+                      <span className="block text-xs text-white/60">
                         {DELIVERY_LABEL[o.delivery_type]} · {timeAgo(o.created_at)}
                       </span>
                     </span>

@@ -124,7 +124,23 @@ export function StatusBadge({ status, delivery = 'delivery', className }: { stat
   );
 }
 
-export function Switch({ checked, onChange, label, description, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: ReactNode; description?: ReactNode; disabled?: boolean }) {
+// `ariaLabel` dá nome ao interruptor quando ele aparece sozinho (sem `label` visível ao lado), como nas linhas de tabelas e listas:
+// sem nome, o leitor de tela anuncia só "interruptor" e a pessoa não sabe o que está ligando ou desligando.
+export function Switch({
+  checked,
+  onChange,
+  label,
+  ariaLabel,
+  description,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label?: ReactNode;
+  ariaLabel?: string;
+  description?: ReactNode;
+  disabled?: boolean;
+}) {
   const id = useId();
   const control = (
     <button
@@ -132,7 +148,7 @@ export function Switch({ checked, onChange, label, description, disabled }: { ch
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={typeof label === 'string' ? label : undefined}
+      aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cx(
@@ -157,7 +173,7 @@ export function Switch({ checked, onChange, label, description, disabled }: { ch
 }
 
 export const INPUT =
-  'w-full rounded-xl border border-white/[0.12] bg-[#07090E] px-3.5 py-2.5 text-sm text-white placeholder:text-white/30 transition-colors focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/30 disabled:opacity-60 aria-[invalid=true]:border-rose-400/70';
+  'w-full rounded-xl border border-white/[0.12] bg-[#07090E] px-3.5 py-2.5 text-sm text-white placeholder:text-white/50 transition-colors focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/30 disabled:opacity-60 aria-[invalid=true]:border-rose-400/70';
 
 type FieldRender = { id: string; 'aria-invalid': boolean; 'aria-describedby'?: string };
 
@@ -187,7 +203,7 @@ export function Field({
           {label}
         </label>
         {max !== undefined && count !== undefined && (
-          <span className={cx('text-[11px] tabular-nums', count > max ? 'text-rose-300' : 'text-white/35')}>
+          <span className={cx('text-[11px] tabular-nums', count > max ? 'text-rose-300' : 'text-white/55')}>
             {count}/{max}
           </span>
         )}
@@ -198,7 +214,7 @@ export function Field({
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-h`} className="mt-1.5 text-xs text-white/45">
+        <p id={`${id}-h`} className="mt-1.5 text-xs text-white/60">
           {hint}
         </p>
       ) : null}
@@ -425,7 +441,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 </button>
               )}
             </div>
-            <button type="button" aria-label="Fechar aviso" onClick={() => dismiss(t.id)} className="-mr-1 shrink-0 rounded-lg p-1 text-white/40 hover:text-white">
+            <button type="button" aria-label="Fechar aviso" onClick={() => dismiss(t.id)} className="-mr-1 shrink-0 rounded-lg p-1 text-white/60 hover:text-white">
               <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
@@ -514,7 +530,7 @@ export function ImageInput({
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
-            className={cx('absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/45 hover:text-white/80', FOCUS)}
+            className={cx('absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/60 hover:text-white/80', FOCUS)}
           >
             <ImagePlus className="h-7 w-7" aria-hidden="true" />
             <span className="text-xs font-semibold">Enviar imagem</span>
@@ -544,7 +560,7 @@ export function ImageInput({
           e.target.value = '';
         }}
       />
-      {error ? <p className="mt-1.5 text-xs font-medium text-rose-300">{error}</p> : hint ? <p className="mt-1.5 text-xs text-white/45">{hint}</p> : null}
+      {error ? <p className="mt-1.5 text-xs font-medium text-rose-300">{error}</p> : hint ? <p className="mt-1.5 text-xs text-white/60">{hint}</p> : null}
     </div>
   );
 }

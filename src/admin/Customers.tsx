@@ -5,9 +5,10 @@ import { formatDateTime, formatPhone, timeAgo, whatsappTo } from '../lib/format'
 import { copyText } from '../lib/tracking';
 import type { CustomerRow } from '../lib/types';
 import { useAdmin } from './AdminApp';
+import { PrivacyPanel } from './Privacy';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, cx, useConfirm, useToast } from './ui';
 
-type ResetLink = { customer: CustomerRow; token: string; expires_at: string };
+type ResetLink = { customer: CustomerRow; token: string; expires_at: string; notified: boolean };
 type MailInfo = { configured: boolean; missing: string[]; from: string | null; host: string | null };
 
 // Estado do envio de e-mails (códigos de confirmação das contas). Sem isso configurado ninguém cria conta nem entra.
@@ -114,7 +115,7 @@ export default function CustomersPage() {
   const makeReset = async (c: CustomerRow) => {
     setBusy(`reset:${c.id}`);
     try {
-      const data = await api.post<{ token: string; expires_at: string }>(`/api/admin/customers/${c.id}/reset-link`, {});
+      const data = await api.post<{ token: string; expires_at: string; notified: boolean }>(`/api/admin/customers/${c.id}/reset-link`, {});
       setReset({ customer: c, ...data });
       setCopied(false);
     } catch (err) {
@@ -166,12 +167,18 @@ export default function CustomersPage() {
 
   return (
     <>
-      <PageHeader title="Clientes" description="Contas criadas no site. Criar conta é opcional: quem compra como visitante não aparece aqui. A conta só vale depois que a pessoa confirma o e-mail." />
+      <PageHeader
+        title="Clientes"
+        description={`Contas criadas no site. Criar conta é opcional: quem compra como visitante não aparece aqui. A conta só vale depois que a pessoa confirma o e-mail.${
+          user.role === 'owner' ? '' : ' O link de nova senha só pode ser gerado pelo owner.'
+        }`}
+      />
 
       <MailStatus />
+      <PrivacyPanel />
 
       {reset && (
-        <Card className="mb-4" title={`Link para ${reset.customer.name} criar uma senha nova`} description={`Vale uma vez e expira em ${formatDateTime(reset.expires_at)}. Envie só depois de confirmar que é a própria pessoa.`}>
+        <Card className="mb-4" title={`Link para ${reset.customer.name} criar uma senha nova`} description={`Vale uma vez e expira em ${formatDateTime(reset.expires_at)}. Envie só depois de confirmar que é a própria pessoa.${reset.notified ? ' O cliente recebeu um aviso por e-mail.' : ''}`}>
           <input readOnly value={url} aria-label="Link de redefinição" onFocus={(e) => e.currentTarget.select()} className={cx(INPUT, 'text-xs')} />
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
@@ -199,7 +206,7 @@ export default function CustomersPage() {
 
       <label className="relative mb-4 block sm:w-96">
         <span className="sr-only">Buscar clientes</span>
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" aria-hidden="true" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" aria-hidden="true" />
         <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Nome, e-mail ou telefone" className={cx(INPUT, 'pl-9')} />
       </label>
 
@@ -234,7 +241,7 @@ export default function CustomersPage() {
                     {c.active && c.status === 'active' && <Badge tone="green">E-mail confirmado</Badge>}
                   </p>
                   <p className="truncate text-sm text-white/65">{c.email}</p>
-                  <p className="text-xs text-white/45">
+                  <p className="text-xs text-white/60">
                     {formatPhone(c.phone)} · cadastro em {formatDateTime(c.created_at)}
                     {c.email_verified_at ? ` · e-mail confirmado em ${formatDateTime(c.email_verified_at)}` : ' · e-mail ainda não confirmado'} ·{' '}
                     {c.last_login_at ? `último acesso ${timeAgo(c.last_login_at)}` : 'nunca entrou depois do cadastro'}
@@ -245,7 +252,7 @@ export default function CustomersPage() {
                 </a>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
-                {c.status !== 'pending_verification' && (
+                {user.role === 'owner' && c.status !== 'pending_verification' && (
                   <Button size="sm" variant="secondary" icon={<KeyRound className="h-3.5 w-3.5" aria-hidden="true" />} loading={busy === `reset:${c.id}`} onClick={() => void makeReset(c)}>
                     Link para nova senha
                   </Button>

@@ -11,7 +11,9 @@ import {
   formatDateTime,
   formatPhone,
   money,
+  paymentMoveProblem,
   statusLabel,
+  statusMoveProblem,
   timeAgo,
   whatsappTo,
 } from '../lib/format';
@@ -162,14 +164,14 @@ export function OrdersPage() {
               >
                 {f.value !== 'all' && <span className={cx('h-1.5 w-1.5 rounded-full', STATUS[f.value].dot)} aria-hidden="true" />}
                 {f.label}
-                {n !== undefined && <span className={cx('text-xs tabular-nums', active ? 'text-white/80' : 'text-white/40')}>{n}</span>}
+                {n !== undefined && <span className={cx('text-xs tabular-nums', active ? 'text-white/80' : 'text-white/60')}>{n}</span>}
               </button>
             );
           })}
         </div>
         <label className="relative block lg:w-80">
           <span className="sr-only">Buscar pedidos</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" aria-hidden="true" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Número, nome, telefone ou e-mail" className={cx(INPUT, 'pl-9')} />
         </label>
       </div>
@@ -230,7 +232,7 @@ export function OrdersPage() {
             {/* Tabela (desktop) */}
             <div className="hidden overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0C1018] lg:block">
               <table className="w-full text-left text-sm">
-                <thead className="border-b border-white/[0.06] text-xs uppercase tracking-wide text-white/45">
+                <thead className="border-b border-white/[0.06] text-xs uppercase tracking-wide text-white/60">
                   <tr>
                     <th scope="col" className="px-4 py-3 font-semibold">Número</th>
                     <th scope="col" className="px-4 py-3 font-semibold">Cliente</th>
@@ -257,13 +259,13 @@ export function OrdersPage() {
                             <span className="truncate">{o.customer_name}</span>
                             <AccountBadge order={o} />
                           </p>
-                          <p className="text-xs text-white/45">{formatPhone(o.customer_phone)}</p>
+                          <p className="text-xs text-white/60">{formatPhone(o.customer_phone)}</p>
                         </td>
                         <td className="px-4 py-3 text-right font-bold tabular-nums text-white">{money(Number(o.total))}</td>
                         <td className="px-4 py-3 text-white/70">{DELIVERY_LABEL[o.delivery_type]}</td>
                         <td className="px-4 py-3">
                           <p className="text-white/80">{PAYMENT_LABEL[o.payment_method]}</p>
-                          <p className={cx('text-xs', o.payment_status === 'paid' ? 'text-emerald-300' : 'text-white/40')}>{PAYMENT_STATUS_LABEL[o.payment_status]}</p>
+                          <p className={cx('text-xs', o.payment_status === 'paid' ? 'text-emerald-300' : 'text-white/60')}>{PAYMENT_STATUS_LABEL[o.payment_status]}</p>
                         </td>
                         <td className="px-4 py-3">
                           <StatusBadge status={o.order_status} delivery={o.delivery_type} />
@@ -396,11 +398,11 @@ function TrackingCard({ order, links, retention, onChanged }: { order: Order; li
   return (
     <Card title="Acompanhamento do cliente" description={`O cliente acompanha o pedido sem login. O link vale por ${retention} dias após a última atualização.`}>
       <p className="flex items-center gap-2 text-sm text-white/75">
-        <Link2 className="h-4 w-4 text-white/40" aria-hidden="true" />
+        <Link2 className="h-4 w-4 text-white/60" aria-hidden="true" />
         {active.length} {active.length === 1 ? 'link ativo' : 'links ativos'}
-        {links.length > active.length ? <span className="text-white/40">· {links.length - active.length} invalidado(s)</span> : null}
+        {links.length > active.length ? <span className="text-white/60">· {links.length - active.length} invalidado(s)</span> : null}
       </p>
-      <p className="mt-2 text-xs text-white/45">
+      <p className="mt-2 text-xs text-white/60">
         Por segurança, o sistema guarda só o hash do código: o link que o cliente já recebeu não pode ser visto de novo. Gere um link novo para abrir, copiar ou enviar.
       </p>
 
@@ -583,12 +585,14 @@ export function OrderDetailPage({ number }: { number: string }) {
           {ACTIONS.map((status) => {
             const current = order.order_status === status;
             const label = order.delivery_type === 'pickup' && status === 'out_for_delivery' ? 'PRONTO P/ RETIRAR' : order.delivery_type === 'pickup' && status === 'delivered' ? 'RETIRADO' : STATUS[status].action;
+            const problem = statusMoveProblem(order.order_status, status);
             return (
               <Button
                 key={status}
                 variant={current ? 'primary' : 'secondary'}
                 size="lg"
-                disabled={cancelled}
+                disabled={cancelled || Boolean(problem)}
+                title={problem ?? undefined}
                 loading={busy === status}
                 aria-pressed={current}
                 onClick={() => void setStatus(status)}
@@ -598,7 +602,13 @@ export function OrderDetailPage({ number }: { number: string }) {
               </Button>
             );
           })}
-          <Button variant="danger-ghost" size="lg" disabled={cancelled} loading={busy === 'cancelled'} onClick={() => void setStatus('cancelled')} className="col-span-2 w-full border border-rose-500/30 text-xs sm:col-span-1 sm:text-[13px]">
+          <Button
+            variant="danger-ghost"
+            size="lg"
+            disabled={cancelled || Boolean(statusMoveProblem(order.order_status, 'cancelled'))}
+            title={statusMoveProblem(order.order_status, 'cancelled') ?? undefined}
+            loading={busy === 'cancelled'}
+            onClick={() => void setStatus('cancelled')} className="col-span-2 w-full border border-rose-500/30 text-xs sm:col-span-1 sm:text-[13px]">
             {cancelled ? 'CANCELADO' : 'CANCELAR'}
           </Button>
         </div>
@@ -614,7 +624,7 @@ export function OrderDetailPage({ number }: { number: string }) {
                     <p className="font-semibold text-white">
                       <span className="text-[#8FB1FF]">{item.quantity}x</span> {item.product_name}
                     </p>
-                    <p className="text-xs text-white/45">{money(Number(item.unit_price))} cada</p>
+                    <p className="text-xs text-white/60">{money(Number(item.unit_price))} cada</p>
                   </div>
                   <p className="shrink-0 font-bold tabular-nums text-white">{money(Number(item.total_price))}</p>
                 </li>
@@ -654,13 +664,13 @@ export function OrderDetailPage({ number }: { number: string }) {
                   <p className="text-sm font-semibold text-white">
                     {h.from_status ? (
                       <>
-                        {statusLabel(h.from_status, order.delivery_type)} <span className="text-white/40">→</span> {statusLabel(h.to_status, order.delivery_type)}
+                        {statusLabel(h.from_status, order.delivery_type)} <span className="text-white/60">→</span> {statusLabel(h.to_status, order.delivery_type)}
                       </>
                     ) : (
                       'Pedido recebido pelo site'
                     )}
                   </p>
-                  <p className="text-xs text-white/45">
+                  <p className="text-xs text-white/60">
                     {formatDateTime(h.created_at)} · {h.changed_by_name ?? '—'}
                   </p>
                 </li>
@@ -673,10 +683,10 @@ export function OrderDetailPage({ number }: { number: string }) {
           <Card title="Cliente">
             <div className="space-y-2 text-sm">
               <p className="flex items-center gap-2 font-semibold text-white">
-                <User className="h-4 w-4 text-white/40" aria-hidden="true" /> {order.customer_name}
+                <User className="h-4 w-4 text-white/60" aria-hidden="true" /> {order.customer_name}
               </p>
               <p className="flex items-center gap-2 text-white/75">
-                <Phone className="h-4 w-4 text-white/40" aria-hidden="true" />
+                <Phone className="h-4 w-4 text-white/60" aria-hidden="true" />
                 <a href={`tel:${order.customer_phone}`} className="hover:text-white">
                   {formatPhone(order.customer_phone)}
                 </a>
@@ -728,7 +738,8 @@ export function OrderDetailPage({ number }: { number: string }) {
                   key={p}
                   type="button"
                   aria-pressed={order.payment_status === p}
-                  disabled={busy === 'payment'}
+                  disabled={busy === 'payment' || Boolean(paymentMoveProblem(order, p))}
+                  title={paymentMoveProblem(order, p) ?? undefined}
                   onClick={() => void setPayment(p)}
                   className={cx(
                     'rounded-full px-3 py-1.5 text-xs font-bold ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]',

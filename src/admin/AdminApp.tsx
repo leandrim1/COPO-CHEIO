@@ -98,8 +98,13 @@ type LiveResponse = {
 // Polling inteligente: pergunta ao servidor a cada poucos segundos com a aba aberta (e mais devagar com a
 // aba em segundo plano), pede só o que chegou depois do último pedido visto, e confere de novo na hora em
 // que a pessoa volta para a aba.
+// Se o servidor falhar, o intervalo cresce (8 s, 16 s, 32 s... até 1 min) em vez de martelar; e uma aba esquecida em segundo plano há mais
+// de 1 hora passa a consultar a cada 2 minutos (o aviso de pedido novo continua chegando, só um pouco mais devagar).
 const POLL_VISIBLE_MS = 8_000;
 const POLL_HIDDEN_MS = 30_000;
+const POLL_HIDDEN_LONG_MS = 120_000;
+const HIDDEN_LONG_AFTER_MS = 60 * 60_000;
+const POLL_MAX_BACKOFF_MS = 60_000;
 
 function LiveOrdersProvider({ children }: { children: ReactNode }) {
   const toast = useToast();
@@ -140,6 +145,8 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
     let timer: number | undefined;
     let after: number | null = null; // maior número de pedido já visto
     let rev: string | null = null;
+    let failures = 0;
+    let hiddenSince: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
 
     const announce = (orders: LiveResponse['new_orders']) => {
       if (soundRef.current) playOrderChime();
@@ -166,6 +173,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
       try {
         const data = await api.get<LiveResponse>(`/api/admin/live${after === null ? '' : `?after=${after}`}`);
         if (!alive) return;
+        failures = 0;
         setConnected(true);
         setNewCount(data.pending);
         if (after === null) {
@@ -178,20 +186,28 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
         if (rev !== null && data.rev !== rev) setVersion((v) => v + 1);
         rev = data.rev;
       } catch {
+        failures += 1;
         if (alive) setConnected(false);
       }
     };
 
     const schedule = () => {
       window.clearTimeout(timer);
+      const visible = document.visibilityState === 'visible';
+      let wait = visible ? POLL_VISIBLE_MS : hiddenSince !== null && Date.now() - hiddenSince > HIDDEN_LONG_AFTER_MS ? POLL_HIDDEN_LONG_MS : POLL_HIDDEN_MS;
+      if (failures > 0) wait = Math.min(Math.max(wait, POLL_VISIBLE_MS * 2 ** failures), POLL_MAX_BACKOFF_MS);
       timer = window.setTimeout(async () => {
         await poll();
         if (alive) schedule();
-      }, document.visibilityState === 'visible' ? POLL_VISIBLE_MS : POLL_HIDDEN_MS);
+      }, wait);
     };
 
     const onVisible = () => {
-      if (document.visibilityState !== 'visible') return;
+      if (document.visibilityState !== 'visible') {
+        hiddenSince ??= Date.now();
+        return;
+      }
+      hiddenSince = null;
       void poll().then(() => alive && schedule());
     };
 
@@ -234,12 +250,12 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate?: () =
   return (
     <div className="flex h-full flex-col">
       <a href="/admin/dashboard" onClick={onNavigate} className="flex items-center gap-3 px-5 pb-6 pt-5">
-        <img src="/logo.png" alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_20px_rgba(20,92,255,0.5)]" />
+        <img src="/logo-512.webp" alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_20px_rgba(20,92,255,0.5)]" />
         <span className="leading-none">
           <span className="block text-[15px] font-black tracking-tight text-white">
-            COPO <span className="text-[#2563FF]">CHEIO</span>
+            COPO <span className="text-[#4B7DFF]">CHEIO</span>
           </span>
-          <span className="mt-1 block text-[10px] font-bold tracking-[0.2em] text-white/45">PAINEL</span>
+          <span className="mt-1 block text-[10px] font-bold tracking-[0.2em] text-white/60">PAINEL</span>
         </span>
       </a>
       <nav aria-label="Menu do painel" className="flex-1 space-y-1 overflow-y-auto px-3">
@@ -277,7 +293,7 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate?: () =
       </nav>
       <div className="m-3 rounded-2xl border border-white/[0.06] bg-white/[0.03] p-3">
         <p className="truncate text-sm font-bold text-white">{user.name}</p>
-        <p className="truncate text-xs text-white/45">
+        <p className="truncate text-xs text-white/60">
           {user.email} · {user.role === 'owner' ? 'Owner' : 'Admin'}
         </p>
       </div>
@@ -329,7 +345,7 @@ function Layout({ pathname, title, children }: { pathname: string; title: string
           </IconButton>
           <p className="min-w-0 flex-1 truncate text-sm font-semibold text-white/80">{title}</p>
           <span
-            className={cx('hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 sm:inline-flex', connected ? 'text-emerald-300 ring-emerald-400/30' : 'text-white/45 ring-white/15')}
+            className={cx('hidden items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 sm:inline-flex', connected ? 'text-emerald-300 ring-emerald-400/30' : 'text-white/60 ring-white/15')}
             title={connected ? 'Pedidos novos aparecem sozinhos, sem recarregar' : 'Sem conexão com o servidor. Tentando de novo...'}
           >
             <span className={cx('h-1.5 w-1.5 rounded-full', connected ? 'animate-pulse bg-emerald-400' : 'bg-white/40')} aria-hidden="true" />

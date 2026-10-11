@@ -241,7 +241,7 @@ function HeroSection({ data }: { data: Data }) {
 
         <div>
           <p className="mb-1.5 text-[13px] font-semibold text-white/80">Imagens da bebida (carrossel)</p>
-          <p className="mb-3 text-xs text-white/45">
+          <p className="mb-3 text-xs text-white/60">
             Até 6, quadradas e com fundo transparente, com o copo centralizado. Sem imagens aqui, o site usa as bebidas originais.
           </p>
           <ul className="grid grid-cols-3 gap-3 sm:grid-cols-6">
@@ -268,7 +268,7 @@ function HeroSection({ data }: { data: Data }) {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/15 text-white/45 hover:border-[#2563FF] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]"
+                  className="flex aspect-square w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/15 text-white/60 hover:border-[#2563FF] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]"
                 >
                   <ImagePlus className="h-6 w-6" aria-hidden="true" />
                   <span className="text-[11px] font-semibold">Adicionar</span>
@@ -444,7 +444,7 @@ function SeoSection({ data }: { data: Data }) {
             <Text label="Título SEO" value={draft.seo_title} onChange={(v) => set('seo_title', v)} max={70} />
             <Text label="Descrição SEO" value={draft.seo_description} onChange={(v) => set('seo_description', v)} max={170} multiline />
             <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3">
-              <p className="text-xs text-white/40">Prévia no Google</p>
+              <p className="text-xs text-white/60">Prévia no Google</p>
               <p className="mt-1 truncate text-[15px] text-[#8AB4F8]">{draft.seo_title || 'Título do site'}</p>
               <p className="line-clamp-2 text-xs text-white/60">{draft.seo_description || 'Descrição do site.'}</p>
             </div>

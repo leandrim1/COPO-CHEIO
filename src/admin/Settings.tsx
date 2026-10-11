@@ -1,12 +1,13 @@
-import { Bell, Clock, CreditCard, Plus, Store, Trash2, Truck, Users } from 'lucide-react';
+import { Bell, CheckCircle2, Clock, CreditCard, History, Plus, RefreshCw, ShieldAlert, Store, Trash2, Truck, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
-import { api, friendlyError } from '../lib/api';
+import { ApiError, api, friendlyError } from '../lib/api';
 import { formatPhone, maskPhone, money, moneyInput, onlyDigits, parseMoney } from '../lib/format';
 import { DAYS, isOpenNow } from '../lib/hours';
-import type { AdminAccount, DeliveryZone, OpeningHours, PaymentOption, StoreSettings } from '../lib/types';
+import type { AdminAccount, AuditEntry, DeliveryZone, OpeningHours, PaymentOption, StoreSettings } from '../lib/types';
 import { playOrderChime, useAdmin, useLiveOrders } from './AdminApp';
-import { Badge, Button, Card, ErrorState, Field, INPUT, IconButton, Modal, PageHeader, Spinner, Switch, cx, useConfirm, useToast } from './ui';
+import { TwoFactorCard } from './TwoFactor';
+import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, IconButton, Modal, PageHeader, Spinner, Switch, cx, useConfirm, useToast } from './ui';
 
 const TABS = [
   { id: 'loja', label: 'Loja', icon: Store },
@@ -15,24 +16,30 @@ const TABS = [
   { id: 'pagamento', label: 'Pagamento', icon: CreditCard },
   { id: 'painel', label: 'Painel', icon: Bell },
   { id: 'equipe', label: 'Administradores', icon: Users },
+  // Só o owner vê (a lista de quem fez o quê no painel).
+  { id: 'atividades', label: 'Atividades', icon: History },
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
 
 const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ');
 
-// Salva só os campos de uma aba; o resto da linha fica como está.
-function useStoreSave(onSaved: (s: StoreSettings) => void) {
+// Salva só os campos de uma aba; o resto da linha fica como está. Manda junto a versão que a tela conhece (`version`): se outra pessoa
+// (ou outra aba) salvou as configurações depois, o servidor recusa em vez de desfazer o que mudou, e a tela recebe os dados atuais.
+function useStoreSave(onSaved: (s: StoreSettings, stale?: boolean) => void, version?: string) {
   const toast = useToast();
   const [saving, setSaving] = useState(false);
   const save = async (change: Partial<StoreSettings>, message: string) => {
     setSaving(true);
     try {
-      const { store } = await api.patch<{ store: StoreSettings }>('/api/admin/store', change);
+      const { store } = await api.patch<{ store: StoreSettings }>('/api/admin/store', { ...change, ...(version ? { expected_updated_at: version } : {}) });
       onSaved(store);
       toast.success(message, 'O site já usa os novos dados.');
       return true;
     } catch (error) {
-      toast.error('Não foi possível salvar.', friendlyError(error, ''));
+      if (error instanceof ApiError && error.code === 'stale_settings' && error.data.store) {
+        onSaved(error.data.store as StoreSettings, true);
+        toast.error('Outra pessoa alterou estas configurações.', 'Mostrei os dados atuais. Confira e salve de novo.');
+      } else toast.error('Não foi possível salvar.', friendlyError(error, ''));
       return false;
     } finally {
       setSaving(false);
@@ -54,8 +61,8 @@ function Footer({ saving, label = 'Salvar', children }: { saving: boolean; label
 
 // ---- Loja ---------------------------------------------------------------------------------------
 
-function StoreTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
-  const { saving, save } = useStoreSave(onSaved);
+function StoreTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings, stale?: boolean) => void }) {
+  const { saving, save } = useStoreSave(onSaved, store.updated_at);
   const [form, setForm] = useState({
     store_name: store.store_name,
     whatsapp: formatPhone(store.whatsapp),
@@ -151,9 +158,9 @@ function StoreTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
 }
 
 // Política de retenção: por quantos dias o link de acompanhamento do cliente continua valendo.
-function RetentionCard({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
+function RetentionCard({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings, stale?: boolean) => void }) {
   const toast = useToast();
-  const { saving, save } = useStoreSave(onSaved);
+  const { saving, save } = useStoreSave(onSaved, store.updated_at);
   const [days, setDays] = useState(String(store.tracking_retention_days));
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -180,8 +187,8 @@ function RetentionCard({ store, onSaved }: { store: StoreSettings; onSaved: (s: 
 
 // ---- Horários ----------------------------------------------------------------------------------
 
-function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
-  const { saving, save } = useStoreSave(onSaved);
+function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings, stale?: boolean) => void }) {
+  const { saving, save } = useStoreSave(onSaved, store.updated_at);
   const [hours, setHours] = useState<OpeningHours>(store.opening_hours);
   const [paused, setPaused] = useState(store.orders_paused);
   const openNow = !paused && isOpenNow(hours, store.timezone);
@@ -205,21 +212,21 @@ function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
             return (
               <li key={day.key} className="grid grid-cols-[6.5rem_auto_1fr] items-center gap-3 py-3 sm:grid-cols-[8rem_auto_1fr]">
                 <span className="text-sm font-semibold text-white">{day.label}</span>
-                <Switch checked={h.open} onChange={(v) => set({ open: v })} />
+                <Switch checked={h.open} onChange={(v) => set({ open: v })} ariaLabel={`${day.label}: aberto`} />
                 {h.open ? (
                   <div className="flex items-center gap-2">
                     <input type="time" aria-label={`${day.label}: abre às`} value={h.start} onChange={(e) => set({ start: e.target.value })} className={cx(INPUT, 'w-28 [color-scheme:dark]')} />
-                    <span className="text-sm text-white/40">às</span>
+                    <span className="text-sm text-white/60">às</span>
                     <input type="time" aria-label={`${day.label}: fecha às`} value={h.end} onChange={(e) => set({ end: e.target.value })} className={cx(INPUT, 'w-28 [color-scheme:dark]')} />
                   </div>
                 ) : (
-                  <span className="text-sm text-white/40">Fechado</span>
+                  <span className="text-sm text-white/60">Fechado</span>
                 )}
               </li>
             );
           })}
         </ul>
-        <p className="mt-3 text-xs text-white/45">Fecha depois da meia-noite? Coloque o fim menor que o início (ex.: 18:00 às 02:00). Início igual ao fim = 24 horas.</p>
+        <p className="mt-3 text-xs text-white/60">Fecha depois da meia-noite? Coloque o fim menor que o início (ex.: 18:00 às 02:00). Início igual ao fim = 24 horas.</p>
         <div className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-4">
           <Switch checked={paused} onChange={setPaused} label="Pausar pedidos pelo site" description="Para dias de muito movimento ou imprevistos: o site mostra a loja fechada até você desligar." />
         </div>
@@ -231,10 +238,10 @@ function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
 
 // ---- Entrega ------------------------------------------------------------------------------------
 
-function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings) => void }) {
+function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: StoreSettings, stale?: boolean) => void }) {
   const toast = useToast();
   const confirm = useConfirm();
-  const { saving, save } = useStoreSave(onSaved);
+  const { saving, save } = useStoreSave(onSaved, store.updated_at);
   const [form, setForm] = useState({
     delivery_enabled: store.delivery_enabled,
     pickup_enabled: store.pickup_enabled,
@@ -343,7 +350,7 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
         {!zones ? (
           <Spinner />
         ) : zones.length === 0 ? (
-          <p className="px-5 py-6 text-sm text-white/45">Nenhum bairro cadastrado: vale a taxa única.</p>
+          <p className="px-5 py-6 text-sm text-white/60">Nenhum bairro cadastrado: vale a taxa única.</p>
         ) : (
           <ul className="divide-y divide-white/[0.06]">
             {zones.map((z) => (
@@ -469,7 +476,7 @@ function PanelTab() {
 
   const changePassword = async (e: FormEvent) => {
     e.preventDefault();
-    if (form.next.length < 8) return setError('A senha nova precisa ter pelo menos 8 caracteres.');
+    if (form.next.length < 10) return setError('A senha nova precisa ter pelo menos 10 caracteres.');
     if (form.next !== form.again) return setError('As senhas novas não são iguais.');
     setError('');
     setBusy(true);
@@ -499,7 +506,7 @@ function PanelTab() {
             <Field label="Senha atual">
               {(p) => <input {...p} type="password" autoComplete="current-password" value={form.current} onChange={(e) => setForm({ ...form, current: e.target.value })} className={INPUT} />}
             </Field>
-            <Field label="Senha nova" hint="Mínimo de 8 caracteres.">
+            <Field label="Senha nova" hint="Mínimo de 10 caracteres. Evite senhas comuns e o seu e-mail.">
               {(p) => <input {...p} type="password" autoComplete="new-password" value={form.next} onChange={(e) => setForm({ ...form, next: e.target.value })} className={INPUT} />}
             </Field>
             <Field label="Repita a senha nova">
@@ -510,7 +517,90 @@ function PanelTab() {
           <Footer saving={busy} label="Alterar senha" />
         </Card>
       </form>
+      <TwoFactorCard />
+      <SystemStatusCard />
     </div>
+  );
+}
+
+// ---- Estado do sistema --------------------------------------------------------------------------
+
+type Health = { database: 'ok' | 'missing' | 'error'; blob: 'ok' | 'missing'; mail: 'ok' | 'missing'; site_url: 'ok' | 'missing'; missing: string[] };
+
+// Mostra se as peças de que o site depende estão funcionando (banco, imagens, e-mail, endereço do site) e, se faltar alguma
+// configuração, qual (só o nome da variável: valores e senhas nunca aparecem).
+function SystemStatusCard() {
+  const [health, setHealth] = useState<Health | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      setHealth(await api.get<Health>('/api/admin/health'));
+      setFailed(false);
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const rows: { label: string; hint: string; state: string }[] = health
+    ? [
+        { label: 'Banco de dados', hint: 'Pedidos, produtos e clientes.', state: health.database },
+        { label: 'Armazenamento de imagens', hint: 'Fotos de produtos, banners e logo.', state: health.blob },
+        { label: 'Envio de e-mail', hint: 'Verificação de conta, recuperação de senha e avisos.', state: health.mail },
+        { label: 'Endereço do site', hint: 'Usado nos links dos e-mails.', state: health.site_url },
+      ]
+    : [];
+  return (
+    <Card
+      title="Estado do sistema"
+      description="Confere se tudo de que o site depende está funcionando."
+      actions={
+        <Button size="sm" variant="secondary" loading={busy} icon={<RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />} onClick={() => void load()}>
+          Verificar de novo
+        </Button>
+      }
+    >
+      {failed && !health ? (
+        <p className="text-sm text-rose-300">Não foi possível consultar agora.</p>
+      ) : !health ? (
+        <Spinner />
+      ) : (
+        <>
+          <ul className="divide-y divide-white/[0.06]">
+            {rows.map((row) => (
+              <li key={row.label} className="flex items-center gap-3 py-2.5">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-white">{row.label}</p>
+                  <p className="text-xs text-white/50">{row.hint}</p>
+                </div>
+                {row.state === 'ok' ? (
+                  <Badge tone="green">
+                    <CheckCircle2 className="h-3 w-3" aria-hidden="true" /> Funcionando
+                  </Badge>
+                ) : row.state === 'error' ? (
+                  <Badge tone="red">
+                    <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Sem resposta
+                  </Badge>
+                ) : (
+                  <Badge tone="amber">Não configurado</Badge>
+                )}
+              </li>
+            ))}
+          </ul>
+          {health.missing.length > 0 && (
+            <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] px-3 py-2 text-sm text-amber-100">
+              Faltam estas configurações no servidor (variáveis de ambiente na Vercel): <strong className="font-mono">{health.missing.join(', ')}</strong>.
+            </p>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -545,7 +635,7 @@ function TeamTab() {
   const add = async (e: FormEvent) => {
     e.preventDefault();
     if (!adding) return;
-    if (adding.password.length < 8) return setError('A senha precisa ter pelo menos 8 caracteres.');
+    if (adding.password.length < 10) return setError('A senha precisa ter pelo menos 10 caracteres.');
     setBusy(true);
     try {
       await api.post('/api/admin/admins', adding);
@@ -574,11 +664,22 @@ function TeamTab() {
   const reset = async (e: FormEvent) => {
     e.preventDefault();
     if (!resetting) return;
-    if (resetting.password.length < 8) return setError('A senha precisa ter pelo menos 8 caracteres.');
+    if (resetting.password.length < 10) return setError('A senha precisa ter pelo menos 10 caracteres.');
     setBusy(true);
     const ok = await update(resetting.admin, { password: resetting.password }, 'Senha redefinida.');
     setBusy(false);
     if (ok) setResetting(null);
+  };
+
+  const resetTwoFactor = async (a: AdminAccount) => {
+    if (!(await confirm({ title: `Desligar a verificação em duas etapas de ${a.name}?`, description: 'Use quando a pessoa perdeu o celular e os códigos de recuperação. Ela volta a entrar só com a senha e pode ativar de novo.', confirmLabel: 'Desligar' }))) return;
+    try {
+      await api.post(`/api/admin/admins/${a.id}/reset-2fa`);
+      toast.success('Verificação em duas etapas desligada.', `${a.name} pode ativar de novo em Painel.`);
+      void load();
+    } catch (err) {
+      toast.error('Não foi possível desligar.', friendlyError(err, ''));
+    }
   };
 
   const remove = async (a: AdminAccount) => {
@@ -614,11 +715,12 @@ function TeamTab() {
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#145CFF]/20 text-sm font-black text-[#9DBBFF]">{a.name.slice(0, 1).toUpperCase()}</span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold text-white">
-                  {a.name} {a.id === user.id && <span className="text-xs font-normal text-white/40">(você)</span>}
+                  {a.name} {a.id === user.id && <span className="text-xs font-normal text-white/60">(você)</span>}
                 </p>
-                <p className="truncate text-xs text-white/45">{a.email}</p>
+                <p className="truncate text-xs text-white/60">{a.email}</p>
               </div>
               <Badge tone={a.role === 'owner' ? 'blue' : 'gray'}>{a.role === 'owner' ? 'Owner' : 'Admin'}</Badge>
+              {a.two_factor && <Badge tone="green">2 etapas</Badge>}
               {!a.active && <Badge tone="red">Inativo</Badge>}
               {owner && a.id !== user.id && (
                 <div className="flex flex-wrap items-center gap-1">
@@ -628,6 +730,11 @@ function TeamTab() {
                   <Button size="sm" variant="ghost" onClick={() => (setError(''), setResetting({ admin: a, password: '' }))}>
                     Nova senha
                   </Button>
+                  {a.two_factor && (
+                    <Button size="sm" variant="ghost" onClick={() => void resetTwoFactor(a)}>
+                      Desligar 2 etapas
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" onClick={() => void update(a, { active: !a.active }, a.active ? 'Acesso desativado.' : 'Acesso reativado.')}>
                     {a.active ? 'Desativar' : 'Reativar'}
                   </Button>
@@ -665,7 +772,7 @@ function TeamTab() {
             <Field label="E-mail de login">
               {(p) => <input {...p} type="email" autoComplete="off" value={adding.email} onChange={(e) => setAdding({ ...adding, email: e.target.value })} className={INPUT} />}
             </Field>
-            <Field label="Senha inicial" hint="Mínimo de 8 caracteres.">
+            <Field label="Senha inicial" hint="Mínimo de 10 caracteres. Evite senhas comuns e o e-mail da pessoa.">
               {(p) => <input {...p} type="text" autoComplete="off" value={adding.password} onChange={(e) => setAdding({ ...adding, password: e.target.value })} className={INPUT} />}
             </Field>
             <Field label="Função">
@@ -699,7 +806,7 @@ function TeamTab() {
       >
         {resetting && (
           <form id="reset-form" onSubmit={reset} noValidate className="space-y-4">
-            <Field label="Senha nova" hint="Mínimo de 8 caracteres.">
+            <Field label="Senha nova" hint="Mínimo de 10 caracteres. Evite senhas comuns.">
               {(p) => <input {...p} type="text" autoComplete="off" value={resetting.password} onChange={(e) => setResetting({ ...resetting, password: e.target.value })} className={INPUT} />}
             </Field>
             {error && <p className="text-sm text-rose-300">{error}</p>}
@@ -710,14 +817,144 @@ function TeamTab() {
   );
 }
 
+// ---- Atividades (quem fez o quê) ----------------------------------------------------------------
+
+const ENTITY_FILTERS: [string, string][] = [
+  ['', 'Tudo'],
+  ['order', 'Pedidos'],
+  ['product', 'Produtos'],
+  ['category', 'Categorias'],
+  ['store', 'Loja'],
+  ['site', 'Textos do site'],
+  ['banner', 'Banners'],
+  ['zone', 'Bairros'],
+  ['payment', 'Pagamento'],
+  ['customer', 'Clientes'],
+  ['admin', 'Administradores'],
+  ['privacy', 'Privacidade'],
+];
+
+const whenFull = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+function ActivityTab() {
+  const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [entity, setEntity] = useState('');
+  const [text, setText] = useState('');
+  const [term, setTerm] = useState('');
+  const [attempt, setAttempt] = useState(0);
+
+  // A busca só sai para o servidor depois de a pessoa parar de digitar.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTerm(text.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [text]);
+
+  const fetchPage = useCallback(
+    async (before?: number) => {
+      const params = new URLSearchParams({ limit: '50' });
+      if (entity) params.set('entity', entity);
+      if (term) params.set('q', term);
+      if (before) params.set('before', String(before));
+      return api.get<{ entries: AuditEntry[]; has_more: boolean }>(`/api/admin/audit?${params}`);
+    },
+    [entity, term],
+  );
+
+  useEffect(() => {
+    let alive = true;
+    setEntries(null);
+    setError(false);
+    fetchPage()
+      .then((data) => {
+        if (!alive) return;
+        setEntries(data.entries);
+        setMore(data.has_more);
+      })
+      .catch(() => alive && setError(true));
+    return () => {
+      alive = false;
+    };
+  }, [fetchPage, attempt]);
+
+  const loadMore = async () => {
+    if (!entries?.length) return;
+    setLoadingMore(true);
+    try {
+      const data = await fetchPage(entries[entries.length - 1].id);
+      setEntries([...entries, ...data.entries]);
+      setMore(data.has_more);
+    } catch {
+      setError(true);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  return (
+    <Card title="Atividades do painel" description="Quem mexeu em quê e quando: pedidos, produtos, configurações, clientes e acessos. O registro não pode ser editado nem apagado.">
+      <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_14rem]">
+        <Field label="Buscar">
+          {(p) => <input {...p} type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Pessoa ou palavra do resumo" className={INPUT} maxLength={80} />}
+        </Field>
+        <Field label="Assunto">
+          {(p) => (
+            <select {...p} value={entity} onChange={(e) => setEntity(e.target.value)} className={INPUT}>
+              {ENTITY_FILTERS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          )}
+        </Field>
+      </div>
+      {error ? (
+        <ErrorState message="Não foi possível carregar as atividades." onRetry={() => setAttempt((n) => n + 1)} />
+      ) : !entries ? (
+        <Spinner />
+      ) : entries.length === 0 ? (
+        <EmptyState icon={<History className="h-5 w-5" aria-hidden="true" />} title="Nenhuma atividade encontrada" description="Mudanças feitas daqui para a frente aparecem aqui." />
+      ) : (
+        <>
+          <ul className="divide-y divide-white/[0.06]">
+            {entries.map((entry) => (
+              <li key={entry.id} className="flex flex-col gap-0.5 py-2.5 sm:flex-row sm:items-baseline sm:gap-4">
+                <time dateTime={entry.created_at} className="shrink-0 text-xs tabular-nums text-white/55 sm:w-32">
+                  {whenFull(entry.created_at)}
+                </time>
+                <p className="min-w-0 flex-1 break-words text-sm text-white/85">{entry.summary}</p>
+                <p className="shrink-0 text-xs text-white/55 sm:w-40 sm:text-right">{entry.actor_name ?? 'Sistema'}</p>
+              </li>
+            ))}
+          </ul>
+          {more && (
+            <div className="mt-4 text-center">
+              <Button variant="secondary" loading={loadingMore} onClick={() => void loadMore()}>
+                Mostrar mais antigas
+              </Button>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
+  const { user } = useAdmin();
+  const tabs = useMemo(() => TABS.filter((t) => t.id !== 'atividades' || user.role === 'owner'), [user.role]);
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.slice(1) as Tab;
-    return TABS.some((t) => t.id === hash) ? hash : 'loja';
+    return tabs.some((t) => t.id === hash) ? hash : 'loja';
   });
   const [store, setStore] = useState<StoreSettings | null>(null);
   const [payments, setPayments] = useState<PaymentOption[]>([]);
   const [error, setError] = useState(false);
+  // Muda quando outra pessoa salvou as configurações antes: a aba é montada de novo com os dados atuais.
+  const [version, setVersion] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -737,34 +974,40 @@ export default function SettingsPage() {
     setTab(id);
     window.history.replaceState(null, '', `#${id}`);
   };
+  const saved = useCallback((fresh: StoreSettings, stale?: boolean) => {
+    setStore(fresh);
+    if (stale) setVersion((n) => n + 1);
+  }, []);
   const body = useMemo(() => {
     if (!store) return null;
     switch (tab) {
       case 'loja':
         return (
           <div className="space-y-4">
-            <StoreTab store={store} onSaved={setStore} />
-            <RetentionCard store={store} onSaved={setStore} />
+            <StoreTab store={store} onSaved={saved} />
+            <RetentionCard store={store} onSaved={saved} />
           </div>
         );
       case 'horarios':
-        return <HoursTab store={store} onSaved={setStore} />;
+        return <HoursTab store={store} onSaved={saved} />;
       case 'entrega':
-        return <DeliveryTab store={store} onSaved={setStore} />;
+        return <DeliveryTab store={store} onSaved={saved} />;
       case 'pagamento':
         return <PaymentTab payments={payments} onSaved={setPayments} />;
       case 'painel':
         return <PanelTab />;
       case 'equipe':
         return <TeamTab />;
+      case 'atividades':
+        return <ActivityTab />;
     }
-  }, [store, payments, tab]);
+  }, [store, payments, tab, saved]);
 
   return (
     <>
-      <PageHeader title="Configurações" description="Dados da loja, horários, entrega, pagamento e equipe." />
+      <PageHeader title="Configurações" description="Dados da loja, horários, entrega, pagamento, segurança e equipe." />
       <div role="tablist" aria-label="Seções" className="-mx-3 mb-4 flex gap-1 overflow-x-auto px-3 [scrollbar-width:none] sm:mx-0 sm:px-0">
-        {TABS.map(({ id, label, icon: Icon }) => (
+        {tabs.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
@@ -781,7 +1024,7 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
-      {error ? <ErrorState message="Não foi possível carregar as configurações." onRetry={() => void load()} /> : !store ? <Spinner /> : <div role="tabpanel" key={tab}>{body}</div>}
+      {error ? <ErrorState message="Não foi possível carregar as configurações." onRetry={() => void load()} /> : !store ? <Spinner /> : <div role="tabpanel" key={`${tab}-${version}`}>{body}</div>}
     </>
   );
 }

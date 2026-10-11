@@ -15,17 +15,18 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
   const [busy, setBusy] = useState(false);
   const soldOut = isSoldOut(product);
 
-  const adjust = async (delta: number) => {
+  // `enable` = ligar o controle de estoque de um produto que não tinha: só acontece de propósito (botão "Começar a controlar").
+  const adjust = async (delta: number, enable = false) => {
     if (!Number.isInteger(delta) || delta === 0) {
       toast.error('Informe uma quantidade inteira.');
       return;
     }
     setBusy(true);
     try {
-      const { product: updated } = await api.post<{ product: ProductRecord }>(`/api/admin/products/${product.id}/stock`, { delta });
+      const { product: updated } = await api.post<{ product: ProductRecord }>(`/api/admin/products/${product.id}/stock`, { delta, ...(enable ? { enable_tracking: true } : {}) });
       setAmount('');
       onChanged(updated);
-      toast.success(delta > 0 ? `+${delta} em ${product.name}` : `${delta} em ${product.name}`, `Estoque atual: ${updated.stock}`);
+      toast.success(enable ? `Estoque de ${product.name} agora é controlado` : delta > 0 ? `+${delta} em ${product.name}` : `${delta} em ${product.name}`, `Estoque atual: ${updated.stock}`);
     } catch (error) {
       toast.error('Não foi possível atualizar o estoque.', friendlyError(error, ''));
     } finally {
@@ -51,11 +52,11 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
     <li className="grid gap-3 px-3 py-3 sm:px-5 md:grid-cols-[1fr_auto_auto] md:items-center">
       <div className="flex min-w-0 items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/[0.04] ring-1 ring-white/[0.06]">
-          {product.image_url ? <img src={product.image_url} alt="" className={cx('h-full w-full object-contain p-1', soldOut && 'opacity-50 grayscale')} /> : <Boxes className="h-5 w-5 text-white/30" aria-hidden="true" />}
+          {product.image_url ? <img src={product.image_url} alt="" className={cx('h-full w-full object-contain p-1', soldOut && 'opacity-50 grayscale')} /> : <Boxes className="h-5 w-5 text-white/55" aria-hidden="true" />}
         </span>
         <div className="min-w-0">
           <p className="truncate font-semibold text-white">{product.name}</p>
-          <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/45">
+          <p className="flex flex-wrap items-center gap-1.5 text-xs text-white/60">
             {category}
             {product.stock === null ? (
               <Badge>Sem controle</Badge>
@@ -77,7 +78,7 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
             <Minus className="h-4 w-4" aria-hidden="true" />
           </IconButton>
         )}
-        <span className={cx('min-w-[3.5rem] text-center text-2xl font-black tabular-nums', product.stock === null ? 'text-white/30' : soldOut ? 'text-rose-300' : 'text-white')} aria-label={`Estoque: ${product.stock ?? 'sem controle'}`}>
+        <span className={cx('min-w-[3.5rem] text-center text-2xl font-black tabular-nums', product.stock === null ? 'text-white/55' : soldOut ? 'text-rose-300' : 'text-white')} aria-label={`Estoque: ${product.stock ?? 'sem controle'}`}>
           {product.stock ?? '—'}
         </span>
         {product.stock !== null && (
@@ -95,12 +96,12 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
           inputMode="numeric"
           value={amount}
           onChange={(e) => setAmount(e.target.value)}
-          aria-label={`Quantidade para ${product.name}`}
-          placeholder="Qtd."
+          aria-label={product.stock === null ? `Quantidade em estoque agora de ${product.name}` : `Quantidade para ${product.name}`}
+          placeholder={product.stock === null ? 'Tenho' : 'Qtd.'}
           className={cx(INPUT, 'w-20')}
         />
-        <Button size="sm" variant="secondary" disabled={busy || !(qty > 0)} onClick={() => void adjust(Math.trunc(qty))}>
-          + Adicionar
+        <Button size="sm" variant="secondary" disabled={busy || !(qty > 0)} onClick={() => void adjust(Math.trunc(qty), product.stock === null)}>
+          {product.stock === null ? 'Começar a controlar' : '+ Adicionar'}
         </Button>
         {product.stock !== null && (
           <Button size="sm" variant="ghost" disabled={busy || !(qty > 0)} onClick={() => void adjust(-Math.trunc(qty))}>
@@ -184,7 +185,7 @@ export default function StockPage() {
         </div>
         <label className="relative block flex-1">
           <span className="sr-only">Buscar produto</span>
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" aria-hidden="true" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar produto" className={cx(INPUT, 'pl-9')} />
         </label>
       </div>
