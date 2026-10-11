@@ -74,6 +74,18 @@ verificações) contra um banco só com as migrations 0001–0008 e contra o ban
 (as poucas verificações que falham, nos dois casos, testam comportamentos novos; a única diferença é uma consulta do próprio teste a uma
 tabela que só existe no banco novo). Ou seja: nesses fluxos, voltar o código para a versão anterior funciona com o banco novo.
 
+**Exceção conhecida: a migration 0013 (escolha do gelo).** Ela segue as regras acima (só acrescenta colunas e troca funções), com duas
+ressalvas que você precisa conhecer:
+
+1. Ela escreve **uma linha de dados**: liga `categories.ice_choice_required` nas categorias chamadas "Copão" e "Copão com Monster" (o nome
+   só é usado nesse momento, sem diferenciar maiúsculas, acentos ou espaços). Se na loja elas têm outro nome, a regra **não** liga sozinha:
+   ligue em *Categorias → Editar → Pedir a escolha do gelo* (confira depois do deploy, passo 4 do item 8).
+2. A regra é conferida **no banco**, então a versão antiga do site (que não sabe perguntar o gelo) é recusada ao pedir produtos dessas
+   categorias, com a mensagem "Escolha o tipo de gelo para continuar.". Isso acontece (a) nos poucos minutos entre a migration rodar e o
+   site novo entrar no ar e (b) **depois de um rollback do código**. O resto do site (outras categorias) segue normal. Para voltar o código
+   sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
+   voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
+
 **Ver o que está pendente / aplicar manualmente:** `vercel env pull .env.local` e `npm run db:migrate` (aplica no banco do
 `.env.local`; confirme que não é o de produção se estiver testando).
 
@@ -145,6 +157,7 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | O link do e-mail abre o endereço errado | Defina `SITE_URL` com o endereço público e faça um novo deploy |
 | Não consigo enviar imagem | *Estado do sistema*: "Armazenamento de imagens". Limites: 4 MB e JPG, PNG, WebP, GIF ou AVIF (SVG nunca) |
 | Cliente diz que o pedido "sumiu" | Busque o número em *Pedidos*. Sem o link do acompanhamento, o painel gera um novo (*Pedido → Acompanhamento do cliente*) |
+| Cliente diz que não consegue adicionar ou finalizar um copão ("Escolha o tipo de gelo para continuar.") | É a regra da escolha do gelo. No site novo, a pergunta aparece ao tocar em "Adicionar"; se a pessoa está com uma aba aberta de antes do deploy, basta recarregar. Confira em *Categorias* quais categorias têm "Pede o gelo" (liga e desliga em *Editar*). Depois de um rollback do código, veja o item 3 |
 | Cliente viu o aviso de que o valor mudou ("Confirmar novo total") | É esperado: o total mostrado precisa bater com o do servidor (`409 price_changed`: preço, promoção ou taxa mudaram). A tela mostra o que mudou e pede a confirmação; nenhum pedido foi criado até ali |
 | Pedido de privacidade (LGPD) | *Painel → Clientes → Privacidade*. Responda pelo contato deixado (a política informa até 15 dias). Para quem comprou como visitante, o **owner** usa *Anonimizar uma pessoa* (telefone e/ou e-mail); a conta e os links de acompanhamento são apagados e os pedidos ficam sem dados pessoais (itens, valores, datas e bairro continuam para a contabilidade). Marque como atendido |
 | Suspeita de acesso indevido | 1) Troque a senha do administrador (encerra as sessões). 2) *Configurações → Atividades*: confira entradas e mudanças. 3) Ligue o 2FA. 4) Se houve vazamento de segredo, rotacione (abaixo) |
@@ -182,7 +195,9 @@ agendador, então com o site parado ela só roda quando houver movimento.
 1. `GET /api/health` → `{"ok":true}`.
 2. Abra `/` e `/bebidas` (um celular e um computador) e confira a logo, o cardápio e o botão do WhatsApp.
 3. Entre em `/admin`, abra *Configurações → Painel → Estado do sistema*: banco, imagens, e-mail e endereço do site em OK.
-4. Se mexeu em pedidos/checkout: faça **um pedido de teste** e cancele (ele aparece nos relatórios como cancelado).
+4. Se mexeu em pedidos/checkout: faça **um pedido de teste** e cancele (ele aparece nos relatórios como cancelado). Depois da migration 0013,
+   confira em *Categorias* que "Copão" e "Copão com Monster" mostram **Pede o gelo**, e, no site, que "Adicionar" num copão pergunta o gelo
+   e o pedido de teste mostra a escolha em *Pedidos*.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
 

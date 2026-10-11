@@ -4,7 +4,7 @@ Três camadas, todas rodam no seu computador (ou no GitHub Actions) **sem tocar 
 
 | Camada | O que faz | Como roda |
 | ------ | --------- | --------- |
-| **Unitários** (`unit/`) | Funções puras do projeto: senha, TOTP (2FA), validação de imagem, detecção de IP, URL do site, formatação, normalização dos dados da API | `npm run test:unit` (segundos) |
+| **Unitários** (`unit/`) | Funções puras do projeto: senha, TOTP (2FA), validação de imagem, detecção de IP, URL do site, formatação, normalização dos dados da API, regras do carrinho (escolha do gelo) | `npm run test:unit` (segundos) |
 | **API** (`api-test*.mjs`) | A API de verdade (`api/index.ts`) contra um **PostgreSQL local**, com Blob falso, SMTP de mentira e DNS simulado | `npm run test:api` (alguns minutos) |
 | **Navegador** (`e2e*.cjs`) | Site e painel num Chromium real (Playwright), de ponta a ponta | `npm run test:e2e` (alguns minutos) |
 
@@ -61,10 +61,12 @@ termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDI
 | `api-test10` | **Segurança**: limites atômicos, senha forte, 2FA, aparelho novo, links de e-mail, cabeçalhos HTTP/CSP, anti-robô nos pedidos, pré-sequestro de cadastro, imagens, rotas e informações expostas |
 | `api-test11` | **Pedidos e catálogo**: pedido repetido (idempotência), total conferido, preço, duplicados, regras de status/pagamento, estoque, promoção com datas, importação com relatório, cache das listas |
 | `api-test12` | **Permissões e atividades**, edição simultânea das configurações, privacidade (LGPD), HTML para robôs (SEO) |
+| `api-test13` | **Escolha do gelo**: a migration 0013 num banco de produção antigo (marca só Copão e Copão com Monster), o banco recusando pedido sem a escolha (requisição direta, valores inventados, linhas misturadas), linhas separadas por gelo, estoque e limites pela soma, regra presa à categoria (renomear não desliga), idempotência e total conferido, acompanhamento, conta, painel, dashboard e cancelamento |
 | `e2e` | Painel + site + checkout + pedidos ao vivo |
 | `e2e-track` · `e2e-verify` · `e2e-recover` | Acompanhamento e conta; cadastro com confirmação; recuperação de senha |
 | `e2e-cover` · `e2e-whatsapp` | Banner da capa; botões de WhatsApp |
 | `e2e-hardening` | 2FA no painel, configurações simultâneas, atividades, produtos (promoção, importação), privacidade, página não encontrada, checkout (total conferido, envio repetido), API fora do ar, tela de erro, CSP sem bloqueios |
+| `e2e-ice` | **Escolha do gelo no navegador** (celular e computador): a pergunta e a mensagem obrigatória, destaque e troca da escolha, linhas separadas, editar no pedido, guardar ao recarregar, checkout, página do pedido, WhatsApp, painel (pedido, recibo e Categorias), pedido antigo sem escolha, regra mudando no meio da compra, teclado/foco/leitor de tela e telas pequenas |
 | `e2e-mail-off` | Servidor sem SMTP: cadastro indisponível com mensagem clara |
 
 ## O que estes testes **não** provam
