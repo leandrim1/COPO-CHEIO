@@ -2,7 +2,7 @@ import { Banknote, Check, Clock, CreditCard, LoaderCircle, MapPin, Motorbike, Qr
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useId } from 'react';
-import { api, friendlyError } from '../lib/api';
+import { ApiError, api, friendlyError } from '../lib/api';
 import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
 import { seedOrder } from '../lib/orderCache';
@@ -10,7 +10,7 @@ import { rememberOrder } from '../lib/recent';
 import { navigate } from '../lib/router';
 import type { DeliveryType, PaymentMethod, PublicOrder } from '../lib/types';
 import { useCustomer } from './customer';
-import { fullAddress, useShop } from './data';
+import { fullAddress, unitPrice, useShop } from './data';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
 
@@ -95,8 +95,49 @@ function loadCustomer(): Partial<Customer> {
   }
 }
 
+// ---- Envio seguro do pedido ---------------------------------------------------------------------
+
+const ORDER_KEY = 'copocheio:pedido-chave';
+
+function newKey(): string {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// A mesma chave acompanha o mesmo pedido (mesmos itens e dados): se a resposta se perder e a pessoa tocar de novo, ou a página
+// for recarregada, o servidor devolve o pedido que já criou em vez de criar outro. Mudou algo no pedido, muda a chave.
+function orderKey(fingerprint: string): string {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(ORDER_KEY) ?? 'null') as { fp?: string; key?: string } | null;
+    if (saved && saved.fp === fingerprint && typeof saved.key === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(saved.key)) return saved.key;
+  } catch {
+    /* armazenamento bloqueado: segue com uma chave nova */
+  }
+  const key = newKey();
+  try {
+    sessionStorage.setItem(ORDER_KEY, JSON.stringify({ fp: fingerprint, key }));
+  } catch {
+    /* modo privado */
+  }
+  return key;
+}
+
+const forgetOrderKey = () => {
+  try {
+    sessionStorage.removeItem(ORDER_KEY);
+  } catch {
+    /* nada a fazer */
+  }
+};
+
+// O que o servidor respondeu quando o valor do pedido mudou entre a tela e o envio (409 price_changed).
+type PriceNotice = { previous: number; current: number; changes: string[] };
+
+type PriceChangedBody = { total?: number | string; delivery_fee?: number | string; items?: { product_id: string; name: string; quantity: number; unit_price: number | string }[] };
+
 export function CheckoutPage() {
-  const { store, zones, payments, cart, isOpen, fresh, refresh } = useShop();
+  const { store, zones, payments, cart, isOpen, fresh, offline, refresh } = useShop();
   const { lines, total: subtotal, setQty, clear, unavailable } = cart;
   const [form, setForm] = useState<Customer>(() => {
     const saved = loadCustomer();
@@ -120,6 +161,10 @@ export function CheckoutPage() {
   const [errors, setErrors] = useState<Partial<Record<keyof Customer, string>>>({});
   const [submitError, setSubmitError] = useState('');
   const [sending, setSending] = useState(false);
+  const [priceNotice, setPriceNotice] = useState<PriceNotice | null>(null);
+  // Armadilha para robôs (campo escondido) e quanto tempo a pessoa ficou na tela: o servidor desconfia de quem envia rápido demais.
+  const [trap, setTrap] = useState('');
+  const openedAt = useRef(performance.now());
   const errorRef = useRef<HTMLDivElement>(null);
 
   // Só oferece o que a loja aceita agora.
@@ -132,12 +177,19 @@ export function CheckoutPage() {
   const zone = zones.find((z) => z.name.trim().toLowerCase() === form.neighborhood.trim().toLowerCase());
   const fee = delivery === 'delivery' ? (zones.length ? (zone?.fee ?? null) : store.delivery_fee) : 0;
   const total = subtotal + (fee ?? 0);
+  const totalCents = lines.reduce((sum, line) => sum + Math.round(unitPrice(line.product) * 100) * line.qty, 0) + Math.round((fee ?? 0) * 100);
   const belowMinimum = delivery === 'delivery' && store.min_order > 0 && subtotal < store.min_order;
 
   const set = <K extends keyof Customer>(key: K, value: Customer[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: undefined }));
   };
+
+  // Mexeu nos itens, na quantidade ou no endereço: o aviso de "valor mudou" não vale mais.
+  const cartKey = lines.map((line) => `${line.product.id}:${line.qty}`).join(',');
+  useEffect(() => {
+    setPriceNotice(null);
+  }, [cartKey, delivery, form.neighborhood]);
 
   useEffect(() => {
     if (submitError) errorRef.current?.focus();
@@ -225,32 +277,55 @@ export function CheckoutPage() {
       /* modo privado */
     }
     const change = payment === 'cash' && form.change.trim() ? parseMoney(form.change) : null;
+    const base = {
+      customer_name: form.name.trim(),
+      customer_phone: onlyDigits(form.phone),
+      customer_email: form.email.trim() || null,
+      delivery_type: delivery,
+      address: form.address.trim(),
+      address_number: form.number.trim(),
+      neighborhood: zone?.name ?? form.neighborhood.trim(),
+      complement: form.complement.trim(),
+      reference: form.reference.trim(),
+      payment_method: payment,
+      change_for: change === null ? null : change.toFixed(2),
+      notes: form.notes.trim(),
+      items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty })),
+    };
+    // O total que a pessoa está vendo (ou o novo total que ela acabou de aceitar), em centavos para não errar na soma.
+    const seenTotal = priceNotice ? priceNotice.current : totalCents / 100;
     let order: PublicOrder;
     let token: string;
     try {
       ({ order, token } = await api.post<{ order: PublicOrder; token: string }>('/api/orders', {
-        customer_name: form.name.trim(),
-        customer_phone: onlyDigits(form.phone),
-        customer_email: form.email.trim() || null,
-        delivery_type: delivery,
-        address: form.address.trim(),
-        address_number: form.number.trim(),
-        neighborhood: zone?.name ?? form.neighborhood.trim(),
-        complement: form.complement.trim(),
-        reference: form.reference.trim(),
-        payment_method: payment,
-        change_for: change === null ? null : change.toFixed(2),
-        notes: form.notes.trim(),
-        items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty })),
+        ...base,
+        idempotency_key: orderKey(JSON.stringify(base)),
+        expected_total: seenTotal.toFixed(2),
+        website: trap,
+        fill_ms: Math.round(performance.now() - openedAt.current),
       }));
     } catch (error) {
       setSending(false);
+      if (error instanceof ApiError && error.status === 409 && error.code === 'price_changed') {
+        // Nada foi enviado: o valor mudou (preço, promoção ou taxa) e a pessoa precisa ver o novo total antes de confirmar.
+        const body = error.data as PriceChangedBody;
+        const byId = new Map((body.items ?? []).map((item) => [item.product_id, Number(item.unit_price)]));
+        const changes = lines
+          .filter((line) => byId.has(line.product.id) && Math.abs((byId.get(line.product.id) ?? 0) - unitPrice(line.product)) >= 0.005)
+          .map((line) => `${line.product.name}: ${money(unitPrice(line.product))} → ${money(byId.get(line.product.id) ?? 0)}`);
+        if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
+        setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
+        void refresh(true);
+        return;
+      }
+      if (error instanceof ApiError && error.code === 'idempotency_conflict') forgetOrderKey();
       setSubmitError(friendlyError(error, 'Não foi possível enviar o pedido. Tente de novo em instantes.'));
       // Preço, estoque ou horário podem ter mudado: atualiza o cardápio.
-      void refresh();
+      void refresh(true);
       return;
     }
     setSending(false);
+    forgetOrderKey();
     // O pedido já está salvo no Neon; o código de acompanhamento vai no endereço da página de confirmação
     // e fica na lista "neste aparelho" só como atalho.
     seedOrder(token, order);
@@ -262,7 +337,8 @@ export function CheckoutPage() {
   const closedText = store.orders_paused
     ? 'A loja pausou os pedidos pelo site por enquanto.'
     : `Estamos fechados agora. ${nextOpening(store.opening_hours, store.timezone)}`.trim();
-  const blocked = fresh && !isOpen;
+  // Sem resposta da API não dá para saber se a loja está aberta: não mostra "fechado" por engano (o servidor confere ao enviar).
+  const blocked = fresh && !offline && !isOpen;
 
   return (
     <PageShell back="/bebidas" backLabel="Bebidas">
@@ -279,7 +355,7 @@ export function CheckoutPage() {
         </p>
       ) : accountStatus === 'out' ? (
         <p className="mt-4 flex items-start gap-2.5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-sm text-white/65">
-          <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-white/45" aria-hidden="true" />
+          <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-white/60" aria-hidden="true" />
           <span>
             Você pode finalizar sem conta e acompanhar o pedido pelo link. Quer guardar o histórico?{' '}
             <a href="/conta?voltar=%2Fcheckout" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
@@ -295,6 +371,13 @@ export function CheckoutPage() {
       ) : null}
 
       <form onSubmit={submit} noValidate className="mt-8 grid gap-6 lg:grid-cols-[1fr_22rem] lg:items-start">
+        {/* Armadilha para robôs: pessoas não veem nem preenchem este campo. */}
+        <div aria-hidden="true" className="absolute -left-[9999px] h-0 w-0 overflow-hidden">
+          <label>
+            Não preencha este campo
+            <input name="apelido_interno" tabIndex={-1} autoComplete="off" value={trap} onChange={(e) => setTrap(e.target.value)} />
+          </label>
+        </div>
         <div className="space-y-5">
           <Card step={1} title="Seu pedido">
             <ul className="space-y-3">
@@ -477,6 +560,25 @@ export function CheckoutPage() {
                   Remova os itens esgotados para continuar.
                 </p>
               )}
+              {priceNotice && (
+                <div role="alert" className="rounded-2xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-3 text-sm text-amber-100">
+                  <p className="flex items-start gap-2 font-semibold">
+                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      Os valores mudaram desde que você abriu esta tela. O total {priceNotice.current > priceNotice.previous ? 'subiu' : 'baixou'} de {money(priceNotice.previous)} para{' '}
+                      <strong className="text-white">{money(priceNotice.current)}</strong>.
+                    </span>
+                  </p>
+                  {priceNotice.changes.length > 0 && (
+                    <ul className="mt-2 list-disc space-y-0.5 pl-9 text-amber-100/90">
+                      {priceNotice.changes.map((change) => (
+                        <li key={change}>{change}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="mt-2 pl-6 text-amber-100/90">Se estiver tudo certo, toque em “Confirmar novo total”.</p>
+                </div>
+              )}
               {submitError && (
                 <div ref={errorRef} tabIndex={-1} role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-100 focus:outline-none">
                   <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -493,11 +595,20 @@ export function CheckoutPage() {
                     <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" />
                     Enviando pedido...
                   </>
+                ) : priceNotice ? (
+                  <>Confirmar novo total · {money(priceNotice.current)}</>
                 ) : (
                   <>Finalizar pedido · {money(total)}</>
                 )}
               </button>
-              <p className="text-center text-xs text-white/45">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>
+              <p className="text-center text-xs text-white/60">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>
+              <p className="text-center text-xs text-white/60">
+                Usamos seus dados só para entregar e acompanhar o pedido. Veja a{' '}
+                <a href="/privacidade" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">
+                  política de privacidade
+                </a>
+                .
+              </p>
             </div>
           </div>
         </aside>

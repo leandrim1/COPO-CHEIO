@@ -11,8 +11,10 @@ import type { PublicOrder } from '../lib/types';
 export type FeedState = 'loading' | 'ok' | 'missing' | 'error';
 
 const LIVE_MS = 10_000;
-const FINAL_MS = 60_000;
+// Pedido já entregue ou cancelado quase nunca muda: consulta devagar, e mais devagar ainda com a aba em segundo plano.
+const FINAL_MS = 120_000;
 const HIDDEN_MS = 60_000;
+const HIDDEN_FINAL_MS = 300_000;
 const MAX_BACKOFF_MS = 60_000;
 
 export function useOrderFeed(key: string, fetcher: () => Promise<PublicOrder>, seed?: PublicOrder | null) {
@@ -38,7 +40,7 @@ export function useOrderFeed(key: string, fetcher: () => Promise<PublicOrder>, s
       if (!alive) return;
       const hidden = document.visibilityState !== 'visible';
       const final = latest && (latest.order_status === 'delivered' || latest.order_status === 'cancelled');
-      let wait = hidden ? HIDDEN_MS : final ? FINAL_MS : LIVE_MS;
+      let wait = hidden ? (final ? HIDDEN_FINAL_MS : HIDDEN_MS) : final ? FINAL_MS : LIVE_MS;
       if (failures > 0) wait = Math.min(LIVE_MS * 2 ** (failures - 1), MAX_BACKOFF_MS);
       setRetryIn(failures > 0 ? Math.round(wait / 1000) : 0);
       timer = window.setTimeout(() => void load(), wait);

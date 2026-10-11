@@ -66,13 +66,15 @@ export function IceCube({ className, delay = '0s' }: { className: string; delay?
 }
 
 // "Copo Cheio" → COPO + CHEIO em azul (a última palavra do nome fica azul).
-export function BrandName({ name }: { name: string }) {
+// `accent`: o azul da última palavra. Em texto pequeno sobre fundo escuro o azul da marca (#2563FF) fica abaixo do contraste mínimo
+// (4,18:1; o mínimo é 4,5:1): nesses pontos (rodapé) usa-se um azul um pouco mais claro. Nos títulos grandes continua o da marca.
+export function BrandName({ name, accent = 'text-[#2563FF]' }: { name: string; accent?: string }) {
   const words = name.trim().toUpperCase().split(/\s+/);
   if (words.length < 2) return <>{words[0]}</>;
   return (
     <>
       {`${words.slice(0, -1).join(' ')} `}
-      <span className="text-[#2563FF]">{words[words.length - 1]}</span>
+      <span className={accent}>{words[words.length - 1]}</span>
     </>
   );
 }
@@ -111,7 +113,7 @@ export function ProductPrice({ product, className = '' }: { product: Product; cl
     <span className="inline-flex flex-wrap items-baseline gap-x-2">
       <Price value={unitPrice(product)} className={className} />
       {product.promoPrice !== null && (
-        <s className="text-sm font-medium text-white/45">
+        <s className="text-sm font-medium text-white/60">
           <span className="sr-only">de </span>
           {money(product.price)}
         </s>
@@ -163,7 +165,7 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
           <img src={logo} alt="" width={44} height={44} loading="lazy" className="h-11 w-11 rounded-full object-contain ring-1 ring-white/15" />
           <span className="flex flex-col items-start leading-none">
             <span className="text-lg font-black tracking-tight text-white">
-              <BrandName name={store.store_name} />
+              <BrandName name={store.store_name} accent="text-[#3B72FF]" />
             </span>
             {store.tagline && (
               <span className="mt-1 text-[10px] font-semibold tracking-[0.2em] text-white/50">{store.tagline.toUpperCase()}</span>
@@ -172,12 +174,12 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
         </a>
         <nav aria-label="Rodapé" className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-white/65 md:justify-end">
           {NAV_LINKS.map((link) => (
-            <a key={link} href={NAV_HREF[link]} className="transition-colors hover:text-white">
+            <a key={link} href={NAV_HREF[link]} className="-my-1 inline-block py-1 transition-colors hover:text-white">
               {link}
             </a>
           ))}
           {CUSTOMER_LINKS.map((link) => (
-            <a key={link.href} href={link.href} className="transition-colors hover:text-white">
+            <a key={link.href} href={link.href} className="-my-1 inline-block py-1 transition-colors hover:text-white">
               {link.label}
             </a>
           ))}
@@ -194,8 +196,12 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
           )}
         </nav>
       </div>
-      <p className={`mx-auto mt-8 max-w-7xl px-5 text-center text-xs text-white/40 sm:px-8 md:text-left ${lateral}`}>
+      <p className={`mx-auto mt-8 max-w-7xl px-5 text-center text-xs text-white/60 sm:px-8 md:text-left ${lateral}`}>
         © {new Date().getFullYear()} {store.store_name} {store.tagline}. Todos os direitos reservados.
+        <span aria-hidden="true"> · </span>
+        <a href="/privacidade" className="underline-offset-4 transition-colors hover:text-white hover:underline">
+          Política de privacidade
+        </a>
       </p>
     </footer>
   );
@@ -203,7 +209,7 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
 
 // Campo de formulário do site (checkout).
 export const FIELD =
-  'w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-[15px] text-white placeholder:text-white/35 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40 aria-[invalid=true]:border-rose-400/70';
+  'w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-[15px] text-white placeholder:text-white/50 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40 aria-[invalid=true]:border-rose-400/70';
 
 export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (id: string, qty: number) => void }) {
   const { product, qty } = line;

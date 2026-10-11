@@ -32,7 +32,7 @@ export function Field({
           {error}
         </p>
       ) : hint ? (
-        <p id={`${id}-dica`} className="mt-1.5 text-xs text-white/45">
+        <p id={`${id}-dica`} className="mt-1.5 text-xs text-white/60">
           {hint}
         </p>
       ) : null}
@@ -60,7 +60,7 @@ export function PageShell({ back, backLabel, children }: { back: string; backLab
           <img src={logo} alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_24px_rgba(20,92,255,0.55)]" />
         </a>
       </header>
-      <div className="relative mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6">{children}</div>
+      <main className="relative mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6">{children}</main>
       <Footer />
     </div>
   );

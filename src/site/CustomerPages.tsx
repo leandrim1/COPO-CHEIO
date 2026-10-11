@@ -1,4 +1,5 @@
 import { AccountPage, MyOrderPage, MyOrdersPage, RecoverPage, ResetPage, VerifyLinkPage } from './Account';
+import { NotFoundPage, PrivacyPage } from './Privacy';
 import { LookupPage, TrackingPage } from './Tracking';
 
 // Páginas do cliente (acompanhamento e conta). Ficam num pacote à parte: a página inicial não carrega nada disso.
@@ -10,7 +11,9 @@ export type CustomerPage =
   | { name: 'conta-pedido'; number: string }
   | { name: 'recuperar' }
   | { name: 'redefinir'; token: string }
-  | { name: 'verificar'; token: string };
+  | { name: 'verificar'; token: string }
+  | { name: 'privacidade' }
+  | { name: 'notfound' };
 
 export default function CustomerPages({ page }: { page: CustomerPage }) {
   switch (page.name) {
@@ -31,5 +34,9 @@ export default function CustomerPages({ page }: { page: CustomerPage }) {
       return <ResetPage token={page.token} />;
     case 'verificar':
       return <VerifyLinkPage key={page.token} token={page.token} />;
+    case 'privacidade':
+      return <PrivacyPage />;
+    case 'notfound':
+      return <NotFoundPage />;
   }
 }

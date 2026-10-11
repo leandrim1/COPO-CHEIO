@@ -144,13 +144,13 @@ function Timeline({ order }: { order: PublicOrder }) {
                     ? 'bg-[#145CFF] text-white shadow-[0_0_18px_rgba(20,92,255,0.8)]'
                     : isNext
                       ? 'border border-dashed border-[#5B8CFF] text-[#8FB1FF]'
-                      : 'border border-white/15 text-white/40'
+                      : 'border border-white/15 text-white/60'
                 } ${current ? 'ring-4 ring-[#145CFF]/30' : ''}`}
               >
                 {done || wasReached ? <Check className="h-4 w-4" aria-hidden="true" /> : i + 1}
               </span>
               <span className="min-w-0">
-                <span className={`block text-[12px] font-black leading-tight ${done || wasReached ? 'text-white' : isNext ? 'text-[#8FB1FF]' : 'text-white/40'}`}>
+                <span className={`block text-[12px] font-black leading-tight ${done || wasReached ? 'text-white' : isNext ? 'text-[#8FB1FF]' : 'text-white/60'}`}>
                   {stepLabel(status, order.delivery_type)}
                 </span>
                 {at ? <span className="block text-[11px] text-white/50">{stepTime(at)}</span> : isNext ? <span className="block text-[11px] text-[#8FB1FF]/80">Próxima etapa</span> : null}
@@ -253,10 +253,10 @@ function LinkCard({ order, token, link }: { order: PublicOrder; token: string; l
           <dt>Código de acompanhamento</dt>
           <dd className="break-all font-mono font-bold tracking-wide text-white">{token}</dd>
         </div>
-        <p className="mt-2 text-white/45">Sem o link, use o número e o código em “Acompanhar pedido”.</p>
+        <p className="mt-2 text-white/60">Sem o link, use o número e o código em “Acompanhar pedido”.</p>
       </dl>
-      <p className="mt-3 flex items-start gap-2 text-xs text-white/45">
-        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-white/40" aria-hidden="true" />
+      <p className="mt-3 flex items-start gap-2 text-xs text-white/60">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-white/60" aria-hidden="true" />
         <span>
           O link vale por {order.retention_days} dias depois da última atualização do pedido. Quem tem o link vê os itens e o endereço, então compartilhe só com quem você confia.
         </span>
@@ -449,7 +449,7 @@ export function OrderView({
                   <li key={i} className="relative">
                     <span className={`absolute -left-[21px] top-1.5 h-2 w-2 rounded-full ${STATUS[h.status].dot}`} aria-hidden="true" />
                     <span className="font-semibold text-white">{stepLabel(h.status, order.delivery_type)}</span>
-                    <span className="text-white/45"> · {formatDateTime(h.at)}</span>
+                    <span className="text-white/60"> · {formatDateTime(h.at)}</span>
                   </li>
                 ))}
               </ol>
@@ -911,14 +911,14 @@ function GuestLookup() {
                     forgetOrder(r.number);
                     setRecent(loadRecent());
                   }}
-                  className="rounded-full p-2 text-white/40 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  className="rounded-full p-2 text-white/60 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
                 >
                   <XCircle className="h-4 w-4" aria-hidden="true" />
                 </button>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-xs text-white/40">Só um atalho deste aparelho. Os pedidos continuam salvos no sistema e acessíveis pelo link ou pelo número e código.</p>
+          <p className="mt-2 text-xs text-white/60">Só um atalho deste aparelho. Os pedidos continuam salvos no sistema e acessíveis pelo link ou pelo número e código.</p>
         </section>
       )}
     </PageShell>

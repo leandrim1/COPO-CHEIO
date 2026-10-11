@@ -140,13 +140,21 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
       return;
     }
     setBusy(true);
+    let verified: { set_password_token?: string };
     try {
-      await api.post('/api/account/verify-email', { email: pending.email, code });
+      verified = await api.post<{ set_password_token?: string }>('/api/account/verify-email', { email: pending.email, code });
     } catch (err) {
       setBusy(false);
       setError(friendlyError(err, 'Não foi possível confirmar agora. Tente de novo em instantes.'));
       setCode('');
       input.current?.focus();
+      return;
+    }
+    // Confirmou de um navegador diferente do que fez o cadastro: por segurança a senha do cadastro foi descartada e a pessoa
+    // cria a senha agora (o servidor entrega um link de uso único).
+    if (verified.set_password_token) {
+      setBusy(false);
+      navigate(`/conta/redefinir/${verified.set_password_token}`);
       return;
     }
     // E-mail confirmado. Entra sozinho com a senha que acabou de ser digitada; se não der, a tela pede o login.
@@ -207,7 +215,7 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
           type="button"
           onClick={() => void resend()}
           disabled={left > 0 || sending}
-          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/40 disabled:no-underline"
+          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/60 disabled:no-underline"
         >
           {sending && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
           {left > 0 ? `Reenviar código em ${mmss(left)}` : 'Reenviar código'}
@@ -216,7 +224,7 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
           Usar outro e-mail
         </button>
       </div>
-      <p className="text-xs leading-relaxed text-white/45">
+      <p className="text-xs leading-relaxed text-white/60">
         Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se o e-mail está certo.
         {resends >= 2 && ' Por segurança, limitamos quantos códigos podem ser enviados por hora: se ainda não chegou, aguarde um pouco e tente de novo.'} Sua conta só é ativada depois que o código for confirmado.
       </p>
@@ -371,7 +379,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
         <Field label="E-mail *" error={errors.email} hint={tab === 'cadastro' ? 'Enviaremos um código para confirmar que o e-mail é seu.' : undefined}>
           {(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
         </Field>
-        <Field label="Senha *" error={errors.password} hint={tab === 'cadastro' ? 'Pelo menos 8 caracteres.' : undefined}>
+        <Field label="Senha *" error={errors.password} hint={tab === 'cadastro' ? 'Pelo menos 8 caracteres. Evite senhas óbvias.' : undefined}>
           {(p) => (
             <input
               {...p}
@@ -396,7 +404,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             </a>
           </p>
         )}
-        {tab === 'cadastro' && <p className="text-xs text-white/45">Usamos seus dados só para entregar e acompanhar seus pedidos. A conta só é ativada depois que você confirmar o código enviado ao seu e-mail. Você pode excluir a conta quando quiser.</p>}
+        {tab === 'cadastro' && <p className="text-xs text-white/60">Usamos seus dados só para entregar e acompanhar seus pedidos. A conta só é ativada depois que você confirmar o código enviado ao seu e-mail. Você pode excluir a conta quando quiser. Veja a <a href="/privacidade" className="font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">política de privacidade</a>.</p>}
       </form>
     </Panel>
   );
@@ -417,8 +425,13 @@ export function VerifyLinkPage({ token }: { token: string }) {
     setPhase('busy');
     setError('');
     try {
-      const data = await api.post<{ email: string; email_masked: string }>('/api/account/verify-link', { token });
+      const data = await api.post<{ email: string; email_masked: string; set_password_token?: string }>('/api/account/verify-link', { token });
       setLoginPrefill(data.email);
+      // Abriu o link num navegador diferente do cadastro: a senha do cadastro foi descartada, então ela é criada agora.
+      if (data.set_password_token) {
+        navigate(`/conta/redefinir/${data.set_password_token}`);
+        return;
+      }
       setMasked(data.email_masked);
       setPhase('done');
     } catch (err) {
@@ -671,7 +684,7 @@ function Profile({ customer }: { customer: CustomerAccount }) {
               <Field label="Senha atual">
                 {(p) => <input {...p} type="password" value={pass.current} onChange={(e) => setPass({ ...pass, current: e.target.value })} autoComplete="current-password" maxLength={200} className={FIELD} />}
               </Field>
-              <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
+              <Field label="Senha nova" hint="Pelo menos 8 caracteres. Evite senhas óbvias.">
                 {(p) => <input {...p} type="password" value={pass.next} onChange={(e) => setPass({ ...pass, next: e.target.value })} autoComplete="new-password" maxLength={200} className={FIELD} />}
               </Field>
               {passMsg && (passMsg.ok ? <OkLine>{passMsg.text}</OkLine> : <ErrorLine>{passMsg.text}</ErrorLine>)}
@@ -1002,7 +1015,7 @@ function RecoverByOrder({ initialEmail, onDone }: { initialEmail: string; onDone
             {(p) => <input {...p} value={form.code} onChange={(e) => set('code', e.target.value)} autoComplete="off" autoCapitalize="characters" spellCheck={false} className={`${FIELD} font-mono`} placeholder="7K3M9-QX2VB-…" />}
           </Field>
         </div>
-        <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
+        <Field label="Senha nova" hint="Pelo menos 8 caracteres. Evite senhas óbvias.">
           {(p) => <input {...p} type="password" value={form.password} onChange={(e) => set('password', e.target.value)} autoComplete="new-password" maxLength={200} className={FIELD} />}
         </Field>
         <ErrorLine>{error}</ErrorLine>
@@ -1056,7 +1069,7 @@ function RecoverSent({ sent, onAgain, onOther }: { sent: Sent; onAgain: (s: Sent
           type="button"
           onClick={() => void resend()}
           disabled={left > 0 || busy}
-          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/40 disabled:no-underline"
+          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/60 disabled:no-underline"
         >
           {busy && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
           {left > 0 ? `Reenviar link em ${mmss(left)}` : 'Reenviar link'}
@@ -1065,7 +1078,7 @@ function RecoverSent({ sent, onAgain, onOther }: { sent: Sent; onAgain: (s: Sent
           Usar outro e-mail
         </button>
       </div>
-      <p className="text-xs leading-relaxed text-white/45">Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se digitou o e-mail certo. Por segurança, limitamos quantos links podem ser enviados por hora.</p>
+      <p className="text-xs leading-relaxed text-white/60">Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se digitou o e-mail certo. Por segurança, limitamos quantos links podem ser enviados por hora.</p>
     </div>
   );
 }
@@ -1265,7 +1278,7 @@ export function ResetPage({ token }: { token: string }) {
           ) : (
             <Panel id="nova" title="Escolha uma senha nova" subtitle={masked ? `Conta ${masked}. Este link só vale uma vez.` : 'Este link só vale uma vez.'}>
               <form onSubmit={submit} noValidate className="space-y-4">
-                <Field label="Senha nova" hint="Pelo menos 8 caracteres.">
+                <Field label="Senha nova" hint="Pelo menos 8 caracteres. Evite senhas óbvias.">
                   {(p) => <input {...p} type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" maxLength={200} className={FIELD} />}
                 </Field>
                 <ErrorLine>{error}</ErrorLine>

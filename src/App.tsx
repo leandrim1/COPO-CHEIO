@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
+import { DEFAULT_FAVICON, DEFAULT_SHARE_IMAGE } from './lib/defaults';
 import { money, normalizeText } from './lib/format';
 import { hoursLines, nextOpening, openHoursSummary } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
@@ -784,7 +785,7 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
 }
 
 function BebidasPage() {
-  const { ready, fresh, failed, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
+  const { ready, fresh, failed, offline, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
   const { cart: quantities, setQty } = cart;
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
@@ -852,14 +853,19 @@ function BebidasPage() {
   const loadFailed = failed && products.length === 0;
   const hasBanners = banners.length > 0;
 
+  // Só no computador (a partir de 1024 px) e só na primeira visita (sem cópia do cardápio salva): até os dados chegarem, os textos da
+  // loja e os brilhos de fundo (que acompanham a altura da página) ficam escondidos, em vez de aparecer com valores provisórios e
+  // pular de lugar quando o cardápio chega (isso media 0,21 a 0,28 de salto de layout). No celular e para quem já visitou nada muda.
+  const hold = ready ? '' : 'lg:invisible';
+
   return (
     <div className="relative min-h-[100dvh] overflow-x-clip bg-[#050505]">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div aria-hidden="true" className={`pointer-events-none absolute inset-0 overflow-hidden ${ready ? '' : 'lg:hidden'}`}>
         <div className="absolute -left-40 top-1/3 h-96 w-96 rounded-full bg-[#145CFF]/[0.12] blur-3xl cc-glow" />
         <div className="absolute -right-40 top-2/3 h-96 w-96 rounded-full bg-[#2563FF]/10 blur-3xl cc-glow [animation-delay:2s]" />
       </div>
 
-      <div className="relative mx-auto w-full max-w-[44rem] lg:max-w-none">
+      <main className="relative mx-auto w-full max-w-[44rem] lg:max-w-none">
         <div className="relative h-44 overflow-hidden rounded-b-[2rem] bg-gradient-to-b from-[#0E36B8] via-[#0A2273] to-[#07123A] sm:h-52 lg:aspect-[4/1] lg:h-auto lg:max-h-[32rem] lg:w-full">
           <CoverBackground ready={ready} banners={coverBanners} />
           <a
@@ -878,7 +884,7 @@ function BebidasPage() {
         </div>
 
         <div
-          className={`px-4 sm:px-6 ${WIDE} lg:grid lg:items-start lg:gap-x-10 ${
+          className={`px-4 sm:px-6 ${WIDE} lg:grid lg:items-start lg:gap-x-10 ${hold} ${
             hasBanners ? 'lg:grid-cols-[minmax(20rem,5fr)_minmax(0,7fr)]' : 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)]'
           }`}
         >
@@ -906,7 +912,7 @@ function BebidasPage() {
               </ul>
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              {fresh && <OpenStatus />}
+              {fresh && !offline && <OpenStatus />}
               {hours && <p className="text-xs text-white/50">{hours}</p>}
             </div>
           </div>
@@ -940,7 +946,7 @@ function BebidasPage() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Buscar no cardápio"
-                className="h-12 w-full rounded-full border border-white/15 bg-white/5 pl-12 pr-4 text-[15px] text-white placeholder:text-white/40 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40"
+                className="h-12 w-full rounded-full border border-white/15 bg-white/5 pl-12 pr-4 text-[15px] text-white placeholder:text-white/55 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40"
               />
             </label>
           )}
@@ -1058,7 +1064,7 @@ function BebidasPage() {
             <section key={name} id={categoryId(name)} data-category={name} aria-labelledby={`${categoryId(name)}-titulo`} className="scroll-mt-20 pt-8">
               <h2 id={`${categoryId(name)}-titulo`} className="flex items-baseline gap-3 text-xl font-black tracking-tight text-white">
                 {name}
-                <span className="text-sm font-medium text-white/40">{items.length}</span>
+                <span className="text-sm font-medium text-white/60">{items.length}</span>
               </h2>
               <ul className="mt-4 space-y-3 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 min-[1800px]:grid-cols-3">
                 {items.map((product) => (
@@ -1073,7 +1079,7 @@ function BebidasPage() {
             </section>
           ))}
         </div>
-      </div>
+      </main>
 
       <Footer wide />
     </div>
@@ -1164,7 +1170,7 @@ function ContatoSection() {
                   title={`Mapa com a localização da ${store.store_name}`}
                   src={`https://www.google.com/maps?q=${encodeURIComponent(address)}&output=embed`}
                   loading="lazy"
-                  referrerPolicy="no-referrer-when-downgrade"
+                  referrerPolicy="strict-origin-when-cross-origin"
                   className="h-full w-full"
                 />
               </div>
@@ -1729,21 +1735,31 @@ function setMeta(attribute: 'name' | 'property', key: string, content: string | 
   tag.content = content;
 }
 
-function useSeo(page: string) {
-  const { site, logo, fresh } = useShop();
+function useSeo(page: string, noindex: boolean) {
+  const { site, logo, fresh, offline } = useShop();
   useEffect(() => {
     document.title = page ? `${page} – ${site.seo_title}` : site.seo_title;
   }, [page, site.seo_title]);
+  // Tag própria (e removida ao sair): as páginas de acompanhamento já cuidam da delas, e as duas não podem se atropelar.
   useEffect(() => {
-    if (!fresh) return;
+    if (!noindex) return;
+    const meta = document.createElement('meta');
+    meta.name = 'robots';
+    meta.content = 'noindex, nofollow';
+    document.head.appendChild(meta);
+    return () => meta.remove();
+  }, [noindex]);
+  useEffect(() => {
+    // Sem resposta da API (e sem cópia salva) os textos são só os padrões: não sobrescreve o que o servidor já escreveu no <head>.
+    if (!fresh || offline) return;
     setMeta('name', 'description', site.seo_description);
     setMeta('property', 'og:title', site.seo_title);
     setMeta('property', 'og:description', site.seo_description);
-    setMeta('property', 'og:image', site.og_image_url || new URL(logo, window.location.origin).href);
+    setMeta('property', 'og:image', new URL(site.og_image_url || site.logo_url || DEFAULT_SHARE_IMAGE, window.location.origin).href);
     setMeta('property', 'og:type', 'website');
     const icon = document.head.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (icon) icon.href = site.favicon_url || logo;
-  }, [fresh, site.seo_description, site.seo_title, site.og_image_url, site.favicon_url, logo]);
+    if (icon) icon.href = site.favicon_url || DEFAULT_FAVICON;
+  }, [fresh, offline, site.seo_description, site.seo_title, site.og_image_url, site.favicon_url, logo]);
 }
 
 // ---- Site público ------------------------------------------------------------------------------
@@ -1755,7 +1771,9 @@ type Page = { name: 'home' } | { name: 'bebidas' } | { name: 'checkout' } | Cust
 const CODE = '[^/]{1,200}';
 
 function pageOf(pathname: string): Page {
+  if (pathname === '/' || pathname === '/index.html') return { name: 'home' };
   if (pathname === '/bebidas') return { name: 'bebidas' };
+  if (pathname === '/privacidade') return { name: 'privacidade' };
   if (pathname === '/checkout') return { name: 'checkout' };
   let m = new RegExp(`^/pedido/(${CODE})$`).exec(pathname);
   if (m) return { name: 'pedido', token: m[1] };
@@ -1771,7 +1789,8 @@ function pageOf(pathname: string): Page {
   if (m) return { name: 'redefinir', token: m[1] };
   m = /^\/conta\/verificar\/([0-9A-Za-z_-]{20,100})$/.exec(pathname);
   if (m) return { name: 'verificar', token: m[1] };
-  return { name: 'home' };
+  // Endereço que não existe: página "não encontrada" (e fora do Google), não a página inicial disfarçada.
+  return { name: 'notfound' };
 }
 
 const PAGE_TITLE: Record<Page['name'], string> = {
@@ -1786,7 +1805,13 @@ const PAGE_TITLE: Record<Page['name'], string> = {
   recuperar: 'Recuperar senha',
   redefinir: 'Nova senha',
   verificar: 'Confirmar e-mail',
+  privacidade: 'Política de privacidade',
+  notfound: 'Página não encontrada',
 };
+
+// Páginas que não devem aparecer no Google (pessoais, de passagem ou inexistentes). Reforça o que o servidor já manda para os robôs.
+// (/pedido e /acompanhar-pedido ficam de fora: a própria página de acompanhamento já põe o noindex e o referrer.)
+const NOINDEX = new Set<Page['name']>(['checkout', 'conta', 'conta-pedidos', 'conta-pedido', 'recuperar', 'redefinir', 'verificar', 'notfound']);
 
 function CustomerLoading() {
   return (
@@ -1803,7 +1828,7 @@ function PublicSite({ pathname }: { pathname: string }) {
   const [orderOpen, setOrderOpen] = useState(false);
   const openOrder = useCallback(() => setOrderOpen(true), []);
   const closeOrder = useCallback(() => setOrderOpen(false), []);
-  useSeo(PAGE_TITLE[page.name]);
+  useSeo(PAGE_TITLE[page.name], NOINDEX.has(page.name));
 
   // "Pedir agora": with items in the order it opens the order; otherwise the link goes to Bebidas.
   const startOrder = (e: MouseEvent<HTMLAnchorElement>) => {

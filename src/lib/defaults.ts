@@ -64,4 +64,8 @@ export const DEFAULT_PAYMENTS: PaymentOption[] = [
   { code: 'card', label: 'Cartão na entrega', details: null },
 ];
 
-export const DEFAULT_LOGO = '/logo.png';
+// Versão leve da logo: a mesma arte em 512 px (o tamanho do original), em WebP (~70 KB em vez de 215 KB). O public/logo.png original
+// continua para a prévia de links e para quem a usa direto.
+export const DEFAULT_LOGO = '/logo-512.webp';
+export const DEFAULT_FAVICON = '/icon-32.png';
+export const DEFAULT_SHARE_IMAGE = '/logo.png';

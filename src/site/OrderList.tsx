@@ -22,14 +22,14 @@ export function OrderListItem({ o }: { o: AccountOrderSummary }) {
             </span>
           </span>
           {o.summary && <span className="mt-1 block truncate text-sm text-white/65">{o.summary}</span>}
-          <span className="mt-1 block text-xs text-white/45">
+          <span className="mt-1 block text-xs text-white/60">
             {formatDateTime(o.created_at)} · {PAYMENT_LABEL[o.payment_method]}
             {o.payment_status === 'paid' ? ' · pago' : ''}
           </span>
         </span>
         <span className="shrink-0 text-right">
           <span className="block font-black tabular-nums text-white">{money(o.total)}</span>
-          <ChevronRight className="ml-auto mt-1 h-5 w-5 text-white/40" aria-hidden="true" />
+          <ChevronRight className="ml-auto mt-1 h-5 w-5 text-white/60" aria-hidden="true" />
         </span>
       </a>
     </li>

@@ -1,5 +1,4 @@
 User-agent: *
-Disallow: /admin
 Disallow: /api/
 Disallow: /pedido/
 Disallow: /acompanhar-pedido/
