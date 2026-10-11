@@ -12,7 +12,7 @@ export default function CategoriesPage() {
   const confirm = useConfirm();
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState(false);
-  const [editing, setEditing] = useState<{ id?: string; name: string; active: boolean } | null>(null);
+  const [editing, setEditing] = useState<{ id?: string; name: string; active: boolean; ice: boolean } | null>(null);
   const [saving, setSaving] = useState(false);
   const [nameError, setNameError] = useState('');
 
@@ -40,8 +40,8 @@ export default function CategoriesPage() {
     }
     setSaving(true);
     try {
-      if (editing.id) await api.patch(`/api/admin/categories/${editing.id}`, { name, active: editing.active });
-      else await api.post('/api/admin/categories', { name, active: editing.active });
+      if (editing.id) await api.patch(`/api/admin/categories/${editing.id}`, { name, active: editing.active, ice_choice_required: editing.ice });
+      else await api.post('/api/admin/categories', { name, active: editing.active, ice_choice_required: editing.ice });
     } catch (err) {
       setSaving(false);
       setNameError(friendlyError(err, 'Não foi possível salvar a categoria.'));
@@ -118,7 +118,7 @@ export default function CategoriesPage() {
         title="Categorias"
         description="A ordem daqui é a ordem do cardápio no site."
         actions={
-          <Button icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => (setNameError(''), setEditing({ name: '', active: true }))}>
+          <Button icon={<Plus className="h-4 w-4" aria-hidden="true" />} onClick={() => (setNameError(''), setEditing({ name: '', active: true, ice: false }))}>
             Nova categoria
           </Button>
         }
@@ -140,7 +140,7 @@ export default function CategoriesPage() {
             icon={<Tags className="h-6 w-6" aria-hidden="true" />}
             title="Nenhuma categoria"
             description="Crie as categorias do seu cardápio (ex.: Cervejas, Refrigerantes, Gelo). Elas aparecem no site como filtros."
-            action={<Button onClick={() => setEditing({ name: '', active: true })}>Criar categoria</Button>}
+            action={<Button onClick={() => setEditing({ name: '', active: true, ice: false })}>Criar categoria</Button>}
           />
         </Card>
       ) : (
@@ -160,10 +160,15 @@ export default function CategoriesPage() {
                   <p className="truncate font-semibold text-white">{row.name}</p>
                   <p className="text-xs text-white/60">
                     {row.products} produto(s) {!row.active && <Badge className="ml-1">Oculta no site</Badge>}
+                    {row.ice_choice_required && (
+                      <Badge tone="blue" className="ml-1">
+                        Pede o gelo
+                      </Badge>
+                    )}
                   </p>
                 </div>
                 <Switch checked={row.active} onChange={(v) => void toggle(row, v)} ariaLabel={`Categoria ${row.name}: ativa no site`} />
-                <IconButton label={`Editar ${row.name}`} onClick={() => (setNameError(''), setEditing({ id: row.id, name: row.name, active: row.active }))}>
+                <IconButton label={`Editar ${row.name}`} onClick={() => (setNameError(''), setEditing({ id: row.id, name: row.name, active: row.active, ice: row.ice_choice_required === true }))}>
                   <Pencil className="h-4 w-4" aria-hidden="true" />
                 </IconButton>
                 <IconButton label={`Excluir ${row.name}`} onClick={() => void remove(row)} className="hover:text-rose-300">
@@ -206,6 +211,12 @@ export default function CategoriesPage() {
               )}
             </Field>
             <Switch checked={editing.active} onChange={(v) => setEditing({ ...editing, active: v })} label="Ativa no site" description="Desativada, a categoria e os produtos dela saem do site." />
+            <Switch
+              checked={editing.ice}
+              onChange={(v) => setEditing({ ...editing, ice: v })}
+              label="Pedir a escolha do gelo"
+              description="Quem pedir um produto desta categoria precisa escolher entre gelo normal e gelo de sabor. A escolha aparece no pedido, no acompanhamento e no recibo."
+            />
           </form>
         )}
       </Modal>

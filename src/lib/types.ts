@@ -1,4 +1,5 @@
 // Formato dos dados que a API devolve (tabelas do Neon: ver db/migrations).
+import type { IceChoice } from './ice';
 
 export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 export type DayHours = { open: boolean; start: string; end: string };
@@ -64,6 +65,8 @@ export type Category = {
   name: string;
   position: number;
   active: boolean;
+  // Os produtos desta categoria só são pedidos com a escolha do gelo (gelo normal ou de sabor).
+  ice_choice_required?: boolean;
   created_at?: string;
 };
 
@@ -152,6 +155,8 @@ export type OrderItem = {
   quantity: number;
   unit_price: number;
   total_price: number;
+  // Escolha do gelo (só nos produtos de categorias que pedem).
+  ice_choice?: IceChoice | null;
 };
 
 export type StatusChange = {
@@ -239,7 +244,7 @@ export type PublicOrder = {
   // Por quantos dias, depois da última atualização, o link continua valendo.
   retention_days: number;
   // product_id só vem para o dono da conta (para "pedir de novo").
-  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number }[];
+  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null }[];
   history: { status: OrderStatus; at: string }[];
 };
 

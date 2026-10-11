@@ -17,6 +17,7 @@ import {
   timeAgo,
   whatsappTo,
 } from '../lib/format';
+import { ICE_INFO, iceLabel, isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
 import { copyText, trackingUrl } from '../lib/tracking';
 import type { Order, OrderItem, OrderStatus, PaymentStatus, StatusChange, TrackingLinkInfo } from '../lib/types';
@@ -624,6 +625,12 @@ export function OrderDetailPage({ number }: { number: string }) {
                     <p className="font-semibold text-white">
                       <span className="text-[#8FB1FF]">{item.quantity}x</span> {item.product_name}
                     </p>
+                    {isIceChoice(item.ice_choice) && (
+                      <p data-ice-tag={item.ice_choice} className="mt-1 inline-flex items-center gap-1 rounded-full bg-[#145CFF]/20 px-2 py-0.5 text-xs font-semibold text-white ring-1 ring-[#2563FF]/50">
+                        <span aria-hidden="true">{ICE_INFO[item.ice_choice].emoji}</span>
+                        {ICE_INFO[item.ice_choice].label}
+                      </p>
+                    )}
                     <p className="text-xs text-white/60">{money(Number(item.unit_price))} cada</p>
                   </div>
                   <p className="shrink-0 font-bold tabular-nums text-white">{money(Number(item.total_price))}</p>
@@ -776,6 +783,7 @@ export function OrderDetailPage({ number }: { number: string }) {
           <p key={item.id} className="flex justify-between gap-2">
             <span>
               {item.quantity}x {item.product_name}
+              {isIceChoice(item.ice_choice) ? ` (${iceLabel(item.ice_choice)})` : ''}
             </span>
             <span>{money(Number(item.total_price))}</span>
           </p>

@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, STATUS_FLOW, addressLines, formatDateTime, money, stepLabel } from '../lib/format';
+import { ICE_INFO, iceLabel, isIceChoice } from '../lib/ice';
 import { orderCache, seedOrder } from '../lib/orderCache';
 import { forgetAllOrders, forgetOrder, loadRecent, rememberOrder } from '../lib/recent';
 import type { RecentOrder } from '../lib/recent';
@@ -88,7 +89,7 @@ export function orderWhatsappMessage(store: StoreSettings, order: PublicOrder, l
     order.customer_name,
     '',
     'Itens:',
-    ...order.items.map((item) => `${item.quantity}x ${item.product_name}`),
+    ...order.items.map((item) => `${item.quantity}x ${item.product_name}${item.ice_choice ? ` – ${iceLabel(item.ice_choice)}` : ''}`),
     '',
     'Total:',
     money(order.total),
@@ -462,6 +463,12 @@ export function OrderView({
                 <li key={i} className="flex justify-between gap-4 py-2.5 text-sm">
                   <span className="text-white">
                     <span className="font-bold text-[#8FB1FF]">{item.quantity}x</span> {item.product_name}
+                    {isIceChoice(item.ice_choice) && (
+                      <span data-ice-tag={item.ice_choice} className="mt-1 flex w-max items-center gap-1 rounded-full bg-[#145CFF]/20 px-2 py-0.5 text-xs font-semibold text-white ring-1 ring-[#2563FF]/50">
+                        <span aria-hidden="true">{ICE_INFO[item.ice_choice].emoji}</span>
+                        {ICE_INFO[item.ice_choice].label}
+                      </span>
+                    )}
                   </span>
                   <span className="tabular-nums text-white/75">{money(item.total_price)}</span>
                 </li>

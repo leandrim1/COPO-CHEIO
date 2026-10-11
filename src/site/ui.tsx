@@ -1,8 +1,10 @@
 import { GlassWater, Minus, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { money } from '../lib/format';
+import { ICE_INFO, iceLabel } from '../lib/ice';
 import { instagramHandle, unitPrice, useShop } from './data';
 import type { CartLine, Product } from './data';
+import { useIcePicker } from './icePicker';
 
 // Peças visuais usadas em mais de uma página do site.
 
@@ -211,43 +213,83 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
 export const FIELD =
   'w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-[15px] text-white placeholder:text-white/50 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40 aria-[invalid=true]:border-rose-400/70';
 
-export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (id: string, qty: number) => void }) {
-  const { product, qty } = line;
+// Uma linha do pedido (produto + gelo). `setQty` recebe a chave da linha (o id do produto, ou id:gelo).
+export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: string, qty: number) => void }) {
+  const { product, qty, key, ice, needsIce } = line;
+  const picker = useIcePicker();
+  // Nome para quem usa leitor de tela: a mesma bebida com gelos diferentes são linhas diferentes.
+  const name = ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
+  const askIce = product.iceRequired && !product.soldOut;
   return (
-    <li className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2.5">
-      <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.4),transparent_75%)]">
-        <ProductImage product={product} padding="p-1" />
+    <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsIce ? 'border-amber-400/50' : 'border-white/10'}`}>
+      <div className="flex items-center gap-3">
+        <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.4),transparent_75%)]">
+          <ProductImage product={product} padding="p-1" />
+        </div>
+        <div className="min-w-0 flex-1">
+          {/* Produto que pede o gelo: até 3 linhas de nome (o mesmo copão em gelos diferentes precisa de nome inteiro para a pessoa saber
+              qual é qual). Os demais produtos seguem com 2 linhas, como sempre. */}
+          <p className={`${product.iceRequired ? 'line-clamp-3' : 'line-clamp-2'} text-sm font-bold leading-tight text-white`}>{product.name}</p>
+          {product.soldOut ? (
+            <p className="mt-1 text-xs font-bold text-rose-300">Esgotado – remova do pedido</p>
+          ) : (
+            <p className="mt-1 text-sm font-semibold text-[#8FB1FF]">{money(unitPrice(product) * qty)}</p>
+          )}
+        </div>
+        <div className="flex items-center rounded-full border border-white/15 bg-black/20">
+          <button
+            type="button"
+            onClick={() => setQty(key, product.soldOut ? 0 : qty - 1)}
+            aria-label={qty === 1 || product.soldOut ? `Remover ${name}` : `Diminuir ${name}`}
+            className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            {product.soldOut ? <X className="h-4 w-4" aria-hidden="true" /> : <Minus className="h-4 w-4" aria-hidden="true" />}
+          </button>
+          <span className="w-6 text-center text-sm font-bold tabular-nums text-white" aria-live="polite">
+            {qty}
+          </span>
+          <button
+            type="button"
+            onClick={() => setQty(key, qty + 1)}
+            disabled={product.soldOut}
+            aria-label={`Aumentar ${name}`}
+            className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="line-clamp-2 text-sm font-bold leading-tight text-white">{product.name}</p>
-        {product.soldOut ? (
-          <p className="mt-1 text-xs font-bold text-rose-300">Esgotado – remova do pedido</p>
-        ) : (
-          <p className="mt-1 text-sm font-semibold text-[#8FB1FF]">{money(unitPrice(product) * qty)}</p>
-        )}
-      </div>
-      <div className="flex items-center rounded-full border border-white/15 bg-black/20">
-        <button
-          type="button"
-          onClick={() => setQty(product.id, product.soldOut ? 0 : qty - 1)}
-          aria-label={qty === 1 || product.soldOut ? `Remover ${product.name}` : `Diminuir ${product.name}`}
-          className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-        >
-          {product.soldOut ? <X className="h-4 w-4" aria-hidden="true" /> : <Minus className="h-4 w-4" aria-hidden="true" />}
-        </button>
-        <span className="w-6 text-center text-sm font-bold tabular-nums text-white" aria-live="polite">
-          {qty}
-        </span>
-        <button
-          type="button"
-          onClick={() => setQty(product.id, qty + 1)}
-          disabled={product.soldOut}
-          aria-label={`Aumentar ${product.name}`}
-          className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30"
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
+      {/* O gelo escolhido, na largura toda da linha (alinhado ao texto, depois da foto): cabe inteiro até em celular pequeno. */}
+      {askIce && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[4.75rem]">
+          {ice ? (
+            <>
+              <span data-ice-tag={ice} className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-[#145CFF]/20 px-2.5 py-0.5 text-xs font-semibold text-white ring-1 ring-[#2563FF]/50">
+                <span aria-hidden="true">{ICE_INFO[ice].emoji}</span>
+                {ICE_INFO[ice].label}
+              </span>
+              <button
+                type="button"
+                onClick={() => picker.edit(line)}
+                aria-label={`Alterar o gelo de ${product.name}`}
+                className="-my-1 rounded px-1 py-1.5 text-xs font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                Alterar
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              data-ice-pending=""
+              onClick={() => picker.edit(line)}
+              aria-label={`Escolher o gelo de ${product.name} (obrigatório)`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-bold text-amber-100 ring-1 ring-amber-400/50 transition-colors hover:bg-amber-400/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Escolher o gelo *
+            </button>
+          )}
+        </div>
+      )}
     </li>
   );
 }

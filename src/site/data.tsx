@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
 import { isOpenNow } from '../lib/hours';
+import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, settleCart } from '../lib/ice';
+import type { Cart, IceChoice } from '../lib/ice';
 import type { Banner, Category, DayHours, DayKey, DeliveryZone, HeroSettings, OpeningHours, PaymentOption, SiteSettings, StoreSettings } from '../lib/types';
 
 // Produto como o site mostra (vem de GET /api/products: tabelas products + categories do Neon).
@@ -18,6 +20,8 @@ export type Product = {
   featured: boolean;
   soldOut: boolean;
   position: number;
+  // A categoria do produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido.
+  iceRequired: boolean;
 };
 
 export const unitPrice = (p: Product) => p.promoPrice ?? p.price;
@@ -36,7 +40,9 @@ type ShopData = {
   payments: PaymentOption[];
 };
 
-const CACHE_KEY = 'copocheio:site-v2';
+// v3: os produtos passaram a trazer `iceRequired`. Uma cópia v2 (sem essa informação) seria um cardápio que deixa pedir copão sem
+// perguntar o gelo, então ela simplesmente não é mais lida.
+const CACHE_KEY = 'copocheio:site-v3';
 const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS };
 
 // ---- Dados defensivos --------------------------------------------------------------------------
@@ -131,7 +137,8 @@ function readCache(): ShopData | null {
     // A cópia salva passa pelas mesmas conferências da resposta da API (um formato antigo ou corrompido não derruba a página).
     const content = normalizeContent({ ...parsed, cover_banners: parsed.coverBanners });
     const products = (parsed.products as unknown[]).filter(
-      (p): p is Product => isObject(p) && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.price)) && typeof p.category === 'string',
+      (p): p is Product =>
+        isObject(p) && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.price)) && typeof p.category === 'string' && typeof p.iceRequired === 'boolean',
     );
     return { ...EMPTY, ...content, products };
   } catch {
@@ -170,6 +177,7 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         featured: row.featured,
         soldOut: row.sold_out,
         position: row.position,
+        iceRequired: category?.ice_choice_required === true,
       };
     })
     .sort(
@@ -244,35 +252,32 @@ function useShopData() {
 
 const CART_KEY = 'copocheio:pedido';
 
-export type CartLine = { product: Product; qty: number };
+// Uma linha do pedido é "produto + gelo". Produto que não pede o gelo tem `ice: null` e a chave é só o id (o formato de sempre).
+export type CartLine = {
+  key: string;
+  product: Product;
+  qty: number;
+  ice: IceChoice | null;
+  // O produto pede o gelo e a linha está sem escolha (ex.: pedido guardado antes de existir a pergunta): precisa escolher.
+  needsIce: boolean;
+};
 
-function loadCart(): Record<string, number> {
+function loadCart(): Cart {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(CART_KEY) ?? '{}');
-    const cart: Record<string, number> = {};
-    if (parsed && typeof parsed === 'object') {
-      for (const [id, qty] of Object.entries(parsed)) {
-        if (typeof qty === 'number' && Number.isInteger(qty) && qty > 0) cart[id] = Math.min(qty, 99);
-      }
-    }
-    return cart;
+    return normalizeCart(JSON.parse(localStorage.getItem(CART_KEY) ?? '{}'));
   } catch {
     return {};
   }
 }
 
 function useCart(products: Product[], ready: boolean) {
-  const [cart, setCart] = useState<Record<string, number>>(loadCart);
+  const [cart, setCart] = useState<Cart>(loadCart);
 
-  // Depois de carregar o cardápio, tira o que não está mais nele.
+  // Depois de carregar o cardápio, tira o que não está mais nele e acerta o gelo ao que cada produto pede agora.
   useEffect(() => {
     if (!ready) return;
-    setCart((prev) => {
-      const known = new Set(products.map((p) => p.id));
-      const next: Record<string, number> = {};
-      for (const [id, qty] of Object.entries(prev)) if (known.has(id)) next[id] = qty;
-      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
-    });
+    const byId = new Map(products.map((p) => [p.id, p.iceRequired]));
+    setCart((prev) => settleCart(prev, (id) => byId.get(id)));
   }, [products, ready]);
 
   useEffect(() => {
@@ -283,25 +288,39 @@ function useCart(products: Product[], ready: boolean) {
     }
   }, [cart]);
 
-  const setQty = useCallback((id: string, qty: number) => {
-    setCart((prev) => {
-      const next = { ...prev };
-      if (qty <= 0) delete next[id];
-      else next[id] = Math.min(qty, 99);
-      return next;
-    });
-  }, []);
+  // Quantidade de uma linha (a chave é o id do produto, ou id:gelo). Zero ou menos tira a linha.
+  const setQty = useCallback((key: string, qty: number) => setCart((prev) => setLineQty(prev, key, qty)), []);
+  // Põe unidades de um produto no pedido; `ice` só vale (e é obrigatório) para produto que pede o gelo.
+  const add = useCallback((product: Product, ice: IceChoice | null, qty = 1) => setCart((prev) => addToCart(prev, product.id, product.iceRequired ? ice : null, qty)), []);
+  // Troca o gelo de uma linha que já está no pedido (a quantidade vai junto).
+  const changeIce = useCallback((key: string, ice: IceChoice) => setCart((prev) => changeLineIce(prev, key, ice)), []);
   const clear = useCallback(() => setCart({}), []);
+  // Quantas unidades do produto estão no pedido, somando todos os gelos.
+  const countOf = useCallback((productId: string) => countFor(cart, productId), [cart]);
 
-  const lines: CartLine[] = useMemo(
-    () => products.filter((p) => (cart[p.id] ?? 0) > 0).map((product) => ({ product, qty: cart[product.id] })),
-    [products, cart],
-  );
+  const lines: CartLine[] = useMemo(() => {
+    const byProduct = new Map<string, { key: string; qty: number; ice: IceChoice | null }[]>();
+    for (const [key, qty] of Object.entries(cart)) {
+      const parsed = parseLineKey(key);
+      if (!parsed) continue;
+      const list = byProduct.get(parsed.productId) ?? [];
+      list.push({ key, qty, ice: parsed.ice });
+      byProduct.set(parsed.productId, list);
+    }
+    // Na ordem do cardápio; do mesmo produto, primeiro a linha sem escolha, depois gelo normal e gelo de sabor.
+    const rank = (ice: IceChoice | null) => (ice === null ? 0 : ice === 'normal' ? 1 : 2);
+    return products.flatMap((product) =>
+      (byProduct.get(product.id) ?? [])
+        .sort((a, b) => rank(a.ice) - rank(b.ice))
+        .map(({ key, qty, ice }) => ({ key, product, qty, ice, needsIce: product.iceRequired && ice === null })),
+    );
+  }, [products, cart]);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
   const total = lines.reduce((sum, line) => sum + line.qty * unitPrice(line.product), 0);
   const unavailable = lines.filter((line) => line.product.soldOut);
+  const incomplete = lines.filter((line) => line.needsIce);
 
-  return { cart, setQty, clear, lines, count, total, unavailable };
+  return { cart, setQty, add, changeIce, countOf, clear, lines, count, total, unavailable, incomplete };
 }
 
 // ---- Contexto ---------------------------------------------------------------------------------

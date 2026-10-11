@@ -5,6 +5,7 @@ import { useId } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
+import { ICE_REQUIRED_MESSAGE } from '../lib/ice';
 import { seedOrder } from '../lib/orderCache';
 import { rememberOrder } from '../lib/recent';
 import { navigate } from '../lib/router';
@@ -138,7 +139,7 @@ type PriceChangedBody = { total?: number | string; delivery_fee?: number | strin
 
 export function CheckoutPage() {
   const { store, zones, payments, cart, isOpen, fresh, offline, refresh } = useShop();
-  const { lines, total: subtotal, setQty, clear, unavailable } = cart;
+  const { lines, total: subtotal, setQty, clear, unavailable, incomplete } = cart;
   const [form, setForm] = useState<Customer>(() => {
     const saved = loadCustomer();
     return {
@@ -186,10 +187,15 @@ export function CheckoutPage() {
   };
 
   // Mexeu nos itens, na quantidade ou no endereço: o aviso de "valor mudou" não vale mais.
-  const cartKey = lines.map((line) => `${line.product.id}:${line.qty}`).join(',');
+  const cartKey = lines.map((line) => `${line.key}:${line.qty}`).join(',');
   useEffect(() => {
     setPriceNotice(null);
   }, [cartKey, delivery, form.neighborhood]);
+
+  // O aviso "escolha o gelo" some sozinho quando todos os itens já têm a escolha.
+  useEffect(() => {
+    if (incomplete.length === 0) setSubmitError((current) => (current === ICE_REQUIRED_MESSAGE ? '' : current));
+  }, [incomplete.length]);
 
   useEffect(() => {
     if (submitError) errorRef.current?.focus();
@@ -263,6 +269,12 @@ export function CheckoutPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitError('');
+    // Falta escolher o gelo de algum item: nada é enviado; a mensagem aparece junto do botão e o foco vai para o item.
+    if (incomplete.length > 0) {
+      setSubmitError(ICE_REQUIRED_MESSAGE);
+      requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-line="${incomplete[0].key}"] [data-ice-pending]`)?.focus());
+      return;
+    }
     if (!validate()) {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
       return;
@@ -290,7 +302,8 @@ export function CheckoutPage() {
       payment_method: payment,
       change_for: change === null ? null : change.toFixed(2),
       notes: form.notes.trim(),
-      items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty })),
+      // A escolha do gelo vai junto de cada item que a pede (o servidor confere de novo).
+      items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty, ...(line.product.iceRequired ? { ice_choice: line.ice } : {}) })),
     };
     // O total que a pessoa está vendo (ou o novo total que ela acabou de aceitar), em centavos para não errar na soma.
     const seenTotal = priceNotice ? priceNotice.current : totalCents / 100;
@@ -310,9 +323,11 @@ export function CheckoutPage() {
         // Nada foi enviado: o valor mudou (preço, promoção ou taxa) e a pessoa precisa ver o novo total antes de confirmar.
         const body = error.data as PriceChangedBody;
         const byId = new Map((body.items ?? []).map((item) => [item.product_id, Number(item.unit_price)]));
-        const changes = lines
-          .filter((line) => byId.has(line.product.id) && Math.abs((byId.get(line.product.id) ?? 0) - unitPrice(line.product)) >= 0.005)
-          .map((line) => `${line.product.name}: ${money(unitPrice(line.product))} → ${money(byId.get(line.product.id) ?? 0)}`);
+        // Um produto pode estar em mais de uma linha (gelos diferentes): o aviso de preço sai uma vez por produto.
+        const products = [...new Map(lines.map((line) => [line.product.id, line.product])).values()];
+        const changes = products
+          .filter((product) => byId.has(product.id) && Math.abs((byId.get(product.id) ?? 0) - unitPrice(product)) >= 0.005)
+          .map((product) => `${product.name}: ${money(unitPrice(product))} → ${money(byId.get(product.id) ?? 0)}`);
         if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
         setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
         void refresh(true);
@@ -382,7 +397,7 @@ export function CheckoutPage() {
           <Card step={1} title="Seu pedido">
             <ul className="space-y-3">
               {lines.map((line) => (
-                <CartLineItem key={line.product.id} line={line} setQty={setQty} />
+                <CartLineItem key={line.key} line={line} setQty={setQty} />
               ))}
             </ul>
             <a href="/bebidas" className="mt-4 inline-flex text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline">

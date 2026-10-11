@@ -22,10 +22,13 @@ import { DEFAULT_FAVICON, DEFAULT_SHARE_IMAGE } from './lib/defaults';
 import { money, normalizeText } from './lib/format';
 import { hoursLines, nextOpening, openHoursSummary } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
+import { ICE_REQUIRED_MESSAGE } from './lib/ice';
 import { CheckoutPage } from './site/Checkout';
 import type { CustomerPage } from './site/CustomerPages';
 import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
 import type { Product } from './site/data';
+import { IcePickerProvider } from './site/IceChoice';
+import { useIcePicker } from './site/icePicker';
 import {
   BLUE_BUTTON,
   BrandName,
@@ -359,12 +362,16 @@ function AddControl({
   qty,
   name,
   onChange,
+  onPick,
   compact = false,
   soldOut = false,
 }: {
   qty: number;
   name: string;
   onChange: (qty: number) => void;
+  // Produto que pede a escolha do gelo: o botão pergunta o gelo (e é quem põe no pedido); o "+ / −" do cartão não serve, porque
+  // o mesmo produto pode estar no pedido com gelos diferentes. A quantidade e a troca de gelo ficam na gaveta do pedido.
+  onPick?: () => void;
   compact?: boolean;
   soldOut?: boolean;
 }) {
@@ -378,6 +385,34 @@ function AddControl({
         className={`inline-flex items-center justify-center rounded-full border border-white/10 bg-white/5 font-bold text-white/45 ${compact ? 'h-10 shrink-0 px-2.5 text-xs min-[360px]:px-3 min-[360px]:text-[13px] min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full text-sm'}`}
       >
         Esgotado
+      </span>
+    );
+  }
+  if (onPick) {
+    // O selo com a quantidade fica FORA do botão: o texto visível do botão continua sendo só "Adicionar" (e o nome acessível o contém).
+    return (
+      <span className={`relative ${compact ? 'inline-flex shrink-0' : 'block w-full'}`}>
+        <button
+          type="button"
+          onClick={onPick}
+          aria-haspopup="dialog"
+          aria-label={qty > 0 ? `Adicionar mais ${name} ao pedido (${qty} no pedido)` : `Adicionar ${name} ao pedido`}
+          className={`inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
+            compact ? 'h-10 w-10 shrink-0 gap-1.5 text-[13px] min-[385px]:w-auto min-[385px]:px-3 min-[480px]:gap-2 min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full gap-2 text-sm'
+          } ${focusRing}`}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+          <span className={compact ? 'max-[384px]:sr-only' : ''}>Adicionar</span>
+        </button>
+        {qty > 0 && (
+          <span
+            data-in-order={qty}
+            aria-hidden="true"
+            className="pointer-events-none absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-white px-1 text-[11px] font-black text-[#145CFF] ring-2 ring-[#050505]"
+          >
+            {qty}
+          </span>
+        )}
       </span>
     );
   }
@@ -426,7 +461,7 @@ function AddControl({
   );
 }
 
-function ProductDetails({ product, qty, onChange }: { product: Product; qty: number; onChange: (qty: number) => void }) {
+function ProductDetails({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: (qty: number) => void; onPick?: () => void }) {
   return (
     <div className="flex flex-1 flex-col px-1 pb-1 pt-3">
       <h3 className="line-clamp-2 min-h-[2.5rem] text-[15px] font-bold leading-tight text-white sm:min-h-[2.6rem] sm:text-base">
@@ -438,7 +473,7 @@ function ProductDetails({ product, qty, onChange }: { product: Product; qty: num
       <div className="mt-auto pt-3">
         <ProductPrice product={product} className="text-xl sm:text-2xl" />
         <div className="mt-2.5">
-          <AddControl qty={qty} name={product.name} onChange={onChange} soldOut={product.soldOut} />
+          <AddControl qty={qty} name={product.name} onChange={onChange} onPick={onPick} soldOut={product.soldOut} />
         </div>
       </div>
     </div>
@@ -449,11 +484,13 @@ function FeaturedCard({
   product,
   qty,
   onChange,
+  onPick,
   className = '',
 }: {
   product: Product;
   qty: number;
   onChange: (qty: number) => void;
+  onPick?: () => void;
   className?: string;
 }) {
   return (
@@ -468,7 +505,7 @@ function FeaturedCard({
         <div className="relative aspect-square overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.6),rgba(20,92,255,0.12)_55%,transparent_78%)]">
           <ProductImage product={product} />
         </div>
-        <ProductDetails product={product} qty={qty} onChange={onChange} />
+        <ProductDetails product={product} qty={qty} onChange={onChange} onPick={onPick} />
       </div>
     </li>
   );
@@ -762,7 +799,7 @@ const WIDE = 'lg:mx-auto lg:max-w-[120rem] lg:px-10 xl:px-14 2xl:px-20';
 
 const categoryId = (name: string) => `cat-${normalizeText(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
 
-function ProductRow({ product, qty, onChange }: { product: Product; qty: number; onChange: (qty: number) => void }) {
+function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: (qty: number) => void; onPick?: () => void }) {
   return (
     <li className="group relative flex gap-3 rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.02] p-3.5 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-[#2563FF]/50 hover:shadow-[0_22px_50px_-24px_rgba(37,99,255,0.75)] motion-reduce:transform-none sm:gap-5 sm:p-4">
       <div className="flex min-w-0 flex-1 flex-col">
@@ -773,7 +810,7 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
         {/* Preço e controle sempre na mesma linha, em todos os cards (sem quebrar para baixo). */}
         <div className="mt-auto flex flex-nowrap items-center justify-between gap-2 pt-3">
           <ProductPrice product={product} className={`text-base min-[360px]:text-lg min-[480px]:text-xl sm:text-2xl ${product.soldOut ? 'opacity-60' : ''}`} />
-          <AddControl qty={qty} name={product.name} onChange={onChange} compact soldOut={product.soldOut} />
+          <AddControl qty={qty} name={product.name} onChange={onChange} onPick={onPick} compact soldOut={product.soldOut} />
         </div>
       </div>
       <div className="relative h-32 w-[5.5rem] shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] min-[360px]:w-[6.5rem] min-[480px]:w-32 sm:h-44 sm:w-44">
@@ -786,7 +823,8 @@ function ProductRow({ product, qty, onChange }: { product: Product; qty: number;
 
 function BebidasPage() {
   const { ready, fresh, failed, offline, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
-  const { cart: quantities, setQty } = cart;
+  const { setQty, countOf } = cart;
+  const picker = useIcePicker();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
   const chipsRef = useRef<HTMLDivElement>(null);
@@ -1051,8 +1089,9 @@ function BebidasPage() {
                   <FeaturedCard
                     key={product.id}
                     product={product}
-                    qty={quantities[product.id] ?? 0}
+                    qty={countOf(product.id)}
                     onChange={(qty) => setQty(product.id, qty)}
+                    onPick={product.iceRequired ? () => picker.pick(product) : undefined}
                     className="w-[62%] shrink-0 snap-start sm:w-[44%] lg:w-72 xl:w-80"
                   />
                 ))}
@@ -1071,8 +1110,9 @@ function BebidasPage() {
                   <ProductRow
                     key={product.id}
                     product={product}
-                    qty={quantities[product.id] ?? 0}
+                    qty={countOf(product.id)}
                     onChange={(qty) => setQty(product.id, qty)}
+                    onPick={product.iceRequired ? () => picker.pick(product) : undefined}
                   />
                 ))}
               </ul>
@@ -1360,8 +1400,13 @@ function OrderBar({ show, count, total, onOpen, corner = false }: { show: boolea
 
 function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { cart } = useShop();
-  const { lines, total, setQty, clear, unavailable } = cart;
+  const { lines, total, setQty, clear, unavailable, incomplete } = cart;
   const closeRef = useRef<HTMLButtonElement>(null);
+  // Tentou finalizar com algum item sem a escolha do gelo: mostra o aviso até a pessoa escolher.
+  const [iceNotice, setIceNotice] = useState(false);
+  useEffect(() => {
+    if (incomplete.length === 0) setIceNotice(false);
+  }, [incomplete.length]);
 
   useEffect(() => {
     if (!open) return;
@@ -1427,7 +1472,7 @@ function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
           <>
             <ul className="flex-1 space-y-3 overflow-y-auto px-5 py-2 sm:px-6">
               {lines.map((line) => (
-                <CartLineItem key={line.product.id} line={line} setQty={setQty} />
+                <CartLineItem key={line.key} line={line} setQty={setQty} />
               ))}
             </ul>
 
@@ -1451,12 +1496,32 @@ function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
                   <Price value={total} className="text-3xl" />
                 </div>
               </div>
+              {iceNotice && incomplete.length > 0 && (
+                <p id="pedido-gelo-aviso" className="flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-100" role="alert">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  {ICE_REQUIRED_MESSAGE}
+                </p>
+              )}
               {unavailable.length > 0 ? (
                 <span aria-disabled="true" className={`${BLUE_BUTTON} w-full cursor-not-allowed py-4 opacity-50`}>
                   Finalizar pedido
                 </span>
               ) : (
-                <a href="/checkout" onClick={onClose} className={`${BLUE_BUTTON} w-full py-4`}>
+                <a
+                  href="/checkout"
+                  aria-describedby={iceNotice && incomplete.length > 0 ? 'pedido-gelo-aviso' : undefined}
+                  onClick={(e) => {
+                    // Falta escolher o gelo de algum item: não segue para o checkout; avisa e leva a pessoa ao item.
+                    if (incomplete.length > 0) {
+                      e.preventDefault();
+                      setIceNotice(true);
+                      document.querySelector<HTMLElement>(`[data-line="${incomplete[0].key}"] [data-ice-pending]`)?.focus();
+                      return;
+                    }
+                    onClose();
+                  }}
+                  className={`${BLUE_BUTTON} w-full py-4`}
+                >
                   Finalizar pedido
                   <ArrowRight className="h-5 w-5" aria-hidden="true" />
                 </a>
@@ -1850,7 +1915,7 @@ function PublicSite({ pathname }: { pathname: string }) {
   const showOrder = page.name === 'home' || page.name === 'bebidas';
 
   return (
-    <>
+    <IcePickerProvider>
       <style>
         {MOTION_STYLES}
         {VIEWPORT_STYLES}
@@ -1869,7 +1934,7 @@ function PublicSite({ pathname }: { pathname: string }) {
           <OrderDrawer open={orderOpen} onClose={closeOrder} />
         </>
       )}
-    </>
+    </IcePickerProvider>
   );
 }
 

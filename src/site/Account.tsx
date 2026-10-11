@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { maskPhone, onlyDigits } from '../lib/format';
+import { isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
@@ -931,7 +932,8 @@ export function MyOrderPage({ number }: { number: string }) {
         missing.push(item.product_name);
         continue;
       }
-      cart.setQty(product.id, Math.min(99, (cart.cart[product.id] ?? 0) + item.quantity));
+      // O gelo escolhido naquele pedido vai junto; um pedido de antes da pergunta volta sem escolha e o checkout pede.
+      cart.add(product, isIceChoice(item.ice_choice) ? item.ice_choice : null, item.quantity);
       added += 1;
     }
     if (!missing.length && added) navigate('/checkout');
