@@ -3,9 +3,11 @@ import { audit } from '../audit.js';
 import { batch, one } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
+import { sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken } from '../tracking.js';
+import { paymentsOfOrder } from './payments.js';
 
-const STATUSES = ['new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] as const;
+const STATUSES = ['awaiting_payment', 'new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] as const;
 const PAYMENT_STATUSES = ['pending', 'paid', 'refunded'] as const;
 
 export function registerOrders(r: Router) {
@@ -15,7 +17,7 @@ export function registerOrders(r: Router) {
     const days = Number.isInteger(asked) ? asked : 7;
     const [dash, recent, privacy] = await batch([
       ['select admin_dashboard($1) as dashboard', [days]],
-      ['select * from orders order by created_at desc limit 8'],
+      ["select * from orders where order_status <> 'awaiting_payment' order by created_at desc limit 8"],
       ["select count(*) as n from privacy_requests where status = 'open'"],
     ]);
     return json({ ...dash[0].dashboard, recent, privacy_open: privacy[0]?.n ?? 0 });
@@ -94,7 +96,8 @@ export function registerOrders(r: Router) {
       ['select id, name, email, phone, status from customers where id = $1', [order.customer_id]],
     ]);
     const retention = await one<{ days: number }>('select tracking_retention_days as days from store_settings where id = 1');
-    return json({ order, items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180 });
+    const payments = await paymentsOfOrder(order.id, ctx.admin!.role === 'owner');
+    return json({ order, items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180, payments });
   });
 
   // Gera um link novo de acompanhamento para mandar ao cliente. O código só aparece nesta resposta (no banco
@@ -158,24 +161,47 @@ export function registerOrders(r: Router) {
 
   // Polling inteligente: o painel pergunta de poucos em poucos segundos (e só com a aba aberta) se há
   // pedido novo. Sem `after`, só devolve o ponto de partida; com `after`, devolve o que chegou depois.
+  // Pedido de pagamento online que ainda não foi pago não é "novo" para a loja: só aparece quando o pagamento é confirmado
+  // (lista `paid`, com o próprio ponto de partida `paid_after`/`paid_cursor`).
   r.get('/api/admin/live', 'admin', async (ctx) => {
+    // De passagem (o painel aberto é o "agendador" do sistema): encerra o que venceu e confere pagamentos online pendentes.
+    await sweep({ lookups: true }).catch(() => undefined);
     const afterParam = ctx.url.searchParams.get('after');
     const after = afterParam !== null && /^\d{1,12}$/.test(afterParam) ? afterParam : null;
-    const [fresh, summary] = await batch([
+    const paidParam = ctx.url.searchParams.get('paid_after');
+    const paidAfter = paidParam !== null && /^\d{1,12}$/.test(paidParam) ? paidParam : null;
+    const [fresh, summary, paid, paidTop] = await batch([
       [
         after === null
           ? 'select id, order_number, customer_name, total, created_at from orders where false'
-          : `select id, order_number, customer_name, total, created_at from orders where order_number > $1::bigint order by order_number limit 20`,
+          : `select id, order_number, customer_name, total, created_at from orders
+              where order_number > $1::bigint and order_status <> 'awaiting_payment' order by order_number limit 20`,
         after === null ? [] : [after],
       ],
       [
-        `select coalesce(max(order_number), 0) as latest,
+        `select coalesce(max(order_number) filter (where order_status <> 'awaiting_payment'), 0) as latest,
                 count(*) filter (where order_status = 'new') as pending,
                 coalesce(extract(epoch from max(updated_at)), 0)::text as rev
            from orders`,
       ],
+      [
+        paidAfter === null
+          ? 'select 0 as paid_seq, id, order_number, customer_name, total, created_at from orders where false'
+          : `select p.paid_seq, o.id, o.order_number, o.customer_name, o.total, p.paid_at as created_at
+               from payments p join orders o on o.id = p.order_id
+              where p.paid_seq > $1::bigint and o.order_status <> 'cancelled' order by p.paid_seq limit 20`,
+        paidAfter === null ? [] : [paidAfter],
+      ],
+      ['select coalesce(max(paid_seq), 0) as top from payments'],
     ]);
-    return json({ new_orders: fresh, latest: summary[0].latest, pending: summary[0].pending, rev: summary[0].rev });
+    return json({
+      new_orders: fresh,
+      latest: summary[0].latest,
+      pending: summary[0].pending,
+      rev: summary[0].rev,
+      paid_orders: paid,
+      paid_cursor: paid.length ? Math.max(...paid.map((row) => Number(row.paid_seq))) : paidAfter === null ? Number(paidTop[0].top) : Number(paidAfter),
+    });
   });
 }
 

@@ -6,6 +6,7 @@ import { batch, insertRow, one, query, updateRow } from '../db.js';
 import type { Row } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
+import { onlineReadiness } from '../payments/service.js';
 import {
   bool,
   digits,
@@ -141,7 +142,8 @@ export function registerContent(r: Router) {
       ['select * from store_settings where id = 1'],
       ['select * from site_settings where id = 1'],
       ['select * from hero_settings where id = 1'],
-      ['select * from payment_methods order by position'],
+      // Os meios de pagamento online (o cliente paga pelo site) são ligados e conferidos em /admin/pagamentos, não nesta lista.
+      ['select * from payment_methods where not is_online_payment(code) order by position'],
       ['select * from delivery_zones order by position, name'],
     ]);
     return json({ store: store[0], site: site[0], hero: hero[0], payments, zones });
@@ -212,6 +214,22 @@ export function registerContent(r: Router) {
   r.patch('/api/admin/payments/:code', 'admin', async (ctx) => {
     const code = ctx.params.code;
     const { values } = parse(paymentSpec, await readJson(ctx.req, 4 * 1024), { partial: true });
+    // Pix online (o cliente paga pelo site): só o owner liga ou desliga, não tem chave PIX, e só liga com operadora configurada e conta
+    // aprovada (sem isso o cliente escolheria uma forma de pagamento que não consegue concluir).
+    if (code === 'pix_online') {
+      if (ctx.admin!.role !== 'owner') throw new HttpError(403, 'Só o owner pode ligar ou desligar o pagamento online.');
+      if (values.details !== undefined && values.details !== null) throw new HttpError(400, 'O pagamento online não usa chave PIX.');
+      if (values.enabled === true) {
+        const ready = await onlineReadiness();
+        if (!ready.ready) {
+          throw new HttpError(409, 'Para ligar o pagamento online é preciso ter uma conta aprovada na operadora de pagamento. Veja o status em Pagamentos online.', {
+            code: 'payments_not_ready',
+            provider: ready.provider,
+            merchant: ready.merchant,
+          });
+        }
+      }
+    }
     if (values.enabled === false) {
       const others = await one<{ n: number }>('select count(*) as n from payment_methods where enabled and code <> $1', [code]);
       if (!others?.n) throw new HttpError(400, 'Mantenha pelo menos uma forma de pagamento ativa.');

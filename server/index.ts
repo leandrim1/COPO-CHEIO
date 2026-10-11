@@ -6,6 +6,7 @@ import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
 import { mailConfigured, mailMissing } from './mail.js';
 import { siteUrl } from './mailBrand.js';
+import { onlineReadiness } from './payments/service.js';
 import { HttpError, Router, json } from './http.js';
 import type { Access, Admin, Ctx } from './http.js';
 import { registerAccount } from './routes/account.js';
@@ -13,6 +14,7 @@ import { registerAudit } from './routes/audit.js';
 import { registerCatalog } from './routes/catalog.js';
 import { registerContent } from './routes/content.js';
 import { registerOrders } from './routes/orders.js';
+import { registerPayments } from './routes/payments.js';
 import { registerPrivacy } from './routes/privacy.js';
 import { registerPublic } from './routes/public.js';
 import { registerSeo } from './routes/seo.js';
@@ -62,7 +64,12 @@ router.get('/api/health', 'public', async (ctx) => {
 });
 
 // Mesmo resultado detalhado, mas só para administradores logados (inclui o nome das variáveis que faltam).
-router.get('/api/admin/health', 'admin', async (ctx) => json(await systemStatus(ctx.req)));
+// `payments`: o pagamento online é opcional (não entra em `missing`); mostra só se há operadora e conta aprovada, sem valores.
+router.get('/api/admin/health', 'admin', async (ctx) => {
+  const status = await systemStatus(ctx.req);
+  const payments = status.database === 'ok' ? await onlineReadiness().catch(() => null) : null;
+  return json({ ...status, payments });
+});
 
 registerPublic(router);
 registerSession(router);
@@ -70,6 +77,7 @@ registerTwoFactor(router);
 registerTracking(router);
 registerAccount(router);
 registerOrders(router);
+registerPayments(router);
 registerCatalog(router);
 registerContent(router);
 registerTeam(router);

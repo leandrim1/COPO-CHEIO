@@ -4,6 +4,8 @@ import { customerFromRequest } from '../customer.js';
 import { batch, one, query } from '../db.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
+import { getProvider, isOnlineMethod } from '../payments/provider.js';
+import { sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken, trackingTokenFromKey } from '../tracking.js';
 
 // Listas públicas (cardápio e conteúdo do site) podem ficar uns segundos na borda da Vercel: muita gente abrindo o site ao mesmo
@@ -86,9 +88,15 @@ export function registerPublic(r: Router) {
     const filledMs = typeof body.fill_ms === 'number' ? body.fill_ms : NaN;
     const tooFast = Number.isFinite(filledMs) && filledMs >= 0 && filledMs < MIN_FILL_MS;
     if (trap || tooFast) throw new HttpError(400, 'Não foi possível enviar o pedido. Atualize a página e tente de novo.', { code: 'rejected' });
+    // Pagamento online sem operadora configurada neste servidor: não cria um pedido que a pessoa não conseguiria pagar.
+    if (isOnlineMethod(body.payment_method) && !getProvider()) {
+      throw new HttpError(503, 'O pagamento online não está disponível agora. Escolha outra forma de pagamento.', { code: 'payments_unavailable' });
+    }
     await reserve('order', ctx.ip, 600, 20, wait);
 
     try {
+      // Pedido de pagamento online que não foi pago a tempo devolve o estoque antes desta venda (sem agendador: de passagem, no máximo a cada 20 s).
+      await sweep({ lookups: false }).catch(() => undefined);
       // Preço, estoque, taxa e regras da loja são conferidos dentro do banco (create_order): o navegador só diz o que o cliente
       // escolheu. O código de acompanhamento nasce aqui, no servidor: só o hash vai para o banco, na mesma transação do pedido.
       // Com chave de idempotência, o código é derivado dela: repetir o envio devolve o MESMO pedido e o mesmo código.
