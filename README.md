@@ -110,7 +110,12 @@ público continuam funcionando — para guardá-las no Blob, abra o produto e en
   unidade. O número do pedido é sequencial (começa em **#1001**).
 - **Itens**: nome e preço são gravados no pedido. Mudar o produto depois não altera pedidos antigos.
 - **WhatsApp**: só depois que o pedido está salvo, a página do pedido mostra o botão com a mensagem pronta para o número
-  configurado no painel.
+  configurado no painel. O número da loja já vem preenchido — (34) 99128-3384, pela migration `0008_store_whatsapp.sql`,
+  que só grava se o campo estiver vazio — e vale para todos os botões de WhatsApp do site (Contato, chamada final, cardápio
+  vazio, pedido e acompanhamento) e para o rodapé dos e-mails. Para trocar ou tirar, é só editar *Configurações → Loja →
+  WhatsApp da loja* (sem número, o botão abre o WhatsApp para a pessoa escolher o contato). Se a API estiver fora do ar e o
+  navegador não tiver cópia do site, o botão de ajuda usa o número de `src/lib/defaults.ts`. Um link do WhatsApp (por exemplo
+  `https://api.whatsapp.com/send/?phone=5534991283384`) também funciona como *Link* de um banner: tocar nele abre o chat.
 - **Status**: NOVO → CONFIRMADO → EM PREPARO → SAIU PARA ENTREGA → ENTREGUE, ou CANCELADO. Cada mudança fica em
   `order_status_history` (de → para, data e administrador). Cancelar devolve o estoque; pedido cancelado não reabre.
   O painel altera só status e pagamento — itens e valores ficam como o cliente fechou.
@@ -428,6 +433,8 @@ A migration `0006_password_reset_email.sql` acrescenta a `customer_password_rese
 hora e por dia), registram o envio e usam o link (trocar a senha, derrubar sessões e, só para link de e-mail enviado, confirmar o e-mail).
 A migration `0007_banner_cover.sql` acrescenta `banners.placement` (`menu` ou `cover`; os banners que já existiam ficam no
 cardápio, na mesma ordem) e a regra de que um banner de capa precisa de pelo menos uma imagem.
+A migration `0008_store_whatsapp.sql` preenche o WhatsApp da loja quando ele ainda está vazio (quem já cadastrou outro número
+não é sobrescrito).
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
