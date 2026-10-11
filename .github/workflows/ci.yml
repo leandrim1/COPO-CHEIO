@@ -1,0 +1,113 @@
+# Conferência automática a cada envio ao GitHub: tipos, build, testes unitários, de API e de navegador.
+# Tudo roda num PostgreSQL de teste dentro do próprio job: não usa o Neon, o Blob nem o e-mail de verdade e não precisa de nenhum
+# segredo. Detalhes e como rodar no seu computador: tests/README.md.
+name: CI
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: Tipos, build, unitários e API
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+      - name: Cliente do PostgreSQL (psql)
+        run: command -v psql >/dev/null || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+      - run: npm ci
+      - run: npm ci --prefix tests
+      - name: Tipos e build
+        run: npm run build
+      - name: Testes unitários
+        run: npm run test:unit
+      - name: Testes de API
+        run: npm run test:api
+        env:
+          TEST_OUT: ${{ runner.temp }}/copocheio-tests
+      - name: Guardar a saída dos testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: saida-testes-api
+          path: |
+            ${{ runner.temp }}/copocheio-tests
+            tests/server.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  e2e:
+    name: Navegador (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+      - name: Cliente do PostgreSQL (psql)
+        run: command -v psql >/dev/null || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+      - run: npm ci
+      - run: npm ci --prefix tests
+      - name: Chromium do Playwright
+        run: npx playwright install --with-deps chromium
+        working-directory: tests
+      - name: Build
+        run: npm run build
+      - name: Testes de navegador
+        run: npm run test:e2e
+        env:
+          TEST_OUT: ${{ runner.temp }}/copocheio-tests
+      - name: Guardar a saída dos testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: saida-testes-navegador
+          path: |
+            ${{ runner.temp }}/copocheio-tests
+            tests/server.log
+          if-no-files-found: ignore
+          retention-days: 7

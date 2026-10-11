@@ -25,10 +25,14 @@ taxa de entrega, formas de pagamento e banners — vem do Neon e é editado no p
 
 ```bash
 npm install
-vercel env pull .env.local   # DATABASE_URL e BLOB_READ_WRITE_TOKEN do projeto
+vercel env pull .env.local   # DATABASE_URL e a credencial do Blob do projeto
 npm run dev                  # site + API em http://localhost:5173
 npm run build                # confere os tipos (site e servidor) e gera a versão de produção
+npm test                     # tipos + testes unitários + testes de API (precisa de um PostgreSQL local: veja tests/README.md)
 ```
+
+Mais documentação: [`docs/OPERACAO.md`](docs/OPERACAO.md) (variáveis de ambiente, deploy e migrations, monitoramento, backup, o que
+fazer quando algo quebra, prazos de guarda dos dados) e [`tests/README.md`](tests/README.md) (como rodar os testes e o que eles cobrem).
 
 ## Páginas
 
@@ -43,19 +47,22 @@ npm run build                # confere os tipos (site e servidor) e gera a vers�
 | `/conta` · `/conta/pedidos` · `/conta/pedidos/:numero` | Conta (opcional): dados, "Meus pedidos", detalhe e "pedir de novo" |
 | `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha: link por e-mail (ou, sem e-mail, telefone + pedido) e tela da senha nova |
 | `/conta/verificar/:codigo`                             | Link do e-mail de confirmação (um toque no botão ativa a conta) |
+| `/privacidade`      | Política de privacidade (LGPD): quais dados, para quê, por quanto tempo; pedido de acesso, correção ou exclusão; botão para apagar os dados guardados neste aparelho |
+
+Endereço que não existe mostra "Página não encontrada" (e responde `404` para o Google, que recebe o HTML pronto; veja [Robôs e prévia de links](#robôs-e-prévia-de-links)).
 
 | Painel (só administradores)                    | O que faz                                                   |
 | ---------------------------------------------- | ----------------------------------------------------------- |
-| `/admin/login`                                 | Entrar com e-mail e senha                                   |
+| `/admin/login`                                 | Entrar com e-mail e senha (e o código do aplicativo, se a conta usa verificação em duas etapas) |
 | `/admin/dashboard`                             | Pedidos e faturamento do dia/semana/mês, gráficos, recentes |
 | `/admin/pedidos` · `/admin/pedidos/:numero`    | Pedidos ao vivo, filtros (status, data, conta/visitante), busca, status, histórico, link de acompanhamento, impressão |
-| `/admin/clientes`                              | Contas de clientes (confirmadas / aguardando confirmação do e-mail), estado do envio de e-mails e e-mail de teste, link de nova senha, desativar, excluir |
-| `/admin/produtos` · `/novo` · `/:id`           | Cadastrar, editar, duplicar, excluir, destacar, esgotar     |
+| `/admin/clientes`                              | Contas de clientes (confirmadas / aguardando confirmação do e-mail), estado do envio de e-mails e e-mail de teste, link de nova senha, desativar, excluir; **pedidos de privacidade (LGPD)** e anonimização (owner) |
+| `/admin/produtos` · `/novo` · `/:id`           | Cadastrar, editar, duplicar, excluir, destacar, esgotar; promoção com data de início e fim; importar do cardápio antigo (JSON ou planilha) |
 | `/admin/categorias`                            | Criar, editar, ordenar, ativar/desativar                    |
 | `/admin/estoque`                               | + adicionar / − retirar; 0 = ESGOTADO automático            |
 | `/admin/site`                                  | Logo, nome, Hero, textos das seções, SEO                    |
 | `/admin/banners`                               | Banner da capa da página Bebidas (no lugar dos gelos) e carrossel do cardápio, com imagem de celular e de computador |
-| `/admin/configuracoes`                         | Loja, horários, entrega, pagamento, painel, administradores |
+| `/admin/configuracoes`                         | Abas: Loja, Horários, Entrega, Pagamento, **Painel** (som, minha senha, verificação em duas etapas, estado do sistema), Administradores e **Atividades** (só o owner: quem mudou o quê) |
 
 Qualquer `/admin/*` sem login vai para `/admin/login`, e o servidor confere a sessão em **toda** chamada
 administrativa: esconder a tela no navegador não é a proteção. O código do painel só é baixado quando alguém abre `/admin`.
@@ -69,27 +76,37 @@ O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blo
    servidor aceita os dois: o clássico, com `BLOB_READ_WRITE_TOKEN` (ou `<PREFIXO>_READ_WRITE_TOKEN`), e o novo, sem
    token, com `BLOB_STORE_ID` + OIDC da Vercel (as variáveis `BLOB_STORE_ID` e `BLOB_WEBHOOK_PUBLIC_KEY` indicam o modo
    novo; o projeto precisa estar com *OIDC* ligado em *Settings → Security*). O Blob precisa ser **público** (as fotos
-   aparecem no site). `GET /api/health` mostra o que está faltando: `{"database":"ok","blob":"ok","mail":"ok"}`.
+   aparecem no site). Na internet, `GET /api/health` só diz se o site está de pé (`{"ok":true}`, ou `503` se o banco não responde); o
+   que está faltando, com o **nome** das variáveis, aparece só para administradores logados, em *Configurações → Painel → Estado do sistema*.
+   A tabela completa de variáveis, e o que acontece quando faltam, está em [`docs/OPERACAO.md`](docs/OPERACAO.md).
 2. **E-mail (necessário para criar contas de clientes e recuperar a senha por e-mail)** — veja [Confirmação do e-mail](#confirmação-do-e-mail-contas-de-clientes):
    cadastre `SMTP_HOST`, `SMTP_USER` e `SMTP_PASS`. **Enquanto faltarem, ninguém consegue criar conta nem entrar nela**
    (pedir e acompanhar pedidos sem conta continua funcionando, e o painel mostra um aviso com o que falta).
-3. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
+3. **Endereço do site (`SITE_URL`)** — cadastre o endereço público (ex.: `https://www.seudominio.com.br`). Os links dos e-mails
+   (confirmar conta, "esqueci a senha") e a logo deles são montados a partir dele, **nunca** a partir do que o navegador envia
+   (isso permitiria mandar à vítima um link para um site falso). Sem a variável, na Vercel vale o domínio de produção do projeto;
+   fora da Vercel só `localhost` funciona.
+4. **Deploy** — o script `vercel-build` roda `node scripts/migrate.mjs` antes do build: ele cria as tabelas no Neon
    (`db/migrations`) e carrega o conteúdo inicial (os mesmos textos que o site já tinha). Nenhum produto, preço ou
-   categoria é inventado. Rodar de novo não faz nada de novo.
-4. **Primeiro administrador (owner)** — no seu computador, com as variáveis baixadas (`vercel env pull .env.local`):
+   categoria é inventado. Rodar de novo não faz nada de novo. **Só o deploy de produção aplica migrations**: deploys de teste
+   (preview) apenas listam as pendentes, para nunca alterar o banco da loja por engano; para ter previews com banco próprio, veja
+   [`docs/OPERACAO.md`](docs/OPERACAO.md) (`MIGRATE_ON_PREVIEW`).
+5. **Primeiro administrador (owner)** — no seu computador, com as variáveis baixadas (`vercel env pull .env.local`):
 
    ```bash
    npm run admin:create -- seu@email.com "Seu Nome"
    ```
 
-   Ele pergunta a senha (mínimo de 8 caracteres) sem mostrá-la. A senha é guardada só como hash (scrypt).
+   Ele pergunta a senha (mínimo de **10** caracteres, sem senhas comuns, sequências nem o próprio e-mail) sem mostrá-la. A senha é
+   guardada só como hash (scrypt). Rodar de novo com o mesmo e-mail troca a senha e **encerra todas as sessões** dessa conta.
    Os outros administradores o owner cria pelo painel, em *Configurações → Administradores*.
-5. Entre em `/admin`, configure **WhatsApp, Instagram, endereço, horário, entrega e pagamento** em *Configurações*
-   e cadastre (ou importe) os produtos.
+6. Entre em `/admin`, **ligue a verificação em duas etapas** (*Configurações → Painel*), configure **WhatsApp, Instagram, endereço,
+   horário, entrega e pagamento** em *Configurações* e cadastre (ou importe) os produtos.
 
 ## Migrar o cardápio antigo
 
-*Produtos → Importar*: escolha (ou cole) o JSON dos produtos, no formato do antigo `produtos.json`:
+*Produtos → Importar*: escolha um arquivo ou **cole** o conteúdo. Aceita **JSON** (no formato do antigo `produtos.json`) ou
+**planilha** (CSV com `;` ou `,`, ou colado do Excel/Google Planilhas, com TAB; aspas protegem separadores dentro do texto):
 
 ```json
 [
@@ -97,17 +114,34 @@ O projeto `copocheio` na Vercel já está ligado ao Neon `copocheio-db` e ao Blo
 ]
 ```
 
-Aceita também `nome`, `preco`, `categoria`, `descricao`, `imagem`, `destaque`. As categorias que não existirem são criadas;
-produtos com o mesmo nome e categoria não são duplicados; `available: false` entra como ESGOTADO. Imagens com link
-público continuam funcionando — para guardá-las no Blob, abra o produto e envie a foto.
+```csv
+nome;preço;categoria;promoção;estoque;destaque;esgotado
+Coca-Cola 2L;12,00;Refrigerantes;10,90;24;sim;não
+```
+
+No JSON valem também `nome`, `preco`, `categoria`, `descricao`, `imagem`, `destaque`. Na planilha, a primeira linha dá os títulos
+(`nome` e `preço` são obrigatórios; também `categoria`, `promoção`, `descrição`, `imagem`, `sku`, `estoque`, `destaque`, `esgotado`).
+Antes de enviar, a tela mostra quantos itens foram lidos. **Cada linha é validada sozinha**: a linha com problema não derruba as
+outras, e no fim aparece um **relatório linha a linha** (importado / já existia / repetido no arquivo / com problema e o motivo).
+As categorias que não existirem são criadas; produto com o mesmo nome e categoria não é duplicado; `available: false` entra como
+ESGOTADO; no máximo **500 produtos** por vez. Imagens com link público continuam funcionando — para guardá-las no Blob, abra o
+produto e envie a foto.
 
 ## Como funciona
 
 - **Pedido**: o checkout chama `POST /api/orders`; o servidor confere tudo de novo dentro do banco (`create_order`) — preço
-  (sempre o do banco, inclusive promocional), produto ativo, esgotado, estoque, horário de funcionamento, pausa de
-  pedidos, entrega/retirada, bairro e taxa, pedido mínimo, forma de pagamento e troco. **O preço enviado pelo navegador é
-  ignorado.** Os produtos ficam travados durante a compra, então dois clientes ao mesmo tempo nunca levam a mesma última
-  unidade. O número do pedido é sequencial (começa em **#1001**).
+  (sempre o do banco, inclusive promocional, e só dentro das datas da promoção), produto ativo, esgotado, estoque, horário de
+  funcionamento, pausa de pedidos, entrega/retirada, bairro e taxa, pedido mínimo, forma de pagamento e troco. **O preço enviado
+  pelo navegador é ignorado.** Os produtos ficam travados durante a compra, então dois clientes ao mesmo tempo nunca levam a
+  mesma última unidade. O número do pedido é sequencial (começa em **#1001**).
+  - **Sem pedido duplicado**: cada envio leva uma chave única (`idempotency_key`). Toque duplo, internet que cai e volta ou
+    "reenviar" devolvem o **mesmo** pedido em vez de criar outro; a mesma chave com um pedido diferente é recusada (`409 idempotency_conflict`).
+  - **Sem preço trocado em silêncio**: o checkout manda o total que a pessoa viu (`expected_total`). Se o servidor chega a um valor
+    diferente (preço, promoção ou taxa mudaram), **nenhum pedido é criado**: o site mostra o que mudou e só envia depois de a pessoa
+    tocar em "Confirmar novo total" (`409 price_changed`).
+  - **Contra pedidos falsos**: campo-isca invisível, tempo mínimo de preenchimento (medido no navegador), limites por rede (60
+    tentativas e 20 pedidos a cada 10 min; o pedido devolvido pela chave não gasta limite) e, no banco, no máximo 5 pedidos por
+    telefone a cada 10 min. Não há captcha; se ainda aparecer abuso, o próximo passo é acrescentar um (por exemplo, Cloudflare Turnstile).
 - **Itens**: nome e preço são gravados no pedido. Mudar o produto depois não altera pedidos antigos.
 - **WhatsApp**: só depois que o pedido está salvo, a página do pedido mostra o botão com a mensagem pronta para o número
   configurado no painel. O número da loja já vem preenchido — (34) 99128-3384, pela migration `0008_store_whatsapp.sql`,
@@ -116,18 +150,30 @@ público continuam funcionando — para guardá-las no Blob, abra o produto e en
   WhatsApp da loja* (sem número, o botão abre o WhatsApp para a pessoa escolher o contato). Se a API estiver fora do ar e o
   navegador não tiver cópia do site, o botão de ajuda usa o número de `src/lib/defaults.ts`. Um link do WhatsApp (por exemplo
   `https://api.whatsapp.com/send/?phone=5534991283384`) também funciona como *Link* de um banner: tocar nele abre o chat.
-- **Status**: NOVO → CONFIRMADO → EM PREPARO → SAIU PARA ENTREGA → ENTREGUE, ou CANCELADO. Cada mudança fica em
-  `order_status_history` (de → para, data e administrador). Cancelar devolve o estoque; pedido cancelado não reabre.
-  O painel altera só status e pagamento — itens e valores ficam como o cliente fechou.
-- **Pedido novo no painel**: o painel pergunta ao servidor a cada ~8 segundos (mais devagar com a aba em segundo plano,
-  e na hora em que você volta para ela) só o que chegou depois do último pedido visto. Quando chega: aviso
-  "🔔 NOVO PEDIDO", som (liga/desliga por aparelho), contador no menu e no título da aba, e listas e dashboard
-  atualizados sem recarregar.
-- **Imagens**: o painel reduz e converte a foto para WebP, envia para `/api/admin/upload`, o servidor confere que é mesmo
-  uma imagem (JPG, PNG, WebP, GIF ou AVIF — SVG nunca) e grava no Blob. O Neon guarda só a URL. Quando uma imagem
-  deixa de ser usada (troca, exclusão), o servidor a apaga do Blob; produto duplicado compartilha a imagem até o último
+- **Status**: NOVO → CONFIRMADO → EM PREPARO → SAIU PARA ENTREGA (PRONTO PARA RETIRAR) → ENTREGUE, ou CANCELADO. Cada mudança fica
+  em `order_status_history` (de → para, data e administrador). Regras, conferidas no banco: para a frente pode pular etapas; para
+  trás só uma etapa de cada vez (e "entregue" só volta para "saiu para entrega", por clique errado); **entregue não cancela** (a
+  mercadoria já saiu e o estoque não volta; para devolver o dinheiro, use o pagamento "reembolsado"); **cancelado não reabre**;
+  cancelar devolve o estoque. Pagamento: pedido cancelado não vira "pago", e só se reembolsa o que estava pago. O painel altera só
+  status e pagamento — itens e valores ficam como o cliente fechou.
+- **Pedido novo no painel**: o painel pergunta ao servidor a cada **8 s** com a aba à vista (30 s em segundo plano; 2 min depois de
+  1 hora escondida; se a internet cai, o intervalo cresce até 1 min), e na hora em que você volta para a aba, só o que chegou
+  depois do último pedido visto. Quando chega: aviso "🔔 NOVO PEDIDO", som (liga/desliga por aparelho), contador no menu e no
+  título da aba, e listas e dashboard atualizados sem recarregar.
+- **Dashboard**: "venda" é pedido que não foi cancelado nem reembolsado (inclui o que ainda vai ser pago na entrega); "pedidos de
+  hoje" não conta cancelados; "concluídos hoje" são os **entregues hoje** (pela data da entrega, não a do pedido). Dias, semanas
+  e meses seguem o fuso da loja. Os gráficos têm descrição para leitores de tela.
+- **Imagens**: o painel reduz e converte a foto para WebP, envia para `/api/admin/upload`, o servidor confere pelos **bytes** (não pelo
+  tipo que o navegador declara) que é mesmo uma imagem inteira — JPG, PNG, WebP, GIF ou AVIF, com cabeçalho e fim de arquivo
+  válidos, até 12 000 px de lado e 50 milhões de pixels, 4 MB; SVG nunca — e grava no Blob. O Neon guarda só a URL. Quando uma
+  imagem deixa de ser usada (troca, exclusão), o servidor a apaga do Blob; produto duplicado compartilha a imagem até o último
   uso sumir.
-- **Estoque**: vazio = não controla. Com controle, cada pedido desconta; chegou a 0, vira ESGOTADO; repôs, volta a vender.
+- **Estoque**: vazio = não controla. Com controle, cada pedido desconta; chegou a 0, vira ESGOTADO; repôs, volta a vender. Mexer na
+  quantidade de um produto que **não** controla estoque exige ativar o controle de propósito (botão "Começar a controlar" em
+  *Estoque*); o banco não deixa o estoque ficar negativo.
+- **Promoção com data**: o preço promocional pode valer só entre duas datas (horário da loja). Fora da janela o produto volta ao preço
+  normal sozinho, e o site, o carrinho e o pedido usam a mesma regra (`effective_promo`, no banco). Sem datas, vale sempre. A promoção
+  precisa ser menor que o preço, e o fim depois do início. Produto com nome e categoria repetidos pede confirmação antes de salvar.
 - **Entrega**: taxa única, ou taxa por bairro (*Configurações → Entrega → Taxa por bairro*). Com bairros cadastrados,
   o cliente escolhe o bairro numa lista.
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo).
@@ -151,7 +197,9 @@ público continuam funcionando — para guardá-las no Blob, abra o produto e en
   canto de baixo, à direita, para não cobrir as categorias nem o meio da página. O respiro das laterais cresce com a tela
   (2,5 rem, 3,5 rem e 5 rem) e o conteúdo só para de esticar em telas maiores que 1920 px.
 - **Site sempre em dia**: o site lê a API ao abrir e de novo quando a pessoa volta para a aba; guarda uma cópia no
-  navegador para abrir rápido.
+  navegador para abrir rápido. As listas públicas (`/api/products`, `/api/site`) ficam 10 s na CDN da Vercel (e até 30 s servindo a
+  cópia antiga enquanto atualiza): uma mudança no painel aparece no site em segundos. Se a API estiver fora do ar e não houver cópia
+  no aparelho, o site **não afirma "Fechado"** (esconde o aviso de horário) e o botão de ajuda leva ao WhatsApp da loja.
 - **Textos sem quebrar o layout**: cada texto tem limite de tamanho (no painel, na API e no banco). O "trecho em azul" de
   cada título precisa estar escrito igual no título.
 
@@ -173,9 +221,9 @@ no Neon.
   lista de atalhos dos últimos pedidos (só conveniência; pode apagar).
 - **Andamento ao vivo**: linha do tempo Novo → Confirmado → Em preparo → Saiu para entrega (Pronto para retirar) →
   Entregue, ou Cancelado, com hora de cada etapa, próxima etapa, situação do pagamento (pendente/pago) e "última
-  atualização". A página consulta o servidor a cada 10 s com a aba aberta (60 s em segundo plano ou com o pedido
-  finalizado) e na hora em que a aba volta ou a internet reconecta. Sem conexão, continua mostrando o último estado,
-  avisa e tenta de novo com intervalo crescente.
+  atualização". A página consulta o servidor a cada 10 s com a aba à vista e o pedido em andamento (2 min com o pedido finalizado;
+  1 min com a aba em segundo plano, 5 min se também finalizado) e na hora em que a aba volta ou a internet reconecta. Sem conexão,
+  continua mostrando o último estado, avisa e tenta de novo com intervalo crescente (até 1 min).
 - **O cliente só lê**: não existe rota pública que altere pedido; status e pagamento só mudam pelo painel (o servidor
   confere o login). O pedido público nunca traz telefone, e-mail, ids internos nem o código.
 - **Limite de consultas**: 30 consultas erradas por IP a cada 15 min (as certas, como o acompanhamento automático, não
@@ -197,7 +245,8 @@ checkout. Comprar como visitante continua sempre possível.
 - **Excluir a conta** (pelo cliente em `/conta`, ou pelo owner a pedido do titular): apaga cadastro, endereço guardado e
   sessões; os pedidos ficam na loja, sem ligação com a conta, e o link de acompanhamento deles continua valendo.
 - Sessão do cliente: cookie `HttpOnly` + `SameSite=Lax` próprio (`copocheio_cliente`, 30 dias), só o hash no Neon; é
-  outro mundo que a sessão do painel (uma não abre a outra). Senha com scrypt. 8 erros por e-mail / 30 por IP a cada 15 min.
+  outro mundo que a sessão do painel (uma não abre a outra). Senha com scrypt (mínimo de 8 caracteres, sem senhas comuns).
+  Limites de login: 8 erros por e-mail + rede e 30 por rede a cada 15 min, e 100 tentativas por hora por e-mail.
 
 ### Confirmação do e-mail (contas de clientes)
 
@@ -213,6 +262,10 @@ domínio que existe e e-mail que não é descartável são camadas extras; **nen
    Confirmado, a conta vira `active` com a **data da confirmação** (`email_verified_at`) e a tela entra sozinha.
 3. Quem tenta entrar com a senha certa antes de confirmar **não ganha sessão**: recebe `403 email_not_verified`, um
    código novo é enviado (respeitando os limites) e a tela volta para a confirmação.
+4. **Cadastro preso ao navegador**: quem cria a conta recebe um cookie (`copocheio_cadastro`, 7 dias) que liga aquele navegador ao
+   cadastro. Sem isso, alguém poderia cadastrar o e-mail de outra pessoa com uma senha que só ele conhece e esperar que a vítima
+   "confirmasse" o código. Agora, confirmar o e-mail **em outro navegador** (o caso normal de quem recebe o e-mail no celular) ativa a
+   conta, mas a senha digitada no cadastro **deixa de valer**: a pessoa define uma senha nova na hora (`set_password_token`).
 
 **Códigos**
 
@@ -365,35 +418,72 @@ cliente na próxima consulta.
 - O link de acompanhamento vale por **180 dias depois da última atualização do pedido** (*Configurações → Loja →
   Acompanhamento de pedidos*, de 7 a 3650 dias). Depois disso o link deixa de abrir e o hash do código é apagado (30
   dias depois do vencimento). Pedidos de quem tem conta continuam em "Meus pedidos".
-- Sessões vencidas, links de redefinição usados/vencidos e registros de tentativas são apagados sozinhos (função
-  `purge_expired_data`, chamada de vez em quando por logins, cadastros e pedidos).
+- Sessões vencidas, links de redefinição usados/vencidos, registros de tentativas (1 dia), aparelhos do painel sem uso há 400
+  dias, códigos de recuperação já usados (90 dias), registro de atividades com mais de 2 anos e pedidos de privacidade já
+  respondidos há 2 anos são apagados sozinhos (função `purge_expired_data`, chamada de vez em quando por logins e pedidos). A
+  tabela completa está em [`docs/OPERACAO.md`](docs/OPERACAO.md).
 - **Os pedidos em si não são apagados automaticamente**: a loja precisa deles como histórico e para obrigações fiscais.
-  Prazo de guarda e eventual anonimização de pedidos antigos dependem da sua contabilidade; hoje isso é decisão manual.
+  Prazo de guarda e eventual anonimização de pedidos antigos dependem da sua contabilidade; a anonimização a pedido do titular
+  é feita pelo owner (veja [Privacidade (LGPD)](#privacidade-lgpd)).
 - O cliente vê só o necessário para acompanhar a compra: nome, itens, valores, endereço e andamento; a página manda
   `noindex` e `Referrer-Policy: no-referrer` para o link não vazar.
 
 ## API
 
-Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e `cover_banners` da capa) · `POST /api/orders` (devolve `{order, token}`) · `GET /api/health`
+Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e `cover_banners` da capa) · `POST /api/orders` (devolve `{order, token}`; aceita `idempotency_key` e `expected_total`) · `GET /api/health` · `POST /api/privacy/request`
+Técnico (público): `GET /api/__page` (HTML para robôs) · `POST /api/csp-report` · `POST /api/client-error`
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim`
-Painel, sessão: `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password`
-Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner), `products`,
-`categories`, `banners`, `settings`, `store`, `site`, `hero`, `payments`, `zones`, `upload`; `/api/admin/admins` só para o owner
-(excluir cliente também).
+Painel, sessão: `POST /api/auth/login` · `POST /api/auth/login/2fa` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password` ·
+verificação em duas etapas: `GET /api/auth/2fa` · `POST /api/auth/2fa/setup|enable|disable|recovery-codes`
+Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner), `products`
+(+ `POST products/import`, que devolve o relatório linha a linha), `categories`, `banners`, `settings`, `store` (`PATCH` aceita `expected_updated_at`: se outra pessoa salvou antes, responde `409` em vez de sobrescrever),
+`site`, `hero`, `payments`, `zones`, `upload`, `health` (estado do sistema, com o nome das variáveis que faltam), `privacy`
+Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
+excluir cliente, gerar link de nova senha de cliente, e-mail de teste.
+
+Toda resposta traz `x-request-id` (um erro `500` mostra o mesmo número no corpo: serve para achar a linha nos logs). A API nunca vai
+para a CDN, exceto as duas listas públicas (10 s); o resto responde `Cache-Control: no-store`.
 
 ## Segurança
 
-- `DATABASE_URL` e a credencial do Blob só existem no servidor (nenhuma variável `VITE_`); o bundle do navegador não
-  contém driver de banco, token nem segredo.
-- Login por e-mail e senha: senha com **scrypt**; sessão = código aleatório num cookie `HttpOnly` + `SameSite=Lax` (+ `Secure`
-  em https), guardado no Neon só como hash e conferido a cada chamada administrativa. Sair, trocar ou redefinir a senha,
-  desativar ou remover a pessoa derruba as sessões. Sem cadastro público: administradores só o owner cria.
-- Limites de tentativa: 8 senhas erradas por e-mail e 30 por IP a cada 15 min (painel e conta do cliente); 30 consultas
-  de pedido erradas por IP a cada 15 min; 6 cadastros por IP por hora (mais os limites de código/reenvio acima); 5 pedidos
-  por telefone a cada 10 min e 20 por IP.
+- **Segredos só no servidor**: `DATABASE_URL`, a credencial do Blob e a senha do e-mail existem apenas no servidor (nenhuma variável
+  `VITE_`); o pacote do navegador não contém driver de banco, token nem segredo. O navegador só fala com `/api/*`.
+- **Login do painel**: e-mail e senha (scrypt); sessão = código aleatório num cookie `HttpOnly` + `SameSite=Lax` (+ `Secure` em https),
+  14 dias, guardado no Neon só como hash e conferido a cada chamada administrativa. Sair, trocar ou redefinir a senha, desativar ou
+  remover a pessoa (ou rodar `npm run admin:create` para ela) derruba as sessões. Sem cadastro público: administradores só o owner cria.
+- **Senha forte** (painel: 10 caracteres ou mais; clientes: 8 ou mais): recusa senhas comuns (lista de senhas vazadas e palavras
+  típicas, com variações como `brasil2026`), sequências (`1234567890`, `qwertyuiop`), repetições e o próprio e-mail ou nome com um
+  enfeite. Vale ao trocar a senha, criar administrador, cadastrar cliente, "esqueci a senha" e no `npm run admin:create`
+  (que confere a mesma regra quando o TypeScript do projeto está instalado). A senha nunca é registrada.
+- **Limites de tentativa, atômicos**: a conferência e o registro da tentativa acontecem juntos dentro do banco (40 tentativas
+  simultâneas não passam todas). Painel: 8 erros por e-mail + rede e 30 por rede a cada 15 min, e 40 por hora por e-mail para
+  aparelhos que a conta não conhece. Conta de cliente: 8 por e-mail + rede, 30 por rede (15 min) e 100 por hora por e-mail.
+  Consulta de pedido: 30 erradas por rede a cada 15 min. Cadastro: 6 por rede por hora (mais os limites de código e reenvio acima).
+  Pedido: veja [Como funciona](#como-funciona). **Senha certa não gasta tentativa**, e quem erra de longe só bloqueia a si mesmo
+  (o limite é por e-mail **e** rede), nunca o dono da conta.
+- **Verificação em duas etapas (opcional, recomendada)**: aplicativo autenticador (TOTP: 6 dígitos, 30 s, cada código vale uma vez), em
+  *Configurações → Painel*, com 8 códigos de recuperação (só o hash fica no banco; cada um vale uma vez). Depois da senha a pessoa tem
+  5 minutos e 5 tentativas para digitar o código. Perdeu o celular? O owner usa *Administradores → Desligar 2 etapas* (ou
+  `npm run admin:create -- email "Nome" --reset-2fa`). **A chave do aplicativo fica no banco sem criptografia** (o servidor precisa
+  dela para conferir o código): quem conseguir ler o banco consegue gerar códigos, então proteja o acesso ao Neon.
+- **Aviso de acesso novo**: entrar de um aparelho que a conta ainda não conhecia manda o e-mail "Novo acesso ao painel" (data,
+  aparelho e rede) para o dono da conta, se o e-mail do site estiver configurado, e fica no registro de atividades.
+- **Registro de atividades** (*Configurações → Atividades*, só o owner): quem fez o quê e quando (produtos, preços, configurações,
+  banners, equipe, 2FA, privacidade, entradas no painel). Só se acrescenta (o banco recusa alterar ou apagar), é guardado por 2
+  anos e não recebe senhas, códigos nem links. Gerar o link de nova senha de um cliente e excluir cliente são ações **só do owner**.
+- **Cabeçalhos HTTP** (`vercel.json`): política de conteúdo (CSP) restritiva — scripts só do próprio site, sem `eval`, conexões só com
+  a própria API, `frame-ancestors 'none'`, `form-action 'self'`, `object-src 'none'`, tudo por https; os estilos inline continuam
+  permitidos (`style-src 'unsafe-inline'`), e o único site de terceiros que pode ser incorporado é o mapa do Google. Mais HSTS,
+  `nosniff`, `X-Frame-Options: DENY`, `Permissions-Policy` (câmera, microfone, localização, pagamento e USB desligados) e
+  `Referrer-Policy`. Bloqueios da CSP vão para o log do servidor (`csp-bloqueio`). Pedido, conta e painel não são indexados, não
+  ficam em cache e não vazam o endereço (`no-referrer`).
+- **Endereço dos links de e-mail**: vem de `SITE_URL` (ou do domínio de produção da Vercel), **nunca** do `Host` da requisição.
+- **IP de quem acessa** (usado nos limites): o servidor confia no cabeçalho que a própria Vercel acrescenta e agrupa IPv6 por /64;
+  cabeçalhos que o navegador inventa não valem.
+- **Imagens**: o tipo vem dos bytes do arquivo, não do que o navegador declara (veja [Como funciona](#como-funciona)).
 - **Conta de cliente só vale com o e-mail confirmado, conferido no servidor em toda chamada**: `login`, `/me`, "Meus pedidos",
   vincular pedido, trocar senha, excluir conta e a ligação do pedido à conta exigem `active` **e** `email_verified_at`
   (as funções do banco repetem a regra). Chamar a API direto, forjar cookie ou ter uma sessão antiga não contorna isso.
@@ -408,14 +498,54 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
   pedido só com o código secreto do link (ou pela própria conta); o código só existe no banco como hash.
 - O servidor ignora tudo o que o navegador mandar sobre status, pagamento, valores, desconto, conta ou código do pedido:
   quem decide é o banco (`create_order`) e o login do painel.
-- Papéis: **admin** cuida da operação; **owner** também gerencia administradores (a loja nunca fica sem um owner ativo).
+- Papéis: **admin** cuida da operação; **owner** também gerencia administradores, vê o registro de atividades e trata a privacidade
+  (a loja nunca fica sem um owner ativo).
+- **Dependências**: `npm audit --omit=dev` (o que roda em produção) não aponta nada. O `npm audit` completo ainda lista 5 avisos de
+  severidade alta, todos do pacote `braces` dentro do Tailwind 3 (ferramenta de build; não roda no servidor nem vai para o site);
+  resolvê-los pede migrar o Tailwind para a versão 4, o que muda o CSS gerado e não foi feito.
+
+## Privacidade (LGPD)
+
+- **Política pública** em `/privacidade` (link no rodapé e no checkout), escrita a partir do que o sistema realmente faz: dados
+  coletados (pedido, conta, endereço de rede para segurança), para quê, com quem passam (hospedagem, banco, e-mail e mapa), cookies e
+  dados guardados no aparelho, prazos e direitos. O botão **"Apagar os dados deste aparelho"** remove o carrinho, os dados do último
+  pedido, a cópia do cardápio e os atalhos de pedidos (tudo que começa com `copocheio:`). **Razão social, CNPJ e encarregado (DPO)
+  não estão cadastrados e precisam ser preenchidos pela loja; o texto deve ser revisado por quem entende de LGPD.** O que está no
+  site é um ponto de partida técnico, não parecer jurídico.
+- **Pedido de titular**: o formulário de `/privacidade` (`POST /api/privacy/request`, 5 por rede por hora) cai em *Clientes →
+  Privacidade (LGPD)*. A loja responde pelo contato deixado (a política informa até 15 dias) e marca como atendido ou recusado, com
+  anotação.
+- **Anonimização** (owner): *Anonimizar uma pessoa* (telefone com DDD e/ou e-mail) tira de **todos** os pedidos dela nome, telefone,
+  e-mail, endereço, complemento, referência e observações, apaga a conta e os links de acompanhamento e mantém só o que a
+  contabilidade precisa (itens, valores, datas e o tipo de entrega). É tudo ou nada, numa transação, e fica no registro de atividades.
+- **Mapa do Google**: a seção Contato incorpora o mapa do Google (carregado só perto da tela, com `Referrer-Policy` restrita). **Ainda
+  não há um aviso de consentimento antes de carregar o mapa** — a política informa o uso. Para exigir consentimento, troque o mapa por
+  um botão "Ver mapa" que só então cria o iframe.
+- Prazos de guarda de cada dado: [`docs/OPERACAO.md`](docs/OPERACAO.md).
+
+## Robôs e prévia de links
+
+WhatsApp, Facebook, Telegram, Slack e outros não executam JavaScript, e o Google prefere HTML pronto. Por isso, para esses robôs (e só
+para eles; pessoas recebem o site normal), o `vercel.json` manda a página para `GET /api/__page`, que devolve o mesmo `index.html` do
+build com o `<head>` já escrito a partir do painel (*Site → SEO*): título, descrição, imagem de compartilhamento, endereço canônico,
+`noindex` nas páginas privadas e dados estruturados da loja (schema.org: nome, telefone, endereço e horários **que estiverem
+cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na página inicial `/`, só os robôs de prévia de link
+(WhatsApp, Facebook etc.) recebem a versão da função; o Googlebot recebe o `index.html` estático, com o título e a descrição fixos dele.
+`public/robots.txt` bloqueia `/api/`, `/pedido/`, `/acompanhar-pedido/` e `/conta`; o painel e o checkout ficam fora do Google por
+`noindex` (cabeçalho `X-Robots-Tag` e `<meta name="robots">`).
+
+> Esse roteamento (`redirects`/`rewrites` com `has` por `user-agent`, `includeFiles`, cabeçalhos) foi validado com o pacote de
+> roteamento da Vercel e um servidor local, **não** na Vercel de verdade: confira com `curl -A "WhatsApp/2.0" https://<seu site>/bebidas`
+> depois do primeiro deploy.
 
 ## Banco (Neon)
 
 `admins`, `admin_sessions`, `categories`, `products`, `payment_methods`, `orders`, `order_items`, `order_status_history`,
 `store_settings`, `delivery_zones`, `site_settings`, `hero_settings`, `banners`, **`order_tracking_tokens`**
 (hash dos códigos), **`customers`** (com `status` e `email_verified_at`), **`customer_sessions`**,
-**`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso)
+**`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso),
+**`audit_log`** (registro de atividades do painel), **`admin_recovery_codes`**, **`admin_login_challenges`** e **`admin_devices`**
+(verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares)
 (+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
 última atualização.
@@ -435,36 +565,83 @@ A migration `0007_banner_cover.sql` acrescenta `banners.placement` (`menu` ou `c
 cardápio, na mesma ordem) e a regra de que um banner de capa precisa de pelo menos uma imagem.
 A migration `0008_store_whatsapp.sql` preenche o WhatsApp da loja quando ele ainda está vazio (quem já cadastrou outro número
 não é sobrescrito).
+A migration `0009_security_foundations.sql` acrescenta o contador de tentativas atômico (`rate_limit_hit` e `rate_limit_refund`), o
+`audit_log` (o banco recusa alterar ou apagar linhas com menos de 2 anos), a verificação em duas etapas, os aparelhos conhecidos e o
+vínculo do cadastro ao navegador (`customers.reg_nonce_hash`).
+A migration `0010_promo_window.sql` acrescenta as datas de início e fim da promoção e a função `effective_promo`.
+A migration `0011_orders_integrity.sql` acrescenta a chave de idempotência do pedido, o total esperado (`create_order` devolve o
+erro `CC409` quando o valor mudou), as regras de status e de pagamento, o estoque que só passa a ser controlado de propósito e o
+dashboard novo.
+A migration `0012_privacy.sql` acrescenta `privacy_requests`, a anonimização de uma pessoa (`anonymize_person`) e amplia a limpeza
+automática (`purge_expired_data`).
+As migrations 0009 a 0012 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
+banco já migrado.
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
 
 ## Limites conhecidos
 
-- A prévia de links no WhatsApp/Facebook usa os dados fixos do `index.html` (esses robôs não executam JavaScript); título,
-  descrição e favicon editados no painel valem para o Google e para o navegador.
 - Uma função da Vercel aceita até ~4,5 MB por requisição: o painel já reduz as fotos (limite de 4 MB por imagem).
 - Neon pode "dormir" quando fica sem uso; a primeira chamada depois disso demora um pouco mais.
 - Nenhuma checagem automática prova que a caixa de e-mail existe e é da pessoa (DNS e lista de descartáveis só descartam o
   que é claramente impossível): quem prova é o código/link. Se o provedor de e-mail da loja estiver fora do ar, o cadastro
   responde "tente de novo" em vez de criar conta sem confirmação.
+- A prévia de links e o HTML para o Google dependem de regras do `vercel.json` que só foram testadas com o pacote de roteamento da
+  Vercel e um servidor local (veja [Robôs e prévia de links](#robôs-e-prévia-de-links)): confira depois do deploy.
+- Não há captcha nem pagamento online. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
+  abas diferentes valem os limites por rede e por telefone.
+- A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
+  [Segurança](#segurança) e [Privacidade (LGPD)](#privacidade-lgpd)).
+- Acessibilidade: o Hero (aprovado, não alterado) ainda tem apontamentos de leitor de tela (nome do link que não repete o texto
+  visível e regiões sem rótulo); o texto bem pequeno e os alvos de toque de alguns botões no celular não foram mexidos para não
+  mudar o visual do celular.
+- Alertas automáticos (queda do site, pico de erros) e envio de logs para fora da Vercel não existem: veja [`docs/OPERACAO.md`](docs/OPERACAO.md).
+
+## Testes e CI
+
+```bash
+npm test                 # tipos + testes unitários + testes de API (PostgreSQL local em 127.0.0.1:5433)
+npm run test:unit        # só os unitários (segundos)
+npm run test:e2e         # navegador (Chromium); precisa de `npm run build` antes
+```
+
+Os testes rodam num **PostgreSQL de teste**, com Blob falso, e-mail de mentira e DNS simulado: não tocam no Neon, no Blob nem no e-mail
+de verdade. Como preparar o ambiente, o que cada arquivo cobre e o que os testes **não** provam estão em
+[`tests/README.md`](tests/README.md). O GitHub Actions (`.github/workflows/ci.yml`) roda tudo isso a cada envio para o GitHub.
+
+## Operação
+
+Variáveis de ambiente, previews × produção, deploy e migrations, monitoramento, backup e restauração, o que fazer quando algo dá
+errado (login bloqueado, 2FA perdido, e-mail que não chega, pedido de privacidade, troca de segredos) e por quanto tempo cada dado é
+guardado: [`docs/OPERACAO.md`](docs/OPERACAO.md).
 
 ## Estrutura
 
 ```
-api/index.ts      função da Vercel: entrega /api/* para o servidor
+api/index.ts           função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
+server/routes/         uma pasta de rotas por assunto (public, orders, catalog, content, session, twofactor, account, tracking, customers,
+                       team, audit, privacy, seo, upload, mailadmin)
+server/auth.ts         senhas (scrypt), sessões, limites de tentativa atômicos · passwordPolicy.ts / commonPasswords.ts: regra de senha forte
+server/totp.ts         verificação em duas etapas (TOTP, códigos de recuperação) · adminAccess.ts: aparelhos conhecidos e aviso de acesso novo
+server/audit.ts        registro de atividades do painel · clientIp.ts: IP de quem acessa · images.ts: conferência das imagens enviadas
 server/verification.ts confirmação do e-mail: códigos, links, reenvio e limites
 server/passwordReset.ts recuperação de senha por e-mail: link, envio, limites e aviso de senha alterada
 server/mail*.ts        envio SMTP, layout e textos dos e-mails (mailLayout, mailTemplates, mailBrand), domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
 server/emailAddress.ts formato, normalização e máscara do e-mail
 db/migrations/         tabelas, funções e conteúdo inicial do Neon
-scripts/               migrate.mjs (migrations) · create-admin.mjs (primeiro administrador) · update-disposable-domains.mjs (lista de e-mails descartáveis)
+scripts/               migrate.mjs (migrations) · create-admin.mjs (administrador; `--reset-2fa`) · update-disposable-domains.mjs (lista de e-mails descartáveis)
 src/App.tsx            site: Hero, Bebidas, Contato, chamada final, rotas
-src/site/              dados do site (API), carrinho, checkout
+src/site/              dados do site (API), carrinho, checkout, política de privacidade (Privacy.tsx)
 src/site/Tracking.tsx  confirmação, acompanhamento e "Acompanhar pedido" (pacote à parte, junto com Account.tsx)
 src/site/Account.tsx   conta do cliente: login, Meus pedidos, recuperar senha
+src/ErrorBoundary.tsx  tela de erro do site (em vez de tela branca) · src/lib/report.ts: envia o erro para os logs
 public/email/logo.png  logo oficial reduzida para os e-mails (servida em /email/logo.png)
 src/lib/               cliente da API, tipos, formatação, horários, rotas
 src/admin/             painel (carregado só em /admin)
+tests/                 testes unitários, de API e de navegador, com o servidor de teste (veja tests/README.md)
+docs/OPERACAO.md       variáveis, deploy, monitoramento, backup, o que fazer quando algo quebra, prazos dos dados
+.github/workflows/     ci.yml: tipos, build e testes a cada envio ao GitHub
 ```

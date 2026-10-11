@@ -10,3 +10,9 @@ dist-ssr
 .env.*
 !.env.example
 .vercel
+
+# Testes: dependências e arquivos gerados na execução
+tests/node_modules
+tests/build
+tests/server.log
+tests/unit/.build
