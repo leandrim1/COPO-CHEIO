@@ -33,6 +33,9 @@ async function newPage(browser, viewport, errors) {
     const res = await route.fetch({ url: BLOB + '/f' + path });
     await route.fulfill({ response: res });
   });
+  // O mapa do Google (iframe da seção Contato) não é carregado de verdade: com internet (como no GitHub Actions) ele puxaria scripts de
+  // outros domínios do Google e o teste deixaria de ser hermético. A resposta é uma página vazia e a requisição do iframe continua registrada.
+  await ctx.route(/^https:\/\/www\.google\.com\/maps/, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>mapa</title>' }));
   page.on('request', (r) => requests.push(r.url()));
   // Respostas de erro da API (menos 401/404 esperados) vão para a saída: ajuda a achar o motivo quando um passo trava.
   page.on('response', async (r) => {
