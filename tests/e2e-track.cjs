@@ -175,9 +175,23 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   await b.getByLabel('Código de acompanhamento').fill('abc');
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
   ok(await until(async () => (await b.locator('#' + (await b.getByLabel('Código de acompanhamento').getAttribute('id')) + '-erro').count()) === 1), 'malformed code: field error before calling the server');
-  await b.getByLabel('Número do pedido').fill('');
+  // O envio anterior move o foco para o campo inválido num requestAnimationFrame. Espera isso acabar antes de esvaziar o outro campo:
+  // o fill('') do Playwright seleciona o texto e só depois aperta "Delete", e um foco roubado no meio faria o Delete ir para o campo errado.
+  await b.waitForFunction(() => document.activeElement?.getAttribute('aria-invalid') === 'true', undefined, { timeout: 3000 }).catch(() => undefined);
+  const numberField = b.getByLabel('Número do pedido');
+  await numberField.fill('');
+  await until(async () => (await numberField.inputValue()) === '');
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
-  ok(await until(async () => /Informe o número do pedido/.test(await body(b))), 'empty number: field error');
+  ok(
+    await until(async () => /Informe o número do pedido/.test(await body(b))),
+    'empty number: field error',
+    await b.evaluate(() => ({
+      url: location.href,
+      number: document.querySelector('input[inputmode=numeric]')?.value,
+      active: document.activeElement?.getAttribute('placeholder') ?? document.activeElement?.tagName,
+      text: document.body.innerText.slice(0, 700),
+    })),
+  );
   await b.getByLabel('Número do pedido').fill('#' + num);
   await b.getByLabel('Código de acompanhamento').fill(token.toLowerCase().replace(/-/g, ' '));
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
