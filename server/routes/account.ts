@@ -72,7 +72,10 @@ const orderNumber = (value: unknown): string => {
 
 const ORDER_LIST = `
   select o.order_number, o.order_status, o.payment_status, o.payment_method, o.delivery_type, o.total, o.created_at, o.updated_at,
-         (select string_agg(i.quantity || 'x ' || i.product_name, ', ' order by i.created_at, i.product_name)
+         (select string_agg(
+                   i.quantity || 'x ' || i.product_name
+                     || case i.ice_choice when 'normal' then ' (gelo normal)' when 'flavored' then ' (gelo de sabor)' else '' end,
+                   ', ' order by i.created_at, i.product_name, i.ice_choice nulls first)
             from order_items i where i.order_id = o.id) as summary
     from orders o`;
 

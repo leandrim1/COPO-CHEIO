@@ -29,6 +29,7 @@ const productSpec: Spec = {
 const categorySpec: Spec = {
   name: text('Nome', { min: 1, max: 40, required: true }),
   active: bool('Ativa'),
+  ice_choice_required: bool('Escolha do gelo obrigatória'),
   position: int('Ordem', { max: 100_000 }),
 };
 
@@ -63,7 +64,12 @@ const PRODUCT_LABELS: FieldLabels = {
   position: { label: 'ordem' },
 };
 
-const CATEGORY_LABELS: FieldLabels = { name: { label: 'nome' }, active: { label: 'ativa no site', format: 'bool' }, position: { label: 'ordem' } };
+const CATEGORY_LABELS: FieldLabels = {
+  name: { label: 'nome' },
+  active: { label: 'ativa no site', format: 'bool' },
+  ice_choice_required: { label: 'escolha do gelo obrigatória', format: 'bool' },
+  position: { label: 'ordem' },
+};
 
 const brl = (value: number) => `R$ ${value.toFixed(2).replace('.', ',')}`;
 

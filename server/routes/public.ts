@@ -19,7 +19,8 @@ export function registerPublic(r: Router) {
   // promo_price é a promoção EM VIGOR agora (fora da janela de datas, ela some e o produto volta ao preço normal).
   r.get('/api/products', 'public', async () => {
     const [categories, products] = await batch([
-      ['select id, name, position, active from categories where active order by position, name'],
+      // ice_choice_required: os produtos desta categoria só são pedidos com a escolha do gelo (o banco confere de novo ao criar o pedido).
+      ['select id, name, position, active, ice_choice_required from categories where active order by position, name'],
       [
         `select p.id, p.category_id, p.name, p.description, p.price,
                 effective_promo(p.promo_price, p.promo_starts_at, p.promo_ends_at) as promo_price,

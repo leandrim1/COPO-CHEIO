@@ -82,7 +82,7 @@ export function registerOrders(r: Router) {
     const order = await one('select * from orders where order_number = $1::bigint', [number]);
     if (!order) throw new HttpError(404, 'Pedido não encontrado.');
     const [items, history, links, accounts] = await batch([
-      ['select * from order_items where order_id = $1 order by created_at, product_name', [order.id]],
+      ['select * from order_items where order_id = $1 order by created_at, product_name, ice_choice nulls first', [order.id]],
       ['select * from order_status_history where order_id = $1 order by created_at', [order.id]],
       // Só metadados: o código em si não existe no banco (guardamos o hash).
       [

@@ -105,6 +105,7 @@ function failure(error: unknown, admin: Admin | null, requestId: string): Respon
   switch (e?.code) {
     case 'P0001': // regras de negócio do banco, já em português
       return json({ error: e.message }, 400);
+    case 'CC400': // pedido incompleto que o site resolve com a pessoa (ex.: falta escolher o gelo); detalhes em JSON
     case 'CC409': {
       // Conflito que o site resolve com a pessoa (ex.: o preço mudou antes de enviar o pedido). Os detalhes vêm em JSON.
       let detail: Record<string, unknown> = {};
@@ -113,7 +114,7 @@ function failure(error: unknown, admin: Admin | null, requestId: string): Respon
       } catch {
         /* sem detalhes */
       }
-      return json({ error: e.message, ...detail }, 409);
+      return json({ error: e.message, ...detail }, e.code === 'CC400' ? 400 : 409);
     }
     case '23505':
       return json({ error: (e.constraint && CONSTRAINT_MESSAGES[e.constraint]) || 'Já existe um item com esse nome ou código.' }, 409);
