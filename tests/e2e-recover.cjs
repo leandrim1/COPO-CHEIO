@@ -14,6 +14,19 @@ const BASE = 'http://localhost:4180';
 const psql = (q) => execSync(`psql -h 127.0.0.1 -p 5433 -U postgres copocheio_test -At -c "${q}"`).toString().trim();
 let fails = 0;
 let passes = 0;
+// Espera (até 5 s) por algo que a tela mostra depois de um clique: a leitura imediata perde a corrida em máquinas lentas, como as do GitHub Actions.
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      if (await fn()) return true;
+    } catch {
+      /* a tela ainda está mudando: tenta de novo */
+    }
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
 const ok = (c, msg, extra) => {
   if (!c) fails++;
   else passes++;
@@ -86,7 +99,7 @@ const age = (email) => psql(`update customer_password_resets set sent_at = sent_
   ok(/Receber o link por e-mail/.test(await body(a)) && /Não consigo acessar meu e-mail/.test(await body(a)), 'tela oferece o link por e-mail e a alternativa sem e-mail');
   await a.getByLabel('E-mail da conta').first().fill('isto-nao-e-email');
   await a.getByRole('button', { name: 'Enviar link de recuperação' }).click();
-  ok(/Confira o e-mail/.test(await body(a)) && (await a.getByLabel('E-mail da conta').first().getAttribute('aria-invalid')) === 'true', 'e-mail inválido: erro no campo, nada é enviado');
+  ok(await until(async () => /Confira o e-mail/.test(await body(a)) && (await a.getByLabel('E-mail da conta').first().getAttribute('aria-invalid')) === 'true'), 'e-mail inválido: erro no campo, nada é enviado');
   ok((await mails('isto-nao-e-email')).length === 0, 'nenhum e-mail saiu para o endereço inválido');
 
   const t0 = Date.now();
@@ -150,7 +163,7 @@ const age = (email) => psql(`update customer_password_resets set sent_at = sent_
   await c.screenshot({ path: `${SP}/recover-reset-mobile.png`, fullPage: true });
   await c.getByLabel('Senha nova', { exact: true }).fill('curta');
   await c.getByRole('button', { name: 'Salvar senha nova' }).click();
-  ok(/pelo menos 8 caracteres/.test(await body(c)), 'senha curta: erro claro, o link não é gasto');
+  ok(await until(async () => /pelo menos 8 caracteres/.test(await body(c))), 'senha curta: erro claro, o link não é gasto');
   ok((await api('POST', '/api/account/reset-check', { token: resetLinkOf(second).split('/').pop() })).status === 200, '...e o link continua valendo');
   await c.getByLabel('Senha nova', { exact: true }).fill('senha-nova-456');
   await c.getByRole('button', { name: 'Salvar senha nova' }).click();

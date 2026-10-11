@@ -17,6 +17,19 @@ const BLOB = 'http://127.0.0.1:4181';
 const psql = (q) => execSync(`psql -h 127.0.0.1 -p 5433 -U postgres copocheio_test -At -c "${q}"`).toString().trim();
 let fails = 0;
 const requests = [];
+// Espera (até 5 s) por algo que a tela mostra depois de um clique: a leitura imediata perde a corrida em máquinas lentas, como as do GitHub Actions.
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      if (await fn()) return true;
+    } catch {
+      /* a tela ainda está mudando: tenta de novo */
+    }
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
 const ok = (c, msg, extra) => {
   if (!c) fails++;
   console.log((c ? 'PASS ' : 'FAIL ') + msg + (!c && extra !== undefined ? '  -> ' + JSON.stringify(extra) : ''));
@@ -350,7 +363,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await a.getByRole('button', { name: 'Pago' }).click();
   await a.waitForSelector('text=Pagamento atualizado.');
   await a.getByRole('button', { name: 'Imprimir' }).click();
-  ok((await a.evaluate(() => window.__printed)) === 1, 'print button calls window.print()');
+  ok(await until(async () => (await a.evaluate(() => window.__printed)) === 1), 'print button calls window.print()');
   await a.emulateMedia({ media: 'print' });
   await a.screenshot({ path: `${SP}/e2e-recibo.png` });
   ok(await a.$eval('#recibo', (e) => getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility === 'visible'), 'printable receipt visible in print mode');

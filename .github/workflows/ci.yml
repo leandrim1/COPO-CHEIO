@@ -101,6 +101,8 @@ jobs:
         run: npm run test:e2e
         env:
           TEST_OUT: ${{ runner.temp }}/copocheio-tests
+          # Um arquivo que falhar é repetido uma vez (navegador em máquina lenta pode perder uma corrida de tempo); o resumo avisa quando isso acontece.
+          E2E_RETRIES: 1
       - name: Guardar a saída dos testes
         if: always()
         uses: actions/upload-artifact@v4

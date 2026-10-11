@@ -32,7 +32,9 @@ bash tests/run-e2e.sh e2e-track   # só um arquivo
 ```
 
 Cada suíte imprime `OK: N checks passaram` ou lista o que falhou; o resumo no fim mostra uma linha por suíte e o comando
-termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDIR/copocheio-tests/<nome>.txt`.
+termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDIR/copocheio-tests/<nome>.txt` (ou em `$TEST_OUT`).
+`E2E_RETRIES=1 npm run test:e2e` repete uma vez o arquivo de navegador que falhar (o CI usa isso, porque o Chromium em máquina lenta
+às vezes perde uma corrida de tempo); o resumo avisa quando precisou da segunda tentativa e guarda a saída da primeira.
 
 ## Como funciona
 

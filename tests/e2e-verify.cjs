@@ -14,6 +14,19 @@ const BASE = 'http://localhost:4180';
 const psql = (q) => execSync(`psql -h 127.0.0.1 -p 5433 -U postgres copocheio_test -At -c "${q}"`).toString().trim();
 let fails = 0;
 let passes = 0;
+// Espera (até 5 s) por algo que a tela mostra depois de um clique: a leitura imediata perde a corrida em máquinas lentas, como as do GitHub Actions.
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      if (await fn()) return true;
+    } catch {
+      /* a tela ainda está mudando: tenta de novo */
+    }
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
 const ok = (c, msg, extra) => {
   if (!c) fails++;
   else passes++;
@@ -147,7 +160,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   list = await nextMails('carla@exemplo.com', 1);
   ok(list.length === 1, 'signing up again for the same pending e-mail inside the 60 s cooldown does not send another e-mail', list.length);
   await a.getByRole('button', { name: 'Confirmar e-mail' }).click();
-  ok(/Digite os 6 dígitos/.test(await body(a)), 'empty code: asks for the 6 digits (no server call)');
+  ok(await until(async () => /Digite os 6 dígitos/.test(await body(a))), 'empty code: asks for the 6 digits (no server call)');
   const right = codeOf(list[0]);
   const wrong = right === '000000' ? '111111' : '000000';
   await codeInput.fill(wrong);

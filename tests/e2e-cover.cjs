@@ -18,6 +18,19 @@ const BASE = 'http://localhost:4180';
 const BLOB = 'http://127.0.0.1:4181';
 const psql = (q) => execSync(`psql -h 127.0.0.1 -p 5433 -U postgres copocheio_test -At -c "${q}"`).toString().trim();
 let fails = 0;
+// Espera (até 5 s) por algo que a tela mostra depois de um clique: a leitura imediata perde a corrida em máquinas lentas, como as do GitHub Actions.
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      if (await fn()) return true;
+    } catch {
+      /* a tela ainda está mudando: tenta de novo */
+    }
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
 const ok = (c, msg, extra) => {
   if (!c) fails++;
   console.log((c ? 'PASS ' : 'FAIL ') + msg + (!c && extra !== undefined ? '  -> ' + JSON.stringify(extra) : ''));
@@ -250,7 +263,7 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
     await page.evaluate(() => document.querySelector('button[aria-label^="Ver destaque"]').focus({ focusVisible: true }));
     await page.keyboard.press('Shift+Tab');
     await page.keyboard.press('Tab');
-    ok(await page.evaluate(() => document.activeElement?.matches('button[aria-label^="Ver destaque"]:focus-visible')), 'foco do teclado está num ponto');
+    ok(await until(() => page.evaluate(() => document.activeElement?.matches('button[aria-label^="Ver destaque"]:focus-visible'))), 'foco do teclado está num ponto');
     await page.waitForTimeout(6800);
     ok((await dots.nth(0).getAttribute('aria-current')) === 'true', 'com o foco do teclado nos pontos, o carrossel fica parado');
     await page.evaluate(() => document.activeElement.blur());

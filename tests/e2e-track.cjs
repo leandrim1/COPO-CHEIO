@@ -14,6 +14,19 @@ const BASE = 'http://localhost:4180';
 const psql = (q) => execSync(`psql -h 127.0.0.1 -p 5433 -U postgres copocheio_test -At -c "${q}"`).toString().trim();
 let fails = 0;
 let passes = 0;
+// Espera (até 5 s) por algo que a tela mostra depois de um clique: a leitura imediata perde a corrida em máquinas lentas, como as do GitHub Actions.
+const until = async (fn, ms = 5000) => {
+  const end = Date.now() + ms;
+  for (;;) {
+    try {
+      if (await fn()) return true;
+    } catch {
+      /* a tela ainda está mudando: tenta de novo */
+    }
+    if (Date.now() > end) return false;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+};
 const ok = (c, msg, extra) => {
   if (!c) fails++;
   else passes++;
@@ -161,10 +174,10 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   ok(/Não encontramos um pedido com esses dados/.test(wrongMsg) && new URL(b.url()).pathname === '/acompanhar-pedido', 'wrong code: generic error, no access', wrongMsg);
   await b.getByLabel('Código de acompanhamento').fill('abc');
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
-  ok((await b.locator('#' + (await b.getByLabel('Código de acompanhamento').getAttribute('id')) + '-erro').count()) === 1, 'malformed code: field error before calling the server');
+  ok(await until(async () => (await b.locator('#' + (await b.getByLabel('Código de acompanhamento').getAttribute('id')) + '-erro').count()) === 1), 'malformed code: field error before calling the server');
   await b.getByLabel('Número do pedido').fill('');
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
-  ok(/Informe o número do pedido/.test(await body(b)), 'empty number: field error');
+  ok(await until(async () => /Informe o número do pedido/.test(await body(b))), 'empty number: field error');
   await b.getByLabel('Número do pedido').fill('#' + num);
   await b.getByLabel('Código de acompanhamento').fill(token.toLowerCase().replace(/-/g, ' '));
   await b.getByRole('button', { name: 'Consultar pedido' }).click();
@@ -173,7 +186,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   await b.goto(BASE + '/acompanhar-pedido', { waitUntil: 'networkidle' });
   ok(/Pedidos feitos neste aparelho/.test(await body(b)) && (await b.getByRole('link', { name: 'Acompanhar', exact: true }).count()) === 1, 'lookup remembers the order on this device (shortcut only)');
   await b.getByRole('button', { name: 'Esquecer todos' }).click();
-  ok(!/Pedidos feitos neste aparelho/.test(await body(b)), 'shortcut list can be cleared');
+  ok(await until(async () => !/Pedidos feitos neste aparelho/.test(await body(b))), 'shortcut list can be cleared');
   await b.goto(BASE + `/acompanhar-pedido/${num}`, { waitUntil: 'networkidle' });
   ok(/Pedido não encontrado/.test(await body(b)), 'order number alone gives no access');
   await b.goto(BASE + '/acompanhar-pedido/AAAAA-BBBBB-CCCCC-DDDDD', { waitUntil: 'networkidle' });
@@ -294,7 +307,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   await g.getByLabel('E-mail *').fill('ana@exemplo.com');
   await g.getByLabel('Senha *').fill('curta');
   await g.getByRole('button', { name: /Criar conta e receber o código/ }).click();
-  ok(/Use pelo menos 8 caracteres/.test(await body(g)), 'register validates the password');
+  ok(await until(async () => /Use pelo menos 8 caracteres/.test(await body(g))), 'register validates the password');
   await g.getByLabel('Senha *').fill('ana-senha-123');
   await g.getByRole('button', { name: /Criar conta e receber o código/ }).click();
   await confirmEmail(g, 'ana@exemplo.com');
@@ -439,7 +452,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   const waAdmin = await ad.getByRole('link', { name: 'Enviar por WhatsApp' }).getAttribute('href');
   ok(waAdmin.startsWith('https://wa.me/5534988881111?text=') && decodeURIComponent(waAdmin).includes(adminLink), 'admin can send the link to the customer on WhatsApp');
   await ad.getByRole('button', { name: 'Copiar', exact: true }).click();
-  ok((await ad.evaluate(() => navigator.clipboard.readText().catch(() => ''))) === adminLink, 'admin copy button');
+  ok(await until(async () => (await ad.evaluate(() => navigator.clipboard.readText().catch(() => ''))) === adminLink), 'admin copy button');
   const ctxJ = await newContext(browser);
   const j = track(await ctxJ.newPage());
   await j.goto(adminLink, { waitUntil: 'networkidle' });
