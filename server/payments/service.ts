@@ -12,9 +12,10 @@ import { audit } from '../audit.js';
 import { batch, one, query } from '../db.js';
 import type { Row } from '../db.js';
 import { HttpError, readBytes } from '../http.js';
+import { applyMerchantObservation } from './merchant.js';
 import { getProvider } from './provider.js';
 import { ProviderError, providerErrorKind } from './types.js';
-import type { ChargeSnapshot, CreatedPix, PaymentProvider, WebhookEvent } from './types.js';
+import type { ChargeSnapshot, CreatedPix, PaymentProvider, ProviderContext, WebhookEvent } from './types.js';
 
 // Validade do Pix pedido à operadora. A validade que vale é a que ela devolver.
 export const PIX_TTL_SECONDS = 15 * 60;
@@ -26,6 +27,8 @@ export const RETRY_WINDOW_MINUTES = 10;
 export const NEVER_PAID_MINUTES = 30;
 // Cobrança vencida que a operadora não consegue confirmar é encerrada (e sinalizada) depois deste tempo.
 export const LOCAL_EXPIRY_GRACE_MINUTES = 30;
+// A operadora dá poucos segundos para o aviso ser respondido: a consulta feita por causa dele tem prazo menor que a das outras.
+export const WEBHOOK_LOOKUP_MS = 4000;
 // Mínimo entre duas consultas à operadora sobre a mesma cobrança, quando é o cliente quem pergunta (a tela consulta de poucos em poucos segundos).
 const CHECK_EVERY_MS = 6000;
 // Mínimo entre duas varreduras na mesma instância do servidor.
@@ -160,7 +163,22 @@ export async function applySnapshot(paymentId: string, snapshot: ChargeSnapshot,
   const observation = toObservation(snapshot);
   if (!observation) return null;
   const row = await one<{ r: Row }>('select payment_apply($1::uuid, $2::jsonb, $3) as r', [paymentId, JSON.stringify(observation), source]);
-  const result = { ...(row!.r as ApplyResult), payment: normalizePayment(row!.r.payment) };
+  let result = { ...(row!.r as ApplyResult), payment: normalizePayment(row!.r.payment) };
+  // Disputa ou chargeback: o dinheiro entrou (a cobrança continua "paga"), mas pode ser desfeito pelo banco. Fica sinalizado para o dono.
+  if (snapshot.disputed) {
+    const note = snapshot.detail ?? 'A operadora informa disputa ou devolução pelo banco nesta cobrança. Confira na operadora.';
+    const flagged = await one<Row>(
+      `update payments
+          set needs_attention = true,
+              attention_reason = left(case when attention_reason is null then $2
+                                           when position($2 in attention_reason) > 0 then attention_reason
+                                           else attention_reason || ' ' || $2 end, 300)
+        where id = $1::uuid
+        returning *`,
+      [paymentId, note],
+    );
+    if (flagged) result = { ...result, payment: normalizePayment(flagged), outcome: result.outcome === 'applied' ? 'needs_attention' : result.outcome };
+  }
   log('cobrança atualizada', { payment: paymentId, status: result.payment.status, outcome: result.outcome, released: result.released, source });
   await auditResult(result, source);
   return result;
@@ -171,6 +189,10 @@ export async function applySnapshot(paymentId: string, snapshot: ChargeSnapshot,
 export async function startPixPayment(orderId: string): Promise<{ payment: PaymentRow; created: boolean }> {
   const provider = getProvider();
   if (!provider) throw new HttpError(503, UNAVAILABLE, { code: 'payments_unavailable' });
+
+  // Um Pix anterior do mesmo pedido que já venceu é cancelado na operadora ANTES de abrir o novo: assim só um QR Code vale por vez.
+  const overdue = await query<Row>(`select id from payments where order_id = $1::uuid and status = 'pending' and expires_at < now()`, [orderId]);
+  for (const old of overdue) await settleOverdue(String(old.id)).catch(() => undefined);
 
   // Tranca o pedido e abre a tentativa (ou devolve a que já está em andamento): é aqui que cliques repetidos viram uma só cobrança.
   const begun = await one<{ r: { created: boolean; payment: Row; order_number: number; merchant_account?: string } }>(
@@ -233,16 +255,65 @@ function dueToAsk(paymentId: string): boolean {
   return true;
 }
 
+// O que a operadora precisa saber de uma cobrança em toda consulta: a conta do estabelecimento e a comissão que a loja calculou.
+async function contextOf(paymentId: string): Promise<{ row: Row; ctx: ProviderContext } | null> {
+  const row = await one<Row>(
+    `select p.id, p.provider, p.status, p.provider_charge_id, p.expires_at, p.amount_cents, p.commission_cents, m.provider_account_id
+       from payments p left join merchant_accounts m on m.id = p.merchant_account_id
+      where p.id = $1::uuid`,
+    [paymentId],
+  );
+  if (!row) return null;
+  return { row, ctx: { merchantAccountId: (row.provider_account_id as string | null) ?? null, commissionCents: Number(row.commission_cents) } };
+}
+
 // Pergunta à operadora como está a cobrança e aplica a resposta. null = não há como perguntar (sem operadora ou sem consulta).
 export async function refreshPayment(paymentId: string, source: 'lookup' | 'admin' = 'lookup'): Promise<ApplyResult | null> {
-  const row = await one<Row>('select id, provider, provider_charge_id from payments where id = $1::uuid', [paymentId]);
-  if (!row || !row.provider_charge_id) return null;
+  const found = await contextOf(paymentId);
+  if (!found || !found.row.provider_charge_id) return null;
   const provider = getProvider();
-  if (!provider || provider.name !== row.provider || !provider.canLookup) return null;
-  const snapshot = await withTimeout(provider.getCharge(String(row.provider_charge_id)));
+  if (!provider || provider.name !== found.row.provider || !provider.canLookup) return null;
+  const snapshot = await withTimeout(provider.getCharge(String(found.row.provider_charge_id), found.ctx));
   // A resposta precisa ser da cobrança que perguntamos.
-  if (snapshot.providerChargeId !== row.provider_charge_id) throw new ProviderError('unavailable', 'resposta de outra cobrança');
+  if (snapshot.providerChargeId !== found.row.provider_charge_id) throw new ProviderError('unavailable', 'resposta de outra cobrança');
   return applySnapshot(paymentId, snapshot, source);
+}
+
+// Pix que passou da validade da loja. A operadora pode manter o QR Code valendo por mais tempo; então, antes de encerrar aqui, confere se
+// não foi pago agora mesmo, CANCELA a cobrança lá (o QR Code deixa de aceitar pagamento) e só então a encerra como vencida. Se não der
+// para cancelar (operadora fora do ar), a cobrança continua em aberto e a próxima conferência tenta de novo; depois da tolerância
+// (payment_expire_local) ela é encerrada aqui, sinalizada. Devolve o estado da cobrança depois da tentativa.
+export async function settleOverdue(paymentId: string): Promise<PaymentStatus | null> {
+  const found = await contextOf(paymentId);
+  if (!found) return null;
+  const { row, ctx } = found;
+  const status = String(row.status) as PaymentStatus;
+  const overdue = row.expires_at !== null && new Date(String(row.expires_at)).getTime() < Date.now();
+  if (status !== 'pending' || !overdue || !row.provider_charge_id) return status;
+  const provider = getProvider();
+  if (!provider || provider.name !== row.provider || !provider.canLookup) return status;
+  const chargeId = String(row.provider_charge_id);
+  const current = async (): Promise<PaymentStatus> => {
+    const result = await refreshPayment(paymentId, 'lookup');
+    return (result?.payment.status ?? status) as PaymentStatus;
+  };
+  // 1) Pode ter sido pago (ou encerrado) pela própria operadora desde a última conferência.
+  const first = await current();
+  if (first !== 'pending') return first;
+  // Operadora que não permite cancelar: só resta esperar a validade dela (ou a tolerância, que encerra aqui, sinalizada).
+  if (!provider.cancelCharge) return first;
+  // 2) Cancela lá. "Não está mais em aberto": a operadora mudou a cobrança no meio do caminho; ela diz o que aconteceu.
+  const cancel = await withTimeout(provider.cancelCharge(chargeId, ctx));
+  if (cancel.cancelled) {
+    await applySnapshot(paymentId, { providerChargeId: chargeId, status: 'expired', providerStatus: 'CANCELED', amountCents: Number(row.amount_cents) }, 'lookup');
+    log('Pix vencido cancelado na operadora', { payment: paymentId });
+  } else if (cancel.reason === 'not_cancelable') {
+    return current();
+  } else {
+    return 'pending';
+  }
+  const after = await one<{ status: PaymentStatus }>('select status from payments where id = $1::uuid', [paymentId]);
+  return after?.status ?? null;
 }
 
 // ---- O que o cliente vê ------------------------------------------------------------------------------------------------------------
@@ -307,9 +378,12 @@ export function toView(order: Row, payment: PaymentRow, attempts: number): Payme
 export async function customerPaymentView(orderId: string, opts: { refresh: boolean }): Promise<CustomerPayment> {
   let state = await loadLatest(orderId);
   if (state.payment?.status === 'pending') {
-    if (opts.refresh && dueToAsk(state.payment.id)) {
+    const overdue = state.payment.expires_at !== null && new Date(state.payment.expires_at).getTime() < Date.now();
+    // Venceu: confere, cancela na operadora e encerra já (a tela do cliente passa a mostrar "O Pix venceu" na hora, sem esperar a conferência periódica).
+    if (opts.refresh && (overdue || dueToAsk(state.payment.id))) {
       try {
-        await refreshPayment(state.payment.id, 'lookup');
+        if (overdue) await settleOverdue(state.payment.id);
+        else await refreshPayment(state.payment.id, 'lookup');
       } catch (error) {
         log('consulta à operadora falhou', { payment: state.payment.id, kind: providerErrorKind(error) ?? 'erro' });
       }
@@ -344,6 +418,23 @@ async function processEvent(provider: PaymentProvider, event: WebhookEvent): Pro
   const finish = (paymentId: string | null, outcome: string, detail: string | null) =>
     one('select payment_event_finish($1::uuid, $2::uuid, $3, $4)', [eventId, paymentId, outcome, detail]);
 
+  // Aviso sobre a conta do estabelecimento (cadastro da subconta): atualiza o cadastro que o dono iniciou. Nunca cria conta sozinho.
+  if (event.merchant) {
+    try {
+      const outcome = await applyMerchantObservation(provider.name, event.merchant);
+      await finish(null, outcome, null);
+    } catch (error) {
+      await finish(null, 'error', 'falha ao processar').catch(() => undefined);
+      throw error;
+    }
+    return;
+  }
+  // Aviso que a loja só registra (assinaturas, criação de cobrança, MED...): fica no histórico e nada mais.
+  if (event.informational) {
+    await finish(null, 'ignored', 'aviso informativo');
+    return;
+  }
+
   const payment = await one<Row>(
     `select id, provider_charge_id from payments
       where provider = $1 and (($2::text is not null and provider_charge_id = $2) or ($3::text is not null and id::text = $3))
@@ -356,11 +447,18 @@ async function processEvent(provider: PaymentProvider, event: WebhookEvent): Pro
   }
 
   try {
+    // Achou pela referência da loja (a resposta da criação se perdeu): guarda o código da cobrança para as próximas conferências.
+    if (!payment.provider_charge_id && event.providerChargeId) {
+      await one('update payments set provider_charge_id = $2 where id = $1::uuid and provider_charge_id is null', [payment.id, event.providerChargeId]).catch(() => undefined);
+      payment.provider_charge_id = event.providerChargeId;
+    }
     // A fonte do estado é a operadora: o aviso só diz "olhe a cobrança X". Se ela não permite consulta, vale o aviso verificado.
+    // A operadora espera resposta em poucos segundos: a consulta tem prazo curto; se estourar, o aviso é reenviado (e a tela do cliente também confere).
     const chargeId = String(payment.provider_charge_id ?? event.providerChargeId ?? '');
     let snapshot: ChargeSnapshot | null;
     if (provider.canLookup && chargeId) {
-      snapshot = await withTimeout(provider.getCharge(chargeId));
+      const found = await contextOf(String(payment.id));
+      snapshot = await withTimeout(provider.getCharge(chargeId, found?.ctx), WEBHOOK_LOOKUP_MS);
       if (snapshot.providerChargeId !== chargeId) throw new ProviderError('unavailable', 'resposta de outra cobrança');
     } else {
       snapshot = event.snapshot;
@@ -423,7 +521,7 @@ export async function sweep(opts: { lookups?: boolean; force?: boolean; limit?: 
   if (!opts.force && Date.now() - lastSweep < SWEEP_EVERY_MS) return out;
   lastSweep = Date.now();
   const provider = getProvider();
-  const due = await query<Row>('select id, status, provider, provider_charge_id from payments_due($1)', [opts.limit ?? 5]);
+  const due = await query<Row>('select id, status, provider, provider_charge_id, expires_at from payments_due($1)', [opts.limit ?? 5]);
   for (const payment of due) {
     try {
       if (payment.status === 'creating') {
@@ -432,11 +530,22 @@ export async function sweep(opts: { lookups?: boolean; force?: boolean; limit?: 
         continue;
       }
       if (opts.lookups && provider && provider.name === payment.provider && provider.canLookup && payment.provider_charge_id) {
-        const result = await refreshPayment(String(payment.id), 'lookup');
-        if (result) {
+        const overdue = payment.expires_at !== null && new Date(String(payment.expires_at)).getTime() < Date.now();
+        if (overdue) {
+          // Venceu: confere, cancela na operadora e encerra.
+          const after = await settleOverdue(String(payment.id));
           out.checked += 1;
-          if (result.changed) out.closed += 1;
-          continue;
+          if (after !== null && after !== 'pending') {
+            out.closed += 1;
+            continue;
+          }
+        } else {
+          const result = await refreshPayment(String(payment.id), 'lookup');
+          if (result) {
+            out.checked += 1;
+            if (result.changed) out.closed += 1;
+            continue;
+          }
         }
       }
     } catch (error) {
@@ -459,9 +568,11 @@ export type Readiness = { provider: string | null; merchant: string | null; read
 export async function onlineReadiness(): Promise<Readiness> {
   const provider = getProvider();
   if (!provider) return { provider: null, merchant: null, ready: false };
-  const merchant = await one<{ status: string }>(
-    `select status from merchant_accounts where provider = $1 order by (status = 'approved') desc, created_at desc limit 1`,
+  const merchant = await one<{ status: string; fees: string | null }>(
+    `select status, fees_acknowledged_at as fees from merchant_accounts where provider = $1 order by (status = 'approved') desc, created_at desc limit 1`,
     [provider.name],
   );
-  return { provider: provider.name, merchant: merchant?.status ?? null, ready: merchant?.status === 'approved' };
+  // Em produção a conta só vale se o dono declarou conhecer as tarifas (registrado ao vincular ou cadastrar a conta).
+  const productionNeedsFees = provider.merchant?.environment === 'production';
+  return { provider: provider.name, merchant: merchant?.status ?? null, ready: merchant?.status === 'approved' && (!productionNeedsFees || merchant.fees !== null) };
 }

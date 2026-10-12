@@ -1,4 +1,4 @@
-import { createProvider } from './factory.js';
+import { createProvider, describeSetup } from './factory.js';
 import type { PaymentProvider } from './types.js';
 
 // A operadora configurada (ou nenhuma). Criada uma vez por instância do servidor.
@@ -9,10 +9,25 @@ export function getProvider(): PaymentProvider | null {
   return cached;
 }
 
-// Sem valores nem segredos: só o que o painel precisa mostrar.
-export function providerSummary(): { configured: boolean; name: string | null } {
+// Sem valores nem segredos: só o que o painel precisa mostrar (inclusive o NOME das variáveis que faltam).
+export function providerSummary(): {
+  configured: boolean;
+  name: string | null;
+  environment: 'sandbox' | 'production' | null;
+  missing: string[];
+  note: string | null;
+  manages_accounts: boolean;
+} {
   const provider = getProvider();
-  return { configured: provider !== null, name: provider?.name ?? null };
+  const setup = describeSetup();
+  return {
+    configured: provider !== null,
+    name: provider?.name ?? null,
+    environment: provider?.merchant?.environment ?? setup.environment,
+    missing: setup.missing,
+    note: setup.note,
+    manages_accounts: Boolean(provider?.merchant),
+  };
 }
 
 // Formas de pagamento em que o cliente paga pelo site. Espelha is_online_payment() do banco (migration 0014).

@@ -10,6 +10,8 @@ import type { Row } from '../db.js';
 import { requireCustomer } from '../customer.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Ctx, Router } from '../http.js';
+import { linkAccount, listCandidates, refreshProposal, submitProposal } from '../payments/merchant.js';
+import type { MerchantRow } from '../payments/merchant.js';
 import { getProvider, providerSummary } from '../payments/provider.js';
 import { customerPaymentView, handleWebhook, normalizePayment, onlineReadiness, refreshPayment, startPixPayment, sweep } from '../payments/service.js';
 import { NOT_FOUND, assertNotThrottled, hashToken, missesStatement, normalizeToken, recordMiss, throttled } from '../tracking.js';
@@ -113,6 +115,10 @@ const mask = (value: unknown): string | null => {
   return value.length <= 8 ? '••••' : `${value.slice(0, 4)}…${value.slice(-4)}`;
 };
 
+// A conta do estabelecimento como o painel a vê: identificadores sempre mascarados.
+const publicMerchant = (row: MerchantRow | Row | null): Row | null => (row ? { ...row, proposal_id: mask(row.proposal_id), provider_account_id: mask(row.provider_account_id) } : null);
+const flag = (value: unknown): boolean => value === true;
+
 export function registerPayments(r: Router) {
   // ---- Cliente --------------------------------------------------------------------------------------------------
 
@@ -167,23 +173,60 @@ export function registerPayments(r: Router) {
            from payments`,
       ],
       [
-        `select id, provider, kind, status, status_detail, proposal_id, provider_account_id, authorized_at, fees_acknowledged_at, created_at, updated_at
-           from merchant_accounts order by (status = 'approved') desc, created_at desc limit 1`,
+        `select id, provider, kind, status, status_detail, proposal_id, provider_account_id, ambiguous, authorized_at, fees_acknowledged_at, created_at, updated_at
+           from merchant_accounts where provider = $1
+          order by (status in ('draft', 'submitted', 'pending', 'approved')) desc, created_at desc limit 1`,
+        [getProvider()?.name ?? ''],
       ],
       ["select code, label, enabled from payment_methods where code = 'pix_online'"],
     ]);
-    const account = merchant[0]
-      ? { ...merchant[0], proposal_id: mask(merchant[0].proposal_id), provider_account_id: mask(merchant[0].provider_account_id) }
-      : null;
+    const account = publicMerchant(merchant[0] ?? null);
     return json({
       payments: rows.slice(0, limit).map((row) => adminRow(row, true)),
       has_more: rows.length > limit,
       summary: summary[0],
       merchant: account,
       provider: providerSummary(),
+      account_fee_cents: getProvider()?.merchant?.accountCreationFeeCents ?? null,
       readiness: await onlineReadiness(),
       method: method[0] ?? null,
     });
+  });
+
+  // ---- Conta do estabelecimento na operadora (só o owner) ---------------------------------------------------------------------------
+  // Registradas ANTES das rotas /api/admin/payments/:id/... (senão "account" seria lido como o :id de uma cobrança).
+  // Nada aqui acontece sozinho: cada rota é uma ação explícita do owner, com a autorização do titular (e, em produção, a ciência das tarifas).
+
+  // Contas que a operadora informa ter (documento sempre mascarado), para vincular uma que já existe.
+  r.get('/api/admin/payments/account/candidates', 'owner', async () => json({ accounts: await listCandidates() }));
+
+  r.post('/api/admin/payments/account/link', 'owner', async (ctx) => {
+    const body = await readJson(ctx.req, 4 * 1024);
+    await reserve('merchant-link', ctx.ip, 3600, 20, 'Muitas tentativas em pouco tempo. Aguarde e tente de novo.');
+    const row = await linkAccount(ctx, typeof body.account_number === 'string' ? body.account_number.trim() : '', { authorized: flag(body.authorized), feesAcknowledged: flag(body.fees_acknowledged) });
+    return json({ account: publicMerchant(row) }, 201);
+  });
+
+  // Cadastra uma conta nova (PF ou PJ). Os dados pessoais vão direto para a operadora: não são gravados aqui.
+  r.post('/api/admin/payments/account/proposal', 'owner', async (ctx) => {
+    const body = await readJson(ctx.req, 16 * 1024);
+    await reserve('merchant-proposal', ctx.ip, 3600, 8, 'Muitas tentativas de cadastro em pouco tempo. Aguarde e tente de novo.');
+    if (body.kind !== 'pf' && body.kind !== 'pj') throw new HttpError(400, 'Escolha pessoa física ou pessoa jurídica.');
+    const row = await submitProposal(ctx, {
+      kind: body.kind,
+      authorized: flag(body.authorized),
+      feesAcknowledged: flag(body.fees_acknowledged),
+      confirmDuplicateRisk: flag(body.confirm_duplicate_risk),
+      form: body.form,
+    });
+    return json({ account: publicMerchant(row) }, 201);
+  });
+
+  // Atualiza o andamento do cadastro na operadora (e traz o endereço de envio dos documentos, que não é guardado).
+  r.post('/api/admin/payments/account/refresh', 'owner', async (ctx) => {
+    await reserve('merchant-refresh', ctx.ip, 600, 30, 'Muitas consultas em pouco tempo. Aguarde e tente de novo.');
+    const { account, documentsUrl } = await refreshProposal(ctx);
+    return json({ account: publicMerchant(account), documents_url: documentsUrl });
   });
 
   r.get('/api/admin/payments/:id', 'owner', async (ctx) => {

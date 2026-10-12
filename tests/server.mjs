@@ -100,9 +100,12 @@ await build({
     {
       name: 'simulador-de-pagamento',
       setup(b) {
-        b.onResolve({ filter: /\/factory\.js$/ }, (args) =>
-          args.importer.endsWith('server/payments/provider.ts') ? { path: join(here, 'payments-sim.mjs'), external: true } : undefined,
-        );
+        b.onResolve({ filter: /\/factory\.js$/ }, (args) => {
+          if (!args.importer.endsWith('server/payments/provider.ts')) return undefined;
+          // PAYMENTS_SIM=validapay: o adaptador REAL da ValidaPay (server/payments/validapay.ts), apontado para o servidor ValidaPay FALSO dos testes.
+          if (process.env.PAYMENTS_SIM === 'validapay') return { path: join(here, 'factory-validapay.ts') };
+          return { path: join(here, 'payments-sim.mjs'), external: true };
+        });
       },
     },
   ],

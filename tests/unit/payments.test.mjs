@@ -2,13 +2,20 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { load } from './load.mjs';
 
-// Aqui vale o código de PRODUÇÃO (a fábrica de operadoras de verdade); o simulador só existe no servidor de teste.
+// Aqui vale o código de PRODUÇÃO (a fábrica de operadoras de verdade, sem as variáveis da ValidaPay); o simulador só existe no servidor de teste.
 const provider = await load('server/payments/provider.ts');
 const service = await load('server/payments/service.ts');
 
-test('em produção não há operadora de pagamento: nada é simulado (a ValidaPay ainda não tem adaptador)', () => {
+test('em produção, sem as variáveis da ValidaPay não há operadora: nada é simulado, e só os NOMES que faltam são informados', () => {
   assert.equal(provider.getProvider(), null);
-  assert.deepEqual(provider.providerSummary(), { configured: false, name: null });
+  assert.deepEqual(provider.providerSummary(), {
+    configured: false,
+    name: null,
+    environment: null,
+    missing: ['VALIDAPAY_ENV', 'VALIDAPAY_CLIENT_ID', 'VALIDAPAY_CLIENT_SECRET', 'VALIDAPAY_WEBHOOK_SECRET'],
+    note: null,
+    manages_accounts: false,
+  });
 });
 
 test('só "pix_online" é pagamento online (os outros são pagos na entrega/retirada)', () => {

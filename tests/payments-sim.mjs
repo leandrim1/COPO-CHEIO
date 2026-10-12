@@ -1,6 +1,7 @@
 // SIMULADOR de operadora de pagamento: SÓ PARA OS TESTES AUTOMATIZADOS. NÃO é a ValidaPay.
 //
-// Não reproduz a API da ValidaPay (que ainda não foi consultada) e nada aqui prova que a integração real funciona. Serve para exercitar a
+// Não reproduz a API da ValidaPay e nada aqui prova que a integração real funciona (a integração com a ValidaPay é exercitada, contra um
+// servidor falso que segue a documentação, em tests/validapay-fake.mjs). Serve para exercitar a
 // lógica da LOJA: cobrança única, confirmação só depois de conferir, aviso repetido ou fora de ordem, falha de repasse, vencimento, etc.
 // O servidor de teste (tests/server.mjs) troca server/payments/factory.ts por este arquivo ao montar a API de teste; o código que vai
 // para produção nunca importa este módulo.
@@ -127,6 +128,11 @@ const provider = {
 // Chamado por server/payments/provider.ts (no lugar de factory.ts) ao montar a API de teste. PAYMENTS_SIM=off: sem operadora configurada.
 export function createProvider() {
   return process.env.PAYMENTS_SIM === 'off' ? null : provider;
+}
+
+// O mesmo que factory.ts devolve para o painel: só nomes de variáveis que faltam, nunca valores.
+export function describeSetup() {
+  return process.env.PAYMENTS_SIM === 'off' ? { environment: null, missing: ['VALIDAPAY_ENV'], note: null } : { environment: 'sandbox', missing: [], note: null };
 }
 
 // ---- Controles dos testes (rotas /__pay/* do servidor de teste) ---------------------------------------------------------------------
