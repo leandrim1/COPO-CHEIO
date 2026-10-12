@@ -158,7 +158,7 @@ const pay = async (chargeId, eventId) => {
     await page.getByRole('button', { name: /Já paguei, conferir agora/ }).click();
     ok(await until(async () => /Ainda não recebemos o pagamento/.test(await page.innerText('body'))), `${label}: "Já paguei" só confere: diz que ainda não recebeu`);
     const ch = await chargeOf(number);
-    ok(!!ch && ch.amountCents === 2500 && ch.commissionCents === 125, `${label}: a operadora recebeu R$ 25,00 com comissão de R$ 1,25 (5%)`, ch && { a: ch.amountCents, c: ch.commissionCents });
+    ok(!!ch && ch.amountCents === 2500 && ch.commissionCents === 50, `${label}: a operadora recebeu R$ 25,00 com comissão de R$ 0,50 (2%)`, ch && { a: ch.amountCents, c: ch.commissionCents });
     ok(psql(`select order_status || '/' || payment_status from orders where order_number = ${number}`) === 'awaiting_payment/pending', `${label}: o pedido continua aguardando pagamento`);
 
     // O cliente paga e a operadora avisa: a tela confirma sozinha, sem recarregar
@@ -230,7 +230,7 @@ const pay = async (chargeId, eventId) => {
     ok(await until(async () => (await admin.getByText(/recebido \(Pix pago\)/).count()) > 0, 20000), 'o painel avisa do pedido pago ("recebido (Pix pago)")');
     await admin.reload({ waitUntil: 'networkidle' });
     const body = await admin.innerText('body');
-    ok(/Efetivada/.test(body) && /Comissão \(5%\)/.test(body) && /R\$\s*1,25/.test(body), 'o detalhe mostra a comissão de 5% (R$ 1,25) como EFETIVADA');
+    ok(/Efetivada/.test(body) && /Comissão \(2%\)/.test(body) && /R\$\s*0,50/.test(body), 'o detalhe mostra a comissão de 2% (R$ 0,50) como EFETIVADA');
     ok(await admin.getByRole('button', { name: 'Atualizar pagamento' }).count() === 1, 'o owner tem o botão "Atualizar pagamento"');
     await admin.screenshot({ path: `${SP}/pix-admin-3-pedido-pago.png`, fullPage: true });
 
@@ -238,7 +238,7 @@ const pay = async (chargeId, eventId) => {
     const pagamentos = await admin.innerText('body');
     ok(/Pagamentos online/.test(pagamentos) && /Conectada/.test(pagamentos) && /Aprovada/.test(pagamentos), 'a página Pagamentos mostra a operadora conectada e a conta aprovada');
     ok(await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).getAttribute('aria-checked') === 'true', 'o interruptor do Pix online está ligado');
-    ok(/Comissão \(5% do total do pedido\)/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa comissão calculada e efetivada');
+    ok(/Comissão \(2% do total do pedido\)/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa comissão calculada e efetivada');
     ok(await noHScroll(admin), 'a página Pagamentos não tem rolagem horizontal');
     await admin.screenshot({ path: `${SP}/pix-admin-4-pagamentos.png`, fullPage: true });
     await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).click();

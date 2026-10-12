@@ -151,7 +151,7 @@ export function registerPayments(r: Router) {
     }
     if (q.get('attention') === '1') where.push('p.needs_attention');
     params.push(limit + 1);
-    const [rows, summary, merchant, method] = await batch([
+    const [rows, summary, merchant, method, rate] = await batch([
       [
         `select p.*, o.order_number from payments p join orders o on o.id = p.order_id
           ${where.length ? `where ${where.join(' and ')}` : ''} order by p.created_at desc limit $${params.length}`,
@@ -179,12 +179,15 @@ export function registerPayments(r: Router) {
         [getProvider()?.name ?? ''],
       ],
       ["select code, label, enabled from payment_methods where code = 'pix_online'"],
+      // A taxa atual da comissão vem do banco (a única fonte); cada cobrança guarda a taxa de quando foi criada.
+      ['select payment_commission_bps() as bps'],
     ]);
     const account = publicMerchant(merchant[0] ?? null);
     return json({
       payments: rows.slice(0, limit).map((row) => adminRow(row, true)),
       has_more: rows.length > limit,
       summary: summary[0],
+      commission_bps: Number(rate[0]?.bps ?? 0),
       merchant: account,
       provider: providerSummary(),
       account_fee_cents: getProvider()?.merchant?.accountCreationFeeCents ?? null,

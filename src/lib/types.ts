@@ -338,6 +338,8 @@ export type PaymentsOverview = {
     commission_failed_cents: number;
     fee_cents: number;
   };
+  // Taxa atual da comissão, em pontos-base (200 = 2%); vem do banco.
+  commission_bps: number;
   merchant: MerchantAccount | null;
   provider: {
     configured: boolean;

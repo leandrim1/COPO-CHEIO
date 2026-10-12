@@ -11,7 +11,7 @@
 
 | Parte | Estado |
 | --- | --- |
-| Banco (`0014_online_payments.sql`, `0015_merchant_account_flow.sql`) | tabelas `merchant_accounts` (conta/subconta), `payments` (cobranças, em centavos) e `payment_events` (avisos); pedido `awaiting_payment`; meio `pix_online` (nasce **desligado**); funções que criam a cobrança sem duplicar, aplicam o que a operadora informou sem repetir nem regredir e cancelam o que não foi pago; um cadastro de conta ativo por operadora |
+| Banco (`0014_online_payments.sql`, `0015_merchant_account_flow.sql`, `0016_commission_2_percent.sql`) | tabelas `merchant_accounts` (conta/subconta), `payments` (cobranças, em centavos) e `payment_events` (avisos); pedido `awaiting_payment`; meio `pix_online` (nasce **desligado**); funções que criam a cobrança sem duplicar, aplicam o que a operadora informou sem repetir nem regredir e cancelam o que não foi pago; um cadastro de conta ativo por operadora |
 | Adaptador da ValidaPay (`server/payments/validapay.ts`) | OAuth, Pix com divisão fixa para a conta master, consulta, **cancelamento**, avisos assinados (HMAC), contas e propostas. Só liga com as variáveis de ambiente (abaixo) |
 | Servidor (`server/payments/*`, `server/routes/payments.ts`) | criação do Pix, consulta, webhook, conferência periódica, cancelamento do Pix vencido, rotas do cliente, da conta e do painel |
 | Site | "Pix online" no checkout (só aparece ligado), tela do Pix (QR Code, copia e cola, contagem, "já paguei"), confirmação sem recarregar, Pix vencido com nova tentativa, pagar também por "Meus pedidos" |
@@ -19,8 +19,8 @@
 
 ## O que NÃO existe
 
-- **Cartão de crédito online** (SDK de tokenização, 3DS, cobrança): não há tela nem rota. A documentação da ValidaPay **não** mostra divisão
-  (split) para cobrança no cartão. Veja "Cartão: limitação e alternativas".
+- **Cartão de crédito online** (SDK de tokenização, 3DS, cobrança): não há tela nem rota, **por decisão do dono da loja: o cartão continua sendo pago na
+  entrega/retirada**. A documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão. Veja "Cartão".
 - **Estorno/devolução pela API**: o sistema **registra** a devolução que a ValidaPay informar (consulta de `GET /v1/wallet/refunds` e avisos
   `refund.*`); devolver o dinheiro continua manual, pelo painel da ValidaPay (o adaptador nunca pede o escopo `wallet/write`).
 - **Teste no sandbox ou na produção da ValidaPay**: nunca foi feito. Tudo que depende de como a ValidaPay realmente se comporta está listado em
@@ -63,8 +63,10 @@ a página consulta o servidor a cada 4 s e mostra "Pagamento confirmado!"; o pai
 
 - **Valor e comissão nascem no banco**, do total que o próprio banco calculou para o pedido. O navegador não manda (nem consegue mudar) valor,
   total, desconto ou comissão.
-- **Comissão: 5%** (`payment_commission_bps() = 500`) do **total do pedido** (itens + entrega − descontos), em centavos, arredondada ao
-  centavo mais próximo (metade para cima): R$ 100,00 → R$ 5,00; R$ 10,10 → R$ 0,51; R$ 17,65 → R$ 0,88. Mudar a taxa exige uma migration.
+- **Comissão: 2%** (`payment_commission_bps() = 200`, desde a migration `0016`; antes era 5%) do **total do pedido** (itens + entrega − descontos), em centavos,
+  arredondada ao centavo mais próximo (metade para cima): R$ 100,00 → R$ 2,00; R$ 10,10 → R$ 0,20; R$ 88,25 → R$ 1,77. Cada cobrança guarda a taxa e o valor
+  de quando nasceu (`commission_bps`, `commission_cents`): mudar a taxa afeta só as cobranças novas, e exige uma migration nova. A tela *Pagamentos* mostra a taxa
+  vigente lida do banco.
 - **Só "efetivada" com evidência**: `commission_state = 'confirmed'` exige o valor que a ValidaPay confirmou ter repassado e a cobrança paga
   (restrição `payments_commission_evidence`). A loja só considera o repasse confirmado se o **extrato da conta master** mostrar um **crédito
   ligado a esta cobrança** (mesmo `chargeId`); sem isso a comissão fica "calculada" (e a conciliação posterior, com "Atualizar pagamento",
@@ -157,17 +159,15 @@ Regras (nada acontece sozinho):
 
 Cada um desses pontos precisa ser conferido no **sandbox**: se algum comportamento for outro, é uma mudança pequena e localizada em `validapay.ts`.
 
-## Cartão: limitação e alternativas
+## Cartão: fica na entrega
 
-A documentação do **cartão** (`POST /v1/charges`, SDK `@validapay/tokenize`, `@validapay/3ds`) **não traz o campo `split`**; a divisão está documentada
-**só para o Pix** (`POST /v1/charges/pix`). Portanto **não dá para presumir** que a comissão de 5% sai sozinha no cartão, e por isso o cartão online **não foi
-construído nem ligado**. Opções, para decidir **antes** de qualquer cartão:
+**Decisão do dono da loja: o cartão continua sendo pago na entrega ou na retirada** (maquininha), como já era. Nenhum cartão online foi construído nem será ligado.
+O checkout oferece "Cartão — na entrega/retirada" como antes, sem passar pela ValidaPay e sem comissão automática (a comissão de 2% vale só para o Pix online).
 
-1. **Não oferecer cartão online** (o cartão na entrega continua) — recomendado até a ValidaPay confirmar por escrito se o `split` vale no cartão.
-2. **Perguntar à ValidaPay** (suporte) se `POST /v1/charges` aceita `split` com `X-Sub-Account` para cartão. Se aceitar, o cartão entra com o mesmo modelo do Pix.
-3. **Cartão na subconta sem divisão automática**, com a comissão cobrada de outra forma (por exemplo, repasse manual do estabelecimento). Não é automático e a
-   documentação diz que o saque exige mesma titularidade, então a master não puxa o valor sozinha: **a comissão deixaria de ser garantida**.
-Também exige: SDK no navegador (3DS pede telefone e endereço completo do pagador), liberar os endereços do SDK na CSP só em `/checkout` e coletar CPF/CNPJ do pagador.
+Para registro: a documentação do cartão da ValidaPay (`POST /v1/charges`, SDK `@validapay/tokenize`, `@validapay/3ds`) **não traz o campo `split`**; a divisão está
+documentada **só para o Pix** (`POST /v1/charges/pix`). Se um dia o cartão online for desejado, será uma mudança à parte: perguntar à ValidaPay (suporte) se
+`POST /v1/charges` aceita `split` com `X-Sub-Account`, incluir o SDK no navegador (3DS pede telefone e endereço completo do pagador), liberar os endereços do SDK
+na CSP só em `/checkout` e coletar CPF/CNPJ do pagador.
 
 ## Ligar (passo a passo, começando pelo SANDBOX)
 
@@ -188,7 +188,7 @@ Também exige: SDK no navegador (3DS pede telefone e endereço completo do pagad
 
 ## Testes — o que é simulação
 
-- `tests/payments-sim.mjs`: um **simulador genérico** de operadora (não é a ValidaPay); `api-test14` (193 verificações) e `e2e-pix` exercitam a lógica da loja.
+- `tests/payments-sim.mjs`: um **simulador genérico** de operadora (não é a ValidaPay); `api-test14` (200 verificações) e `e2e-pix` exercitam a lógica da loja.
 - `tests/validapay-fake.mjs`: um **servidor ValidaPay FALSO** que segue a documentação oficial e recusa o que foge dela. O adaptador **real**
   roda contra ele em `api-test15` (112 verificações: vínculo, Pix com divisão, avisos assinados, cancelamento, valor errado, corrida pagamento × cancelamento,
   cobrança "órfã", cadastro de conta, produção × sandbox, log sem segredos), em `tests/unit/validapay.test.mjs` (29: dinheiro em reais, escopos, status,
@@ -199,6 +199,6 @@ Também exige: SDK no navegador (3DS pede telefone e endereço completo do pagad
 ## Passos que dependem do proprietário do Disk Bebidas
 
 - Autorizar o cadastro da conta (subconta) do estabelecimento e fornecer à ValidaPay os dados do titular (pessoa física ou jurídica).
-- Conhecer e aceitar as tarifas **antes** de qualquer cadastro em produção, e a comissão de 5% da conta master.
+- Conhecer e aceitar as tarifas **antes** de qualquer cadastro em produção, e a comissão de 2% da conta master.
 - Ligar o Pix online no painel (só o owner) depois de a conta estar aprovada.
 - Devolver manualmente ao cliente os pagamentos sinalizados (pago depois do cancelamento, em duplicidade, disputa) e marcar como conferido.

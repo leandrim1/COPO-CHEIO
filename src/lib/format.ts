@@ -11,6 +11,9 @@ export function parseMoney(input: string): number | null {
   return Math.round(Number(normalized) * 100) / 100;
 }
 
+// Pontos-base → "2%" (200) ou "2,5%" (250), com vírgula decimal.
+export const percentFromBps = (bps: number | null | undefined) => `${((bps ?? 0) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+
 export const moneyInput = (value: number | null | undefined) =>
   value === null || value === undefined ? '' : value.toFixed(2).replace('.', ',');
 

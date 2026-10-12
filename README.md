@@ -210,14 +210,15 @@ produto e envie a foto.
   - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e só
     vira **novo** quando a ValidaPay confirma (aviso **assinado** + consulta da cobrança), na mesma transação do banco. Sem pagamento
     a tempo, o Pix é **cancelado na ValidaPay** e o pedido, cancelado (o estoque volta uma vez só).
-  - **Comissão de 5%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`) e enviada como divisão fixa para a conta
+  - **Comissão de 2%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`) e enviada como divisão fixa para a conta
     master (a cobrança nasce na **subconta** do estabelecimento); só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança.
   - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
     pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
   - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
     autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
     só entra com a confirmação oficial. Os dados pessoais vão direto para a ValidaPay e não ficam guardados aqui.
-  - **Cartão online não existe**: a documentação da ValidaPay não mostra divisão (split) para cartão; veja as alternativas no documento acima.
+  - **Cartão online não existe, por decisão do dono da loja**: o cartão continua sendo pago **na entrega/retirada** (maquininha), como sempre. A documentação da
+    ValidaPay também não mostra divisão (split) da comissão para cartão; se um dia houver cartão online, é uma mudança à parte (veja o documento acima).
 - **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
@@ -625,15 +626,17 @@ A migration `0013_ice_choice.sql` acrescenta `categories.ice_choice_required` e 
 grava a escolha do gelo) e `order_json` (a escolha chega ao cliente) e marca as categorias "Copão" e "Copão com Monster". É a única
 migration que **escreve um dado** (um `UPDATE` que liga a marca nessas duas categorias, achadas pelo nome só nesse momento); nenhum
 pedido, produto, preço ou estoque é alterado.
+A migration `0016_commission_2_percent.sql` troca a taxa da comissão de 5% para **2%** (só a função `payment_commission_bps()`; cobranças já criadas
+mantêm a taxa de quando nasceram).
 A migration `0015_merchant_account_flow.sql` acrescenta `merchant_accounts.ambiguous`, o índice que só deixa existir um cadastro de conta ativo por
 operadora e dois desfechos permitidos para os avisos de cadastro.
 A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments` e `payment_events`, o status de pedido
 `awaiting_payment`, o meio de pagamento `pix_online` (**desligado**) e as funções de pagamento (`payment_begin`, `payment_apply`,
-`payment_expire_local`, `orders_cancel_unpaid`, o cálculo da comissão de 5% e outras); troca `create_order`, `order_json`,
+`payment_expire_local`, `orders_cancel_unpaid`, o cálculo da comissão, 5% na origem e 2% desde a 0016, e outras); troca `create_order`, `order_json`,
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
 operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
 [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
-As migrations 0009 a 0015 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0016 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
@@ -654,8 +657,7 @@ dashboard) são funções do banco chamadas só pelo servidor.
 - Não há captcha. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
   abas diferentes valem os limites por rede e por telefone.
 - **Pagamento online**: o adaptador da ValidaPay **nunca foi testado na ValidaPay de verdade** (só contra um servidor falso baseado na documentação). Não
-  existem o cartão online nem o estorno pela API. Se o cartão terá divisão automática da comissão é uma pergunta **em aberto** (a documentação só traz
-  split para o Pix). Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md`). Não há agendador: pedidos online não pagos são encerrados
+  existem o cartão online (o cartão é pago na entrega, por decisão do dono) nem o estorno pela API. Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md`). Não há agendador: pedidos online não pagos são encerrados
   de passagem, quando o painel está aberto ou entra movimento. O checkout não coleta CPF/CNPJ do pagador (o Pix imediato da ValidaPay não o exige).
 - A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
   [Segurança](#segurança) e [Privacidade (LGPD)](#privacidade-lgpd)).

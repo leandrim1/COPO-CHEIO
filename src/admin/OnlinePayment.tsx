@@ -1,7 +1,7 @@
 import { CheckCheck, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { api, friendlyError } from '../lib/api';
-import { formatDateTime, money } from '../lib/format';
+import { formatDateTime, money, percentFromBps } from '../lib/format';
 import type { AdminPayment, CommissionState, Order, PaymentState } from '../lib/types';
 import { Badge, Button, Card, useToast } from './ui';
 
@@ -122,7 +122,7 @@ export function OnlinePaymentCard({ order, payments, owner, onChanged }: { order
               )}
               {owner && (
                 <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                  <dt className="text-white/50">Comissão ({(p.commission_bps ?? 0) / 100}%)</dt>
+                  <dt className="text-white/50">Comissão ({percentFromBps(p.commission_bps)})</dt>
                   <dd className="text-white/85">
                     {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
                     {p.commission_state === 'confirmed' && <span className="ml-1 text-white/55">({cents(p.commission_confirmed_cents)} repassados)</span>}

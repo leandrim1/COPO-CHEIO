@@ -1,6 +1,7 @@
 import { Landmark, TriangleAlert, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, friendlyError } from '../lib/api';
+import { percentFromBps } from '../lib/format';
 import type { MerchantAccount, PaymentState, PaymentsOverview } from '../lib/types';
 import { LinkAccountModal, NewAccountModal } from './AccountSetup';
 import { useAdmin, useLiveOrders } from './AdminApp';
@@ -257,7 +258,7 @@ export default function PaymentsPage() {
             <Stat label="Pedem conferência" value={String(s!.attention)} tone={s!.attention ? 'text-amber-200' : 'text-white'} />
           </div>
 
-          <Card className="mt-4" title="Comissão (5% do total do pedido)" description="“Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.">
+          <Card className="mt-4" title={`Comissão (${percentFromBps(data.commission_bps)} do total do pedido)`} description="“Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.">
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Stat label="Calculada" value={cents(s!.commission_calculated_cents)} hint="dos pedidos pagos" />
               <Stat label="Efetivada" value={cents(s!.commission_confirmed_cents)} hint="confirmada pela operadora" tone="text-emerald-200" />

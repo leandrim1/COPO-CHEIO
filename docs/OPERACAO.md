@@ -93,7 +93,7 @@ ressalvas que você precisa conhecer:
    sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
    voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
 
-**As migrations 0014 e 0015 (pagamento online).** A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
+**As migrations 0014, 0015 e 0016 (pagamento online).** A 0016 só troca a função que informa a taxa da comissão (de 5% para 2%); cobranças já criadas guardam a taxa com que nasceram. A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
 conta ativo por operadora) e dois desfechos permitidos em `payment_events`. A 0014 segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
 e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
 `pix_online`) e troca cinco funções (`create_order`, `order_json`, `admin_set_order_status`, `admin_set_payment_status`, `admin_dashboard`)
@@ -229,7 +229,7 @@ agendador, então com o site parado ela só roda quando houver movimento.
    e o pedido de teste mostra a escolha em *Pedidos*.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
-7. Depois das migrations 0014 e 0015: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
+7. Depois das migrations 0014 a 0016: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
    variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
 8. Se ligou o Pix online: faça **um pedido de teste no sandbox** da ValidaPay e confira pedido, comissão e histórico antes de usar credenciais de produção.
 
