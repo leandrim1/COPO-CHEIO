@@ -22,13 +22,16 @@ nunca vão para o Git (`.env*` está no `.gitignore`; só o `.env.example` é ve
 | `SITE_URL` | Endereço público do site (ex.: `https://www.seudominio.com.br`) usado **nos links dos e-mails**, na logo dos e-mails e no endereço canônico das páginas | Na Vercel: em produção, o domínio de produção do projeto (`VERCEL_PROJECT_PRODUCTION_URL`); em preview, o endereço do deploy. Fora da Vercel só vale `localhost`; qualquer outro endereço sem `SITE_URL` impede montar o e-mail (`503`) e o painel mostra "Endereço do site: Não configurado" |
 | `MIGRATE_ON_PREVIEW` | `1` = deploys de teste (preview) também aplicam migrations. **Só** se o ambiente *Preview* usar um banco **separado** | Previews apenas listam as migrations pendentes e **não** mexem no banco |
 | `SHELL_HTML_FILE` | Avançado: caminho do `index.html` usado na página para robôs (WhatsApp, Facebook, Google). Os testes usam | Usa `dist/index.html`, que a Vercel inclui na função (`vercel.json` → `includeFiles`) |
+| `VALIDAPAY_ENV`, `VALIDAPAY_CLIENT_ID`, `VALIDAPAY_CLIENT_SECRET`, `VALIDAPAY_WEBHOOK_SECRET` | Pix online com a ValidaPay. `VALIDAPAY_ENV` é `sandbox` (testes, nada é cobrado) ou `production`. As credenciais vêm do painel da ValidaPay (*Integração → API* e *Integração → Webhooks*); as de sandbox e as de produção são **diferentes**. **Só ligam se as quatro existirem** | O Pix online fica **indisponível** (o painel *Pagamentos* mostra o **nome** das que faltam) e o servidor recusa pedidos com esse meio. O resto do site segue normal. `production` só vale no deploy de **produção** da Vercel |
+| `VALIDAPAY_WEBHOOK_TOKEN` | Opcional: token estático do webhook (cabeçalho `x-access-token`), se você o definiu no cadastro do webhook na ValidaPay | Só o HMAC da assinatura é conferido |
 | `ADMIN_PASSWORD` | Só para rodar `npm run admin:create` sem digitar (CI, testes). **Não cadastre na Vercel** | O script pergunta a senha |
 
 Definidas pela própria Vercel (não cadastre): `VERCEL`, `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`.
 
-**Pagamento online:** **ainda não existe variável de operadora de pagamento**, porque a ValidaPay não está conectada (o adaptador não foi
-escrito; veja [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md)). Quando existir, as credenciais ficam **só no servidor** (nunca `VITE_`) e os
-nomes entram nesta tabela e no `.env.example`. Não cadastre nada com nome inventado: sem adaptador, nenhuma variável é lida.
+**Pagamento online (ValidaPay):** as credenciais ficam **só no servidor** (nunca `VITE_`). A produção da ValidaPay só é usada quando
+`VERCEL_ENV=production`: num deploy de teste (preview) ela é recusada de propósito, para um preview nunca criar cobrança ou subconta de verdade.
+Para a ValidaPay chamar a loja, cadastre o webhook `https://<seu-domínio>/api/payments/webhook` no painel dela. Passo a passo e escopos mínimos da
+credencial: [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md).
 
 **Por que `SITE_URL` importa:** o servidor **nunca** monta o link de um e-mail a partir do que o navegador envia (`Host`,
 `X-Forwarded-Host`). Se montasse, quem pedisse "esqueci a senha" com um cabeçalho forjado faria o e-mail da vítima apontar para um
@@ -90,12 +93,13 @@ ressalvas que você precisa conhecer:
    sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
    voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
 
-**A migration 0014 (pagamento online).** Segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
+**As migrations 0014 e 0015 (pagamento online).** A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
+conta ativo por operadora) e dois desfechos permitidos em `payment_events`. A 0014 segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
 e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
 `pix_online`) e troca cinco funções (`create_order`, `order_json`, `admin_set_order_status`, `admin_set_payment_status`, `admin_dashboard`)
 por versões que se comportam igual para tudo o que já existe. Escreve **uma linha de dados**: o meio `pix_online`, **desligado**. Enquanto
 ele estiver desligado, nenhum cliente vê mudança e nenhum pedido existente é tocado; e ele **não pode ser ligado** sem operadora
-configurada e conta aprovada (a verificação é do servidor novo). Dois cuidados:
+configurada e conta aprovada (a verificação é do servidor novo). Nenhuma migration chama a ValidaPay nem cria conta. Dois cuidados:
 
 1. Depois de um **rollback do código para antes desta versão**, o painel antigo lista "Pix online" entre as formas de pagamento e não
    conhece essa trava: **não o ligue**. Um pedido assim ficaria "aguardando pagamento" sem tela para pagar (seria cancelado pelo sistema
@@ -179,7 +183,11 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | *Pagamentos* mostra cobranças em "Pedem conferência" (só quando o Pix online estiver ligado) | O dinheiro entrou, mas algo não fecha: pago **depois** de o pedido ser cancelado, pago **em duplicidade**, valor diferente do cobrado, ou repasse da comissão que falhou. O pedido **não** é reaberto sozinho. Nos três primeiros casos há dinheiro do cliente a conferir/devolver: faça pelo painel da operadora (o sistema só registra) e marque como conferido em *Pagamentos*. Se foi só o repasse da comissão que falhou, o pedido segue normal e a comissão fica "Falhou" (não "Efetivada"): resolva com a operadora |
 | Pedido "Aguardando pagamento" parado (só com Pix online ligado) | Normal por até 15 minutos (validade do Pix) + 10 de nova tentativa; depois o pedido é cancelado e o estoque volta. Se ficar mais tempo, abra *Pagamentos → Conferir agora* (não há agendador: a conferência roda quando o painel está aberto ou entra pedido) |
 | Cliente diz que pagou o Pix e o pedido não avançou (só com Pix online ligado) | Em *Pagamentos* (ou no detalhe do pedido), use **Atualizar pagamento** na cobrança (consulta a operadora). Pagamento só conta quando a operadora confirma: ver o QR Code ou a tela "Já paguei" não confirma nada. Confira também se o webhook da operadora está cadastrado e apontando para `/api/payments/webhook` |
-| "O pagamento online não está disponível agora" no checkout | Não há operadora conectada neste servidor (ou ela não respondeu). O Pix online não deve estar ligado sem adaptador: confira *Pagamentos* e desligue o "Pix online no site" até resolver |
+| "O pagamento online não está disponível agora" no checkout | O servidor não tem a ValidaPay conectada (faltam variáveis) ou ela não respondeu. Em *Pagamentos* aparece o **nome** das variáveis que faltam. Desligue o "Pix online no site" até resolver |
+| *Pagamentos* mostra a conta "Aguardando aprovação" há muito tempo | A ValidaPay analisa o cadastro (antecedentes, documentos). Use **Atualizar andamento**: se pedir documentos, aparece o link de envio. A conta só vira "Aprovada" com o aviso oficial da ValidaPay; confira se o webhook está cadastrado (eventos `onboarding.*`) e, se a conta já existir lá, use **Vincular conta existente** |
+| Cadastro da conta com "Erro" e a mensagem "pode ter sido criado (e cobrado)" | A ValidaPay não respondeu ao envio. **Confira no painel da ValidaPay** se a proposta existe antes de tentar de novo (cada conta nova custa R$ 15,00 em produção); a nova tentativa pede confirmação explícita |
+| Pagamento com comissão "Aguardando confirmação" depois de pago | A loja só marca a comissão como efetivada quando o extrato da conta master mostra o crédito dessa cobrança. Use **Atualizar pagamento**; se não aparecer no extrato da ValidaPay, a divisão não aconteceu: fale com a ValidaPay |
+| Cobrança vencida que continua "aguardando" | A loja cancela a cobrança na ValidaPay quando o Pix vence; se ela estiver fora do ar, tenta de novo na próxima conferência (*Pagamentos → Conferir agora*) e, depois de 30 minutos, encerra e sinaliza |
 | Pedido de privacidade (LGPD) | *Painel → Clientes → Privacidade*. Responda pelo contato deixado (a política informa até 15 dias). Para quem comprou como visitante, o **owner** usa *Anonimizar uma pessoa* (telefone e/ou e-mail); a conta e os links de acompanhamento são apagados e os pedidos ficam sem dados pessoais (itens, valores, datas e bairro continuam para a contabilidade). Marque como atendido |
 | Suspeita de acesso indevido | 1) Troque a senha do administrador (encerra as sessões). 2) *Configurações → Atividades*: confira entradas e mudanças. 3) Ligue o 2FA. 4) Se houve vazamento de segredo, rotacione (abaixo) |
 | Depois de um deploy algo quebrou | *Vercel → Deployments →* promova o deploy anterior (rollback). O banco não volta; as migrations são compatíveis com a versão anterior |
@@ -221,8 +229,9 @@ agendador, então com o site parado ela só roda quando houver movimento.
    e o pedido de teste mostra a escolha em *Pedidos*.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
-7. Depois da migration 0014: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*,
-   que deve mostrar "Operadora de pagamento: Não conectada". Com Pix online desligado, os pedidos seguem como antes.
+7. Depois das migrations 0014 e 0015: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
+   variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
+8. Se ligou o Pix online: faça **um pedido de teste no sandbox** da ValidaPay e confira pedido, comissão e histórico antes de usar credenciais de produção.
 
 ## 9. O que este guia não cobre
 

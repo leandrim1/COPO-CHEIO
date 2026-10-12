@@ -203,19 +203,21 @@ produto e envie a foto.
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo). A chave PIX
   (opcional) aparece para o cliente depois do pedido. O **Pix online** (pagar pelo site) tem a base pronta, mas está **desligado e sem
   operadora conectada**: veja o item abaixo.
-- **Pagamento online (Pix pelo site)** — **a base da loja está pronta e testada com um SIMULADOR de operadora; a ValidaPay ainda NÃO está
-  conectada** (a documentação oficial não pôde ser consultada, então nada dela foi presumido). O "Pix online" nasce desligado e o painel
-  não deixa ligá-lo sem operadora e conta aprovada. O que existe, o que falta, o contrato do adaptador e os passos para ligar:
-  [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md). Em resumo:
-  - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e
-    só vira **novo** quando a operadora confirma (aviso verificado **e** consulta da cobrança), na mesma transação do banco. Sem pagamento
-    a tempo, é cancelado e o estoque volta uma vez só.
-  - **Comissão de 5%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`); só vira "efetivada" com a
-    confirmação do repasse pela operadora (antes disso é "calculada").
+- **Pagamento online (Pix pelo site, com a ValidaPay)** — **escrito e testado contra um servidor ValidaPay FALSO que segue a documentação oficial; NUNCA
+  testado na ValidaPay de verdade** (nem sandbox, nem produção). O "Pix online" nasce **desligado**; só liga com as variáveis `VALIDAPAY_*` e uma conta
+  do estabelecimento **aprovada**. O que existe, o que falta, o que a documentação não confirma, o cartão e o passo a passo para ligar (começando pelo
+  sandbox): [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md). Em resumo:
+  - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e só
+    vira **novo** quando a ValidaPay confirma (aviso **assinado** + consulta da cobrança), na mesma transação do banco. Sem pagamento
+    a tempo, o Pix é **cancelado na ValidaPay** e o pedido, cancelado (o estoque volta uma vez só).
+  - **Comissão de 5%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`) e enviada como divisão fixa para a conta
+    master (a cobrança nasce na **subconta** do estabelecimento); só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança.
   - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
     pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
-  - Só o **owner** vê comissão, tarifas e a página *Pagamentos* e liga o Pix online. **Cartão online e cadastro da subconta não existem
-    ainda.**
+  - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
+    autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
+    só entra com a confirmação oficial. Os dados pessoais vão direto para a ValidaPay e não ficam guardados aqui.
+  - **Cartão online não existe**: a documentação da ValidaPay não mostra divisão (split) para cartão; veja as alternativas no documento acima.
 - **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
@@ -473,7 +475,7 @@ Técnico (público): `GET /api/__page` (HTML para robôs) · `POST /api/csp-repo
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
 Pagamento online (sem login, pelo código do pedido ou pela própria conta): `GET|POST /api/tracking/:codigo/payment` ·
 `GET|POST /api/account/orders/:numero/payment` · aviso da operadora: `POST /api/payments/webhook` (nada é gravado antes de a operadora provar
-que o aviso é dela; sem operadora conectada responde `503 payments_unavailable`)
+que o aviso é dela, por assinatura HMAC; sem operadora conectada responde `503 payments_unavailable`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim`
@@ -485,7 +487,8 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
 Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
 excluir cliente, gerar link de nova senha de cliente, e-mail de teste e os **pagamentos online**: `GET /api/admin/payments` (operadora, conta,
 resumo, comissão calculada × efetivada, cobranças) · `GET /api/admin/payments/:id` · `POST /api/admin/payments/:id/refresh|ack` ·
-`POST /api/admin/payments/sweep` (a forma "Pix online" só o owner liga: `PATCH /api/admin/payments/pix_online`).
+`POST /api/admin/payments/sweep` · conta do estabelecimento: `GET /api/admin/payments/account/candidates` ·
+`POST /api/admin/payments/account/link|proposal|refresh` (a forma "Pix online" só o owner liga: `PATCH /api/admin/payments/pix_online`).
 
 Toda resposta traz `x-request-id` (um erro `500` mostra o mesmo número no corpo: serve para achar a linha nos logs). A API nunca vai
 para a CDN, exceto as duas listas públicas (10 s); o resto responde `Cache-Control: no-store`.
@@ -622,13 +625,15 @@ A migration `0013_ice_choice.sql` acrescenta `categories.ice_choice_required` e 
 grava a escolha do gelo) e `order_json` (a escolha chega ao cliente) e marca as categorias "Copão" e "Copão com Monster". É a única
 migration que **escreve um dado** (um `UPDATE` que liga a marca nessas duas categorias, achadas pelo nome só nesse momento); nenhum
 pedido, produto, preço ou estoque é alterado.
+A migration `0015_merchant_account_flow.sql` acrescenta `merchant_accounts.ambiguous`, o índice que só deixa existir um cadastro de conta ativo por
+operadora e dois desfechos permitidos para os avisos de cadastro.
 A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments` e `payment_events`, o status de pedido
 `awaiting_payment`, o meio de pagamento `pix_online` (**desligado**) e as funções de pagamento (`payment_begin`, `payment_apply`,
 `payment_expire_local`, `orders_cancel_unpaid`, o cálculo da comissão de 5% e outras); troca `create_order`, `order_json`,
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
 operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
 [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
-As migrations 0009 a 0014 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0015 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
@@ -648,10 +653,10 @@ dashboard) são funções do banco chamadas só pelo servidor.
   Vercel e um servidor local (veja [Robôs e prévia de links](#robôs-e-prévia-de-links)): confira depois do deploy.
 - Não há captcha. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
   abas diferentes valem os limites por rede e por telefone.
-- **Pagamento online**: a operadora (ValidaPay) **não está conectada** e nada dela foi testado de verdade (só um simulador); não existem o
-  cadastro da subconta, o cartão online nem o estorno pela API. Se o cartão terá divisão automática da comissão é uma pergunta **em
-  aberto** (depende da documentação oficial). Não há agendador: pedidos online não pagos são encerrados de passagem, quando o painel está
-  aberto ou entra movimento (veja [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)). O checkout não coleta CPF/CNPJ do pagador.
+- **Pagamento online**: o adaptador da ValidaPay **nunca foi testado na ValidaPay de verdade** (só contra um servidor falso baseado na documentação). Não
+  existem o cartão online nem o estorno pela API. Se o cartão terá divisão automática da comissão é uma pergunta **em aberto** (a documentação só traz
+  split para o Pix). Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md`). Não há agendador: pedidos online não pagos são encerrados
+  de passagem, quando o painel está aberto ou entra movimento. O checkout não coleta CPF/CNPJ do pagador (o Pix imediato da ValidaPay não o exige).
 - A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
   [Segurança](#segurança) e [Privacidade (LGPD)](#privacidade-lgpd)).
 - Acessibilidade: o Hero (aprovado, não alterado) ainda tem apontamentos de leitor de tela (nome do link que não repete o texto
@@ -684,7 +689,7 @@ api/index.ts           função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/routes/         uma pasta de rotas por assunto (public, orders, catalog, content, session, twofactor, account, tracking, customers,
                        team, audit, privacy, seo, upload, mailadmin, payments)
-server/payments/       pagamento online: contrato da operadora (types.ts), fábrica (factory.ts: sem operadora ainda), serviço (service.ts)
+server/payments/       pagamento online: contrato (types.ts), adaptador da ValidaPay (validapay.ts), fábrica pelas variáveis de ambiente (factory.ts), serviço (service.ts), conta do estabelecimento (merchant.ts)
 server/auth.ts         senhas (scrypt), sessões, limites de tentativa atômicos · passwordPolicy.ts / commonPasswords.ts: regra de senha forte
 server/totp.ts         verificação em duas etapas (TOTP, códigos de recuperação) · adminAccess.ts: aparelhos conhecidos e aviso de acesso novo
 server/audit.ts        registro de atividades do painel · clientIp.ts: IP de quem acessa · images.ts: conferência das imagens enviadas

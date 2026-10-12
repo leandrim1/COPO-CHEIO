@@ -313,6 +313,8 @@ export type MerchantAccount = {
   status_detail: string | null;
   proposal_id: string | null;
   provider_account_id: string | null;
+  // A operadora não respondeu ao enviar o cadastro: ele PODE ter sido criado (e cobrado).
+  ambiguous?: boolean;
   authorized_at: string | null;
   fees_acknowledged_at: string | null;
   created_at: string;
@@ -337,7 +339,17 @@ export type PaymentsOverview = {
     fee_cents: number;
   };
   merchant: MerchantAccount | null;
-  provider: { configured: boolean; name: string | null };
+  provider: {
+    configured: boolean;
+    name: string | null;
+    environment: 'sandbox' | 'production' | null;
+    // Só os NOMES das variáveis de ambiente que faltam (nunca valores).
+    missing: string[];
+    note: string | null;
+    manages_accounts: boolean;
+  };
+  // Tarifa de criação de uma conta nova, em centavos (0 no sandbox; null: a operadora não informa).
+  account_fee_cents: number | null;
   readiness: { provider: string | null; merchant: string | null; ready: boolean };
   method: { code: 'pix_online'; label: string; enabled: boolean } | null;
 };

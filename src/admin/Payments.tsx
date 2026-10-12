@@ -2,6 +2,7 @@ import { Landmark, TriangleAlert, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, friendlyError } from '../lib/api';
 import type { MerchantAccount, PaymentState, PaymentsOverview } from '../lib/types';
+import { LinkAccountModal, NewAccountModal } from './AccountSetup';
 import { useAdmin, useLiveOrders } from './AdminApp';
 import { CommissionBadge, PAYMENT_STATE_LABEL, PaymentActions, PaymentStateBadge, cents, when } from './OnlinePayment';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Switch, cx, useToast } from './ui';
@@ -40,7 +41,9 @@ export default function PaymentsPage() {
   const [error, setError] = useState(false);
   const [status, setStatus] = useState<'all' | PaymentState>('all');
   const [attention, setAttention] = useState(false);
-  const [busy, setBusy] = useState<'sweep' | 'method' | null>(null);
+  const [busy, setBusy] = useState<'sweep' | 'method' | 'account' | null>(null);
+  const [dialog, setDialog] = useState<'link' | 'new' | null>(null);
+  const [documentsUrl, setDocumentsUrl] = useState<string | null>(null);
   const owner = user.role === 'owner';
 
   const load = useCallback(async () => {
@@ -79,6 +82,20 @@ export default function PaymentsPage() {
       await load();
     } catch (e) {
       toast.error('Não foi possível conferir agora.', friendlyError(e, ''));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const refreshAccount = async () => {
+    setBusy('account');
+    try {
+      const r = await api.post<{ documents_url: string | null }>('/api/admin/payments/account/refresh');
+      setDocumentsUrl(r.documents_url);
+      toast.success('Cadastro conferido.', 'Veja a situação informada pela operadora.');
+      await load();
+    } catch (e) {
+      toast.error('Não foi possível conferir o cadastro.', friendlyError(e, ''));
     } finally {
       setBusy(null);
     }
@@ -132,11 +149,29 @@ export default function PaymentsPage() {
                 {data.provider.configured ? (
                   <>
                     <Badge tone="green">Conectada</Badge> <span className="ml-1 text-white/70">{data.provider.name}</span>
+                    {data.provider.environment && (
+                      <Badge tone={data.provider.environment === 'production' ? 'blue' : 'amber'} className="ml-2">
+                        {data.provider.environment === 'production' ? 'Produção (dinheiro de verdade)' : 'Testes (sandbox): nada é cobrado'}
+                      </Badge>
+                    )}
                   </>
                 ) : (
                   <>
                     <Badge tone="gray">Não conectada</Badge>
                     <span className="ml-2 text-white/60">Nenhuma operadora está conectada a este site ainda.</span>
+                    {data.provider.missing.length > 0 && (
+                      <p className="mt-1.5 text-xs text-white/60" data-missing={data.provider.missing.join(',')}>
+                        Faltam estas variáveis de ambiente do servidor (Vercel → Settings → Environment Variables):{' '}
+                        {data.provider.missing.map((name, i) => (
+                          <span key={name}>
+                            {i > 0 && ', '}
+                            <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[11px] text-white/85">{name}</code>
+                          </span>
+                        ))}
+                        .
+                      </p>
+                    )}
+                    {data.provider.note && <p className="mt-1.5 text-xs text-amber-200/90">{data.provider.note}</p>}
                   </>
                 )}
               </dd>
@@ -153,8 +188,38 @@ export default function PaymentsPage() {
                 ) : (
                   <>
                     <Badge tone="gray">Sem cadastro</Badge>
-                    <span className="ml-2 text-white/60">O cadastro da conta depende da integração com a operadora e da sua autorização.</span>
+                    <span className="ml-2 text-white/60">
+                      {data.provider.manages_accounts ? 'Vincule a conta do estabelecimento ou cadastre uma nova.' : 'O cadastro da conta depende da integração com a operadora e da sua autorização.'}
+                    </span>
                   </>
+                )}
+                {data.provider.manages_accounts && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {(!merchant || ['rejected', 'duplicate', 'error', 'suspended'].includes(merchant.status)) && (
+                      <>
+                        <Button variant="secondary" size="sm" onClick={() => setDialog('link')}>
+                          Vincular conta existente
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={() => setDialog('new')}>
+                          Cadastrar conta nova
+                        </Button>
+                      </>
+                    )}
+                    {merchant && merchant.status === 'pending' && (
+                      <Button variant="secondary" size="sm" loading={busy === 'account'} onClick={() => void refreshAccount()}>
+                        Atualizar andamento
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {documentsUrl && merchant?.status === 'pending' && (
+                  <p className="mt-2 text-xs text-white/70">
+                    A operadora pede os documentos do titular:{' '}
+                    <a href={documentsUrl} target="_blank" rel="noopener noreferrer" className="font-semibold text-[#8FB1FF] underline underline-offset-2">
+                      abrir a página de envio
+                    </a>
+                    . Este endereço é da operadora e não fica guardado aqui.
+                  </p>
                 )}
               </dd>
               <dt className="font-semibold text-white/60">Pix online no site</dt>
@@ -175,6 +240,15 @@ export default function PaymentsPage() {
               </dd>
             </dl>
           </Card>
+          <LinkAccountModal open={dialog === 'link'} onClose={() => setDialog(null)} environment={data.provider.environment} onDone={() => void load()} />
+          <NewAccountModal
+            open={dialog === 'new'}
+            onClose={() => setDialog(null)}
+            environment={data.provider.environment}
+            feeCents={data.account_fee_cents}
+            needsRiskConfirmation={Boolean(merchant?.ambiguous)}
+            onDone={() => void load()}
+          />
 
           <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Pagos" value={String(s!.paid)} hint={cents(s!.paid_cents)} tone="text-emerald-200" />
