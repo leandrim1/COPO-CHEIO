@@ -13,6 +13,7 @@ import {
   Users,
   Volume2,
   VolumeX,
+  Wallet,
   X,
 } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -28,6 +29,7 @@ import CustomersPage from './Customers';
 import DashboardPage from './Dashboard';
 import LoginPage from './Login';
 import { OrderDetailPage, OrdersPage } from './Orders';
+import PaymentsPage from './Payments';
 import { ProductFormPage, ProductsPage } from './Products';
 import SettingsPage from './Settings';
 import SitePage from './Site';
@@ -88,11 +90,15 @@ export function playOrderChime() {
   });
 }
 
+type LiveOrder = { id: string; order_number: number; customer_name: string; total: number; created_at: string; paid?: boolean };
 type LiveResponse = {
-  new_orders: { id: string; order_number: number; customer_name: string; total: number; created_at: string }[];
+  new_orders: LiveOrder[];
   latest: number;
   pending: number;
   rev: string;
+  // Pedidos de pagamento online que acabaram de ser pagos (só chegam à loja agora) e o ponto de partida para a próxima pergunta.
+  paid_orders?: LiveOrder[];
+  paid_cursor?: number;
 };
 
 // Polling inteligente: pergunta ao servidor a cada poucos segundos com a aba aberta (e mais devagar com a
@@ -144,11 +150,16 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
     let alive = true;
     let timer: number | undefined;
     let after: number | null = null; // maior número de pedido já visto
+    let paidAfter: number | null = null; // última confirmação de pagamento online já vista
+    const announced = new Set<number>(); // pedidos que já viraram aviso (um pedido pago pode aparecer nas duas listas)
     let rev: string | null = null;
     let failures = 0;
     let hiddenSince: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
 
-    const announce = (orders: LiveResponse['new_orders']) => {
+    const announce = (list: LiveOrder[]) => {
+      const orders = list.filter((order) => !announced.has(order.order_number));
+      for (const order of orders) announced.add(order.order_number);
+      if (!orders.length) return;
       if (soundRef.current) playOrderChime();
       if (orders.length > 3) {
         toast.push({
@@ -163,7 +174,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
         toast.push({
           kind: 'order',
           title: 'NOVO PEDIDO',
-          description: `Pedido #${order.order_number} recebido\n${money(order.total)}`,
+          description: `Pedido #${order.order_number} recebido${order.paid ? ' (Pix pago)' : ''}\n${money(order.total)}`,
           action: { label: 'Ver pedido', onClick: () => navigate(`/admin/pedidos/${order.order_number}`) },
         });
       }
@@ -171,7 +182,8 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
 
     const poll = async () => {
       try {
-        const data = await api.get<LiveResponse>(`/api/admin/live${after === null ? '' : `?after=${after}`}`);
+        const query = after === null ? '' : `?after=${after}${paidAfter === null ? '' : `&paid_after=${paidAfter}`}`;
+        const data = await api.get<LiveResponse>(`/api/admin/live${query}`);
         if (!alive) return;
         failures = 0;
         setConnected(true);
@@ -179,9 +191,13 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
         if (after === null) {
           // Primeira leitura: só marca o ponto de partida (pedidos antigos não viram aviso).
           after = data.latest;
-        } else if (data.new_orders.length) {
-          after = Math.max(...data.new_orders.map((o) => o.order_number));
-          announce(data.new_orders);
+          paidAfter = data.paid_cursor ?? 0;
+        } else {
+          if (data.new_orders.length) after = Math.max(...data.new_orders.map((o) => o.order_number));
+          if (data.paid_cursor !== undefined) paidAfter = data.paid_cursor;
+          // Primeiro os pedidos pagos online (o mesmo pedido não avisa duas vezes).
+          const fresh = [...(data.paid_orders ?? []).map((order) => ({ ...order, paid: true })), ...data.new_orders];
+          if (fresh.length) announce(fresh);
         }
         if (rev !== null && data.rev !== rev) setVersion((v) => v + 1);
         rev = data.rev;
@@ -232,9 +248,10 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
 
 // ---- Layout -----------------------------------------------------------------------------------
 
-const MENU = [
+const MENU: { href: string; label: string; icon: typeof Package; owner?: boolean }[] = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
+  { href: '/admin/pagamentos', label: 'Pagamentos', icon: Wallet, owner: true },
   { href: '/admin/clientes', label: 'Clientes', icon: Users },
   { href: '/admin/produtos', label: 'Produtos', icon: Package },
   { href: '/admin/categorias', label: 'Categorias', icon: Tags },
@@ -259,7 +276,7 @@ function Sidebar({ pathname, onNavigate }: { pathname: string; onNavigate?: () =
         </span>
       </a>
       <nav aria-label="Menu do painel" className="flex-1 space-y-1 overflow-y-auto px-3">
-        {MENU.map(({ href, label, icon: Icon }) => {
+        {MENU.filter((item) => !item.owner || user.role === 'owner').map(({ href, label, icon: Icon }) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
             <a
@@ -391,6 +408,8 @@ function route(pathname: string): { title: string; page: ReactNode } | null {
       return { title: 'Dashboard', page: <DashboardPage /> };
     case 'pedidos':
       return id ? { title: `Pedido #${id}`, page: <OrderDetailPage number={id} /> } : { title: 'Pedidos', page: <OrdersPage /> };
+    case 'pagamentos':
+      return { title: 'Pagamentos online', page: <PaymentsPage /> };
     case 'clientes':
       return { title: 'Clientes', page: <CustomersPage /> };
     case 'produtos':

@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   ChefHat,
   Clock,
-  Copy,
   Link2,
   LoaderCircle,
   Motorbike,
@@ -18,17 +17,19 @@ import {
 import { useEffect, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
-import { DELIVERY_LABEL, PAYMENT_LABEL, STATUS, STATUS_FLOW, addressLines, formatDateTime, money, stepLabel } from '../lib/format';
+import { DELIVERY_LABEL, ONLINE_FLOW, PAYMENT_LABEL, STATUS, STATUS_FLOW, addressLines, formatDateTime, money, stepLabel } from '../lib/format';
 import { ICE_INFO, iceLabel, isIceChoice } from '../lib/ice';
 import { orderCache, seedOrder } from '../lib/orderCache';
 import { forgetAllOrders, forgetOrder, loadRecent, rememberOrder } from '../lib/recent';
 import type { RecentOrder } from '../lib/recent';
-import { copyText, normalizeCode, trackingPath, trackingUrl } from '../lib/tracking';
+import { normalizeCode, trackingPath, trackingUrl } from '../lib/tracking';
 import { navigate } from '../lib/router';
 import type { CustomerAccount, OrderStatus, PublicOrder, StoreSettings } from '../lib/types';
+import { CopyButton } from './CopyButton';
 import { setCustomer, useCustomer } from './customer';
 import { fullAddress, storeWhatsappUrl, useShop } from './data';
 import { OrderListItem, useActiveOrders } from './OrderList';
+import { PixPayment } from './PixPayment';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, FIELD, GHOST_BUTTON, Price, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
 import { useOrderFeed } from './useOrderFeed';
@@ -38,6 +39,8 @@ import { useOrderFeed } from './useOrderFeed';
 function headline(order: PublicOrder): string {
   const pickup = order.delivery_type === 'pickup';
   switch (order.order_status) {
+    case 'awaiting_payment':
+      return 'Falta só o pagamento. Assim que o Pix for confirmado, o pedido segue para a loja.';
     case 'new':
       return 'Recebemos o seu pedido e estamos esperando a confirmação da loja.';
     case 'confirmed':
@@ -56,6 +59,11 @@ function headline(order: PublicOrder): string {
 function paymentText(order: PublicOrder): { label: string; tone: 'amber' | 'green' | 'red' } {
   if (order.payment_status === 'paid') return { label: 'Pagamento confirmado', tone: 'green' };
   if (order.payment_status === 'refunded') return { label: 'Pagamento estornado', tone: 'red' };
+  if (order.payment_method === 'pix_online') {
+    // Pago depois do cancelamento: o dinheiro entrou, mas o pedido não vale mais (a loja devolve).
+    if (order.payment?.status === 'paid') return { label: 'Pagamento recebido: a loja vai devolver', tone: 'amber' };
+    return { label: order.order_status === 'cancelled' ? 'Pagamento não realizado' : 'Aguardando o Pix', tone: 'amber' };
+  }
   if (order.payment_method === 'pix') return { label: 'Pagamento pendente', tone: 'amber' };
   return { label: order.delivery_type === 'pickup' ? 'Pagar na retirada' : 'Pagar na entrega', tone: 'amber' };
 }
@@ -112,8 +120,10 @@ export function orderWhatsappMessage(store: StoreSettings, order: PublicOrder, l
 function Timeline({ order }: { order: PublicOrder }) {
   const reached = new Map(order.history.map((h) => [h.status, h.at]));
   const cancelled = order.order_status === 'cancelled';
-  const currentIndex = STATUS_FLOW.indexOf(order.order_status);
-  const next = !cancelled && currentIndex >= 0 && currentIndex < STATUS_FLOW.length - 1 ? STATUS_FLOW[currentIndex + 1] : null;
+  // Pedido de pagamento online: antes de a loja receber, há a etapa do pagamento.
+  const flow = order.payment_method === 'pix_online' ? ONLINE_FLOW : STATUS_FLOW;
+  const currentIndex = flow.indexOf(order.order_status);
+  const next = !cancelled && currentIndex >= 0 && currentIndex < flow.length - 1 ? flow[currentIndex + 1] : null;
 
   return (
     <div>
@@ -125,13 +135,15 @@ function Timeline({ order }: { order: PublicOrder }) {
           </span>
         </p>
       )}
-      <ol className="grid gap-3 sm:grid-cols-5 sm:gap-2" aria-label="Andamento do pedido">
-        {STATUS_FLOW.map((status, i) => {
+      <ol className={`grid gap-3 sm:gap-2 ${flow.length === 6 ? 'sm:grid-cols-6' : 'sm:grid-cols-5'}`} aria-label="Andamento do pedido">
+        {flow.map((status, i) => {
           const done = !cancelled && i <= currentIndex;
           const wasReached = cancelled && reached.has(status);
           const current = !cancelled && i === currentIndex;
           const isNext = next === status;
-          const at = done || wasReached ? reached.get(status) : undefined;
+          // A etapa do pagamento fica "feita" quando o pedido passa para "novo"; a hora é a do pagamento.
+          const paidStep = status === 'awaiting_payment' && order.order_status !== 'awaiting_payment' && !cancelled;
+          const at = paidStep ? (order.payment?.paid_at ?? reached.get('new')) : done || wasReached ? reached.get(status) : undefined;
           return (
             <li
               key={status}
@@ -148,11 +160,11 @@ function Timeline({ order }: { order: PublicOrder }) {
                       : 'border border-white/15 text-white/60'
                 } ${current ? 'ring-4 ring-[#145CFF]/30' : ''}`}
               >
-                {done || wasReached ? <Check className="h-4 w-4" aria-hidden="true" /> : i + 1}
+                {status === 'awaiting_payment' && current ? <Clock className="h-4 w-4" aria-hidden="true" /> : done || wasReached ? <Check className="h-4 w-4" aria-hidden="true" /> : i + 1}
               </span>
               <span className="min-w-0">
                 <span className={`block text-[12px] font-black leading-tight ${done || wasReached ? 'text-white' : isNext ? 'text-[#8FB1FF]' : 'text-white/60'}`}>
-                  {stepLabel(status, order.delivery_type)}
+                  {paidStep ? 'Pagamento confirmado' : stepLabel(status, order.delivery_type)}
                 </span>
                 {at ? <span className="block text-[11px] text-white/50">{stepTime(at)}</span> : isNext ? <span className="block text-[11px] text-[#8FB1FF]/80">Próxima etapa</span> : null}
               </span>
@@ -195,35 +207,11 @@ function StatusBadge({ order, big = false }: { order: PublicOrder; big?: boolean
 function StatusIcon({ status }: { status: OrderStatus }) {
   const cls = 'mx-auto h-14 w-14 drop-shadow-[0_0_20px_rgba(37,99,255,0.9)]';
   if (status === 'cancelled') return <XCircle className={`${cls} text-rose-300`} aria-hidden="true" />;
+  if (status === 'awaiting_payment') return <Clock className={`${cls} text-amber-300`} aria-hidden="true" />;
   if (status === 'delivered') return <PackageCheck className={`${cls} text-emerald-300`} aria-hidden="true" />;
   if (status === 'out_for_delivery') return <Motorbike className={`${cls} text-[#5B8CFF]`} aria-hidden="true" />;
   if (status === 'preparing') return <ChefHat className={`${cls} text-[#5B8CFF]`} aria-hidden="true" />;
   return <CheckCircle2 className={`${cls} text-[#5B8CFF]`} aria-hidden="true" />;
-}
-
-function CopyButton({ text, label, done = 'Copiado', className }: { text: string; label: string; done?: string; className: string }) {
-  const [state, setState] = useState<'idle' | 'ok' | 'fail'>('idle');
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => {
-          void copyText(text).then((ok) => {
-            setState(ok ? 'ok' : 'fail');
-            window.setTimeout(() => setState('idle'), 2500);
-          });
-        }}
-        className={className}
-      >
-        {state === 'ok' ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
-        {state === 'ok' ? done : state === 'fail' ? 'Não foi possível copiar' : label}
-      </button>
-      {/* Avisa leitores de tela sem mexer no nome do botão */}
-      <span role="status" className="sr-only">
-        {state === 'ok' ? done : state === 'fail' ? 'Não foi possível copiar' : ''}
-      </span>
-    </>
-  );
 }
 
 // Link permanente + código. Funciona em qualquer aparelho, sem login.
@@ -245,17 +233,19 @@ function LinkCard({ order, token, link }: { order: PublicOrder; token: string; l
           className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-[#145CFF] px-3.5 py-2 text-xs font-bold text-white hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
         />
       </div>
-      <dl className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/60">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <dt>Número do pedido</dt>
-          <dd className="font-black tabular-nums text-white">#{order.order_number}</dd>
-        </div>
-        <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <dt>Código de acompanhamento</dt>
-          <dd className="break-all font-mono font-bold tracking-wide text-white">{token}</dd>
-        </div>
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-xs text-white/60">
+        <dl>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <dt>Número do pedido</dt>
+            <dd className="font-black tabular-nums text-white">#{order.order_number}</dd>
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+            <dt>Código de acompanhamento</dt>
+            <dd className="break-all font-mono font-bold tracking-wide text-white">{token}</dd>
+          </div>
+        </dl>
         <p className="mt-2 text-white/60">Sem o link, use o número e o código em “Acompanhar pedido”.</p>
-      </dl>
+      </div>
       <p className="mt-3 flex items-start gap-2 text-xs text-white/60">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-white/60" aria-hidden="true" />
         <span>
@@ -376,6 +366,11 @@ export function OrderView({
   const link = token ? trackingUrl(token) : '';
   const pay = paymentText(order);
   const showPix = order.payment_method === 'pix' && pixKey && order.payment_status !== 'paid' && order.order_status !== 'cancelled';
+  // Pagamento online (Pix pelo site): enquanto não for pago a loja nem vê o pedido, então o WhatsApp e o "pedido enviado" ficam para depois.
+  const awaiting = order.order_status === 'awaiting_payment';
+  // Pelo código de acompanhamento ou, em "Meus pedidos", pela conta (o endereço do pagamento muda; a tela é a mesma).
+  const payBase = token ? `/api/tracking/${token}/payment` : mine ? `/api/account/orders/${order.order_number}/payment` : null;
+  const showPayPanel = payBase !== null && order.payment_method === 'pix_online' && (awaiting || order.payment?.status === 'paid' || (confirmation && order.payment_status === 'paid'));
   const whatsapp = token ? storeWhatsappUrl(store, confirmation ? orderWhatsappMessage(store, order, link) : `Olá, ${store.store_name}! Estou acompanhando o pedido #${order.order_number}.\n\nAcompanhar pedido:\n${link}`) : '';
 
   useEffect(() => {
@@ -388,13 +383,21 @@ export function OrderView({
       <div className="relative overflow-hidden rounded-[2rem] border border-[#145CFF]/35 bg-gradient-to-br from-[#145CFF]/30 via-[#0B1230] to-[#050505] p-6 text-center shadow-[0_40px_120px_-50px_rgba(20,92,255,0.9)] sm:p-10">
         <div aria-hidden="true" className="pointer-events-none absolute -left-16 -top-20 h-64 w-64 rounded-full bg-[#2563FF]/30 blur-3xl cc-glow" />
         <div className="relative">
-          {confirmation ? <CheckCircle2 className="mx-auto h-14 w-14 text-[#5B8CFF] drop-shadow-[0_0_20px_rgba(37,99,255,0.9)]" aria-hidden="true" /> : <StatusIcon status={order.order_status} />}
-          <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">{confirmation ? 'Pedido recebido!' : `Pedido #${order.order_number}`}</h1>
+          {confirmation && !awaiting ? <CheckCircle2 className="mx-auto h-14 w-14 text-[#5B8CFF] drop-shadow-[0_0_20px_rgba(37,99,255,0.9)]" aria-hidden="true" /> : <StatusIcon status={order.order_status} />}
+          <h1 className="mt-4 text-3xl font-black tracking-tight text-white sm:text-4xl">
+            {confirmation ? (awaiting ? 'Falta o pagamento' : 'Pedido recebido!') : `Pedido #${order.order_number}`}
+          </h1>
           <p className="mx-auto mt-2 max-w-md text-balance text-white/75 sm:text-lg">
             {confirmation ? (
-              <>
-                Seu pedido <strong className="text-white">#{order.order_number}</strong> foi enviado para a {store.store_name}.
-              </>
+              awaiting ? (
+                <>
+                  Pague o Pix abaixo para enviar o pedido <strong className="text-white">#{order.order_number}</strong> para a {store.store_name}.
+                </>
+              ) : (
+                <>
+                  Seu pedido <strong className="text-white">#{order.order_number}</strong> foi enviado para a {store.store_name}.
+                </>
+              )
             ) : null}
           </p>
           <div className="mt-4 flex flex-wrap items-center justify-center gap-2" aria-live="polite">
@@ -406,7 +409,7 @@ export function OrderView({
             <span className="font-semibold text-white">{money(order.total)}</span> · {DELIVERY_LABEL[order.delivery_type]} · feito em {formatDateTime(order.created_at)}
           </p>
 
-          {confirmation && token && (
+          {confirmation && token && !awaiting && (
             <div className="mx-auto mt-7 grid max-w-xl gap-3 sm:grid-cols-2">
               <a href={trackingPath(token)} className={`${BLUE_BUTTON} sm:col-span-2`}>
                 Acompanhar meu pedido
@@ -421,9 +424,16 @@ export function OrderView({
               </a>
             </div>
           )}
-          {confirmation && <p className="mt-4 text-xs text-white/50">O pedido já está salvo. O WhatsApp abre uma conversa com a loja com o número e o link; é só uma forma de falar com a gente, ele não confirma nada sozinho.</p>}
+          {confirmation && !awaiting && <p className="mt-4 text-xs text-white/50">O pedido já está salvo. O WhatsApp abre uma conversa com a loja com o número e o link; é só uma forma de falar com a gente, ele não confirma nada sozinho.</p>}
+          {confirmation && awaiting && <p className="mt-4 text-xs text-white/50">O pedido fica reservado enquanto você paga. A loja só recebe o pedido depois que o pagamento for confirmado.</p>}
         </div>
       </div>
+
+      {showPayPanel && payBase && (
+        <div className="mt-6">
+          <PixPayment base={payBase} order={order} onSettled={feed.refresh} />
+        </div>
+      )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_22rem] lg:items-start">
         <div className="space-y-5">
@@ -546,7 +556,7 @@ export function OrderView({
           )}
 
           {token && <LinkCard order={order} token={token} link={link} />}
-          {token && !confirmation && (
+          {token && !confirmation && !awaiting && (
             <a href={whatsapp} target="_blank" rel="noopener noreferrer" className={`${WHATSAPP_BUTTON} w-full`}>
               <WhatsAppIcon className="h-5 w-5" />
               Compartilhar pelo WhatsApp

@@ -4,7 +4,7 @@ Três camadas, todas rodam no seu computador (ou no GitHub Actions) **sem tocar 
 
 | Camada | O que faz | Como roda |
 | ------ | --------- | --------- |
-| **Unitários** (`unit/`) | Funções puras do projeto: senha, TOTP (2FA), validação de imagem, detecção de IP, URL do site, formatação, normalização dos dados da API, regras do carrinho (escolha do gelo) | `npm run test:unit` (segundos) |
+| **Unitários** (`unit/`) | Funções puras do projeto: senha, TOTP (2FA), validação de imagem, detecção de IP, URL do site, formatação, normalização dos dados da API, regras do carrinho (escolha do gelo), pagamento online (o que o cliente pode ver, prazos, conversão do que a operadora informa) e o **adaptador da ValidaPay** (dinheiro em reais, escopos, status, HMAC dos avisos, formulário de cadastro) | `npm run test:unit` (segundos) |
 | **API** (`api-test*.mjs`) | A API de verdade (`api/index.ts`) contra um **PostgreSQL local**, com Blob falso, SMTP de mentira e DNS simulado | `npm run test:api` (alguns minutos) |
 | **Navegador** (`e2e*.cjs`) | Site e painel num Chromium real (Playwright), de ponta a ponta | `npm run test:e2e` (alguns minutos) |
 
@@ -44,6 +44,13 @@ termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDI
   `scripts/create-admin.mjs` do mesmo jeito.
 - `mailsink.mjs` é o servidor SMTP de mentira (os e-mails enviados ficam acessíveis ao teste); `dnsmock.mjs` simula o DNS dos
   domínios de e-mail; o Blob é um servidor falso na porta 4181.
+- `payments-sim.mjs` é um **simulador de operadora de pagamento** (NÃO é a ValidaPay nem fala com ela). O servidor de teste o liga no
+  lugar de `server/payments/factory.ts` (o código de produção devolve "sem operadora" e nunca importa o simulador) e expõe controles em
+  `/__pay/*` só nesse servidor: recusa, queda, demora, valor errado, falha de repasse, aviso repetido/atrasado/sem assinatura, vencimento e
+  estorno. Serve para provar a **lógica da loja**, não a integração real.
+- `validapay-fake.mjs` é um **servidor ValidaPay FALSO** (NÃO é a ValidaPay): segue a documentação oficial (autenticação, Pix com divisão, consulta, cancelamento,
+  extrato, subcontas, propostas) e **recusa o que foge dela**. O servidor de teste, ligado com `PAYMENTS_SIM=validapay`, usa o adaptador **real**
+  (`server/payments/validapay.ts`) apontado para ele (`factory-validapay.ts`). `api-test15` e `e2e-account` o usam.
 - `reset.sh` recria o banco `copocheio_test`, aplica **todas** as migrations e cria o owner de teste
   (`dono@copocheio.local` / `senha-forte-123`). `fresh.sh` = `reset.sh` + reinício do servidor. `serve.sh` reinicia só o servidor.
 
@@ -62,11 +69,15 @@ termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDI
 | `api-test11` | **Pedidos e catálogo**: pedido repetido (idempotência), total conferido, preço, duplicados, regras de status/pagamento, estoque, promoção com datas, importação com relatório, cache das listas |
 | `api-test12` | **Permissões e atividades**, edição simultânea das configurações, privacidade (LGPD), HTML para robôs (SEO) |
 | `api-test13` | **Escolha do gelo**: a migration 0013 num banco de produção antigo (marca só Copão e Copão com Monster), o banco recusando pedido sem a escolha (requisição direta, valores inventados, linhas misturadas), linhas separadas por gelo, estoque e limites pela soma, regra presa à categoria (renomear não desliga), idempotência e total conferido, acompanhamento, conta, painel, dashboard e cancelamento |
+| `api-test14` | **Pagamento online (Pix) com o simulador**: a migration 0014 num banco de produção antigo (nada existente muda; o Pix online nasce desligado e só liga com operadora + conta aprovada), pedido "aguardando pagamento" com o total do banco, uma só cobrança por pedido, quem pode ver e criar, confirmação só por aviso verificado + consulta, valor errado, falha de repasse da comissão e conciliação, operadora fora do ar, vencimento/nova tentativa/cancelamento e pagamento tardio, concorrência (cliques, avisos e consultas simultâneos), estorno, painel (owner × atendente), comissão de 2% em centavos (a migration 0016 não reescreve cobranças antigas), conta do cliente. Confere também que o log do servidor não guarda Pix nem segredos |
+| `api-test15` | **ValidaPay (adaptador real × servidor falso)**: vínculo de conta existente (lista oficial, documento mascarado, autorização), Pix com divisão fixa de 2% na subconta (valores em reais, metadata, `X-Sub-Account`, sem `externalId`), avisos assinados (assinatura errada/antiga/adulterada recusadas, duplicados, aviso de "pago" com a cobrança ainda aberta não libera nada), consulta com e sem o cabeçalho da subconta, comissão só efetivada com o crédito no extrato da master, valor errado, disputa e estorno, **cancelamento na ValidaPay do Pix vencido** (inclusive a corrida pagamento × cancelamento e a operadora fora do ar), cobrança "órfã" achada pelo `metadata`, cadastro de conta (PF/PJ, formulário inválido nunca enviado, aprovação só pelo aviso oficial, reprovação, resposta perdida, 5 envios simultâneos = 1 proposta, produção exige ciência das tarifas) e nada sensível no log |
 | `e2e` | Painel + site + checkout + pedidos ao vivo |
 | `e2e-track` · `e2e-verify` · `e2e-recover` | Acompanhamento e conta; cadastro com confirmação; recuperação de senha |
 | `e2e-cover` · `e2e-whatsapp` | Banner da capa; botões de WhatsApp |
 | `e2e-hardening` | 2FA no painel, configurações simultâneas, atividades, produtos (promoção, importação), privacidade, página não encontrada, checkout (total conferido, envio repetido), API fora do ar, tela de erro, CSP sem bloqueios |
 | `e2e-ice` | **Escolha do gelo no navegador** (celular e computador): a pergunta e a mensagem obrigatória, destaque e troca da escolha, linhas separadas, editar no pedido, guardar ao recarregar, checkout, página do pedido, WhatsApp, painel (pedido, recibo e Categorias), pedido antigo sem escolha, regra mudando no meio da compra, teclado/foco/leitor de tela e telas pequenas |
+| `e2e-pix` | **Pix online no navegador** (celular e computador, com o simulador): com o Pix online desligado o checkout é o de sempre (3 formas, sem menção ao Pix online); ligado, aparece a quarta forma; tela do Pix (QR Code com descrição para leitor de tela, copia e cola somente leitura, contagem, "Já paguei" que só confere), confirmação sem recarregar, Pix vencido e nova tentativa, falha ao gerar com "Tentar de novo", pagar pelo "Meus pedidos", aviso de pedido pago e aba "Aguardando pagamento" no painel, detalhe do pedido, página Pagamentos e interruptor (só owner; o atendente não vê comissão nem a página) e ausência de erros no console |
+| `e2e-account` | **Conta do estabelecimento no navegador** (celular e computador, servidor ValidaPay falso): "Não conectada" com o NOME das variáveis que faltam, vincular uma conta existente (documento mascarado, não confirmada não pode ser escolhida, exige a autorização do titular), cadastrar uma conta nova (PF/PJ, erros por campo, autorização, andamento, envio de documentos não guardado) e a conta só "Aprovada" com o aviso oficial |
 | `e2e-mail-off` | Servidor sem SMTP: cadastro indisponível com mensagem clara |
 
 ## O que estes testes **não** provam
@@ -75,6 +86,9 @@ termina com erro se alguma falhar. A saída completa de cada uma fica em `$TMPDI
   reescritas): o `vercel.json` é validado com `@vercel/routing-utils` e um servidor local, não pela Vercel de verdade.
 - O **Neon** real (latência, "dormir" sem uso, limites do plano), o **Vercel Blob** real e a **entrega de e-mail** (SPF/DKIM,
   caixa de spam) com um provedor de verdade.
+- **A ValidaPay de verdade.** Os testes de pagamento online usam um simulador genérico e um servidor ValidaPay FALSO, escritos por nós a partir da
+  documentação; eles provam a lógica da loja e do adaptador (banco, estados, idempotência, comissão, assinatura, telas), **não** que a ValidaPay se comporta
+  exatamente assim (autenticação, divisão da comissão, extrato, assinatura do webhook). Isso só se prova no **sandbox** da ValidaPay, o que **nunca foi feito**.
 - Safari, Firefox e iOS: os testes de navegador usam Chromium.
 - A produção em si: nada aqui acessa `copocheio-nu.vercel.app`.
 

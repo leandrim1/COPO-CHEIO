@@ -115,8 +115,10 @@ export type DeliveryZone = {
   position: number;
 };
 
-export type OrderStatus = 'new' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
-export type PaymentMethod = 'pix' | 'cash' | 'card';
+// awaiting_payment: pedido de pagamento online que ainda não foi pago. A loja só o vê como "novo" depois que o pagamento é confirmado.
+export type OrderStatus = 'awaiting_payment' | 'new' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
+// pix_online: o cliente paga pelo site (QR Code ou copia e cola) e a operadora confirma; os outros três são pagos na entrega/retirada.
+export type PaymentMethod = 'pix' | 'cash' | 'card' | 'pix_online';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
 export type DeliveryType = 'delivery' | 'pickup';
 
@@ -246,6 +248,112 @@ export type PublicOrder = {
   // product_id só vem para o dono da conta (para "pedir de novo").
   items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null }[];
   history: { status: OrderStatus; at: string }[];
+  // Resumo do pagamento online (só existe quando já houve uma cobrança). Os detalhes vêm de /api/tracking/:código/payment.
+  payment?: { method: 'pix'; status: PaymentState; expires_at: string | null; paid_at: string | null; attempt: number };
+};
+
+// ---- Pagamento online (Pix) -----------------------------------------------------------------------------------------------------
+
+// creating: gerando · pending: aguardando o cliente pagar · paid: confirmado · expired: venceu · cancelled · failed · refunded: estornado
+export type PaymentState = 'creating' | 'pending' | 'paid' | 'expired' | 'cancelled' | 'failed' | 'refunded';
+
+// O pagamento como o cliente vê (GET e POST /api/tracking/:código/payment). Nunca traz comissão, tarifas nem códigos da operadora.
+export type PaymentView = {
+  id: string;
+  status: PaymentState;
+  method: 'pix';
+  amount: number;
+  attempt: number;
+  expires_at: string | null;
+  // O Pix "copia e cola": só enquanto aguarda o pagamento.
+  pix: { payload: string } | null;
+  can_retry: boolean;
+  retry_until: string | null;
+  message: string | null;
+};
+
+export type CustomerPayment = { payment: PaymentView | null; order_status: OrderStatus; payment_status: PaymentStatus };
+
+// Painel: uma cobrança. Todo administrador vê a situação; só o owner recebe comissão, tarifas e códigos da operadora (os campos opcionais).
+// calculated: só calculada · confirmed: a operadora confirmou o repasse · failed: o repasse falhou · not_applicable: sem divisão
+export type CommissionState = 'calculated' | 'confirmed' | 'failed' | 'not_applicable';
+export type AdminPayment = {
+  id: string;
+  order_id: string;
+  order_number: number;
+  attempt: number;
+  method: 'pix';
+  status: PaymentState;
+  amount_cents: number;
+  expires_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  needs_attention: boolean;
+  attention_reason?: string | null;
+  provider?: string;
+  provider_charge_id?: string | null;
+  provider_status?: string | null;
+  commission_bps?: number;
+  commission_cents?: number;
+  commission_state?: CommissionState;
+  commission_confirmed_cents?: number | null;
+  fee_cents?: number | null;
+  net_cents?: number | null;
+  refunded_cents?: number;
+  checked_at?: string | null;
+  closed_at?: string | null;
+  last_error?: string | null;
+};
+
+export type MerchantAccount = {
+  id: string;
+  provider: string;
+  kind: 'pf' | 'pj' | null;
+  status: 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'duplicate' | 'error' | 'suspended';
+  status_detail: string | null;
+  proposal_id: string | null;
+  provider_account_id: string | null;
+  // A operadora não respondeu ao enviar o cadastro: ele PODE ter sido criado (e cobrado).
+  ambiguous?: boolean;
+  authorized_at: string | null;
+  fees_acknowledged_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PaymentsOverview = {
+  payments: AdminPayment[];
+  has_more: boolean;
+  summary: {
+    pending: number;
+    paid: number;
+    expired: number;
+    failed: number;
+    refunded: number;
+    attention: number;
+    paid_cents: number;
+    commission_calculated_cents: number;
+    commission_confirmed_cents: number;
+    commission_waiting_cents: number;
+    commission_failed_cents: number;
+    fee_cents: number;
+  };
+  // Taxa atual da comissão, em pontos-base (200 = 2%); vem do banco.
+  commission_bps: number;
+  merchant: MerchantAccount | null;
+  provider: {
+    configured: boolean;
+    name: string | null;
+    environment: 'sandbox' | 'production' | null;
+    // Só os NOMES das variáveis de ambiente que faltam (nunca valores).
+    missing: string[];
+    note: string | null;
+    manages_accounts: boolean;
+  };
+  // Tarifa de criação de uma conta nova, em centavos (0 no sandbox; null: a operadora não informa).
+  account_fee_cents: number | null;
+  readiness: { provider: string | null; merchant: string | null; ready: boolean };
+  method: { code: 'pix_online'; label: string; enabled: boolean } | null;
 };
 
 // Conta do cliente (opcional).

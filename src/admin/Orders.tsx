@@ -20,8 +20,9 @@ import {
 import { ICE_INFO, iceLabel, isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
 import { copyText, trackingUrl } from '../lib/tracking';
-import type { Order, OrderItem, OrderStatus, PaymentStatus, StatusChange, TrackingLinkInfo } from '../lib/types';
-import { useLiveOrders } from './AdminApp';
+import type { AdminPayment, Order, OrderItem, OrderStatus, PaymentStatus, StatusChange, TrackingLinkInfo } from '../lib/types';
+import { useAdmin, useLiveOrders } from './AdminApp';
+import { OnlinePaymentCard } from './OnlinePayment';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Spinner, StatusBadge, cx, useConfirm, useToast } from './ui';
 
 const FILTERS: { value: OrderStatus | 'all'; label: string }[] = [
@@ -33,6 +34,9 @@ const FILTERS: { value: OrderStatus | 'all'; label: string }[] = [
   { value: 'delivered', label: 'Entregues' },
   { value: 'cancelled', label: 'Cancelados' },
 ];
+
+// Só aparece quando existe pedido aguardando pagamento online (ou quando já é o filtro aberto): quem não usa o Pix online não vê nada novo.
+const AWAITING_FILTER: { value: OrderStatus | 'all'; label: string } = { value: 'awaiting_payment', label: 'Aguardando pagamento' };
 
 const PAGE = 30;
 
@@ -78,7 +82,7 @@ export function OrdersPage() {
   const toast = useToast();
   const [filter, setFilter] = useState<OrderStatus | 'all'>(() => {
     const status = new URLSearchParams(window.location.search).get('status');
-    return FILTERS.some((f) => f.value === status) ? (status as OrderStatus) : 'all';
+    return [...FILTERS, AWAITING_FILTER].some((f) => f.value === status) ? (status as OrderStatus) : 'all';
   });
   // /admin/pedidos?q=… (links vindos de Clientes) já abre filtrado.
   const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') ?? '');
@@ -149,7 +153,7 @@ export function OrdersPage() {
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div role="group" aria-label="Filtrar por status" className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 lg:flex-1">
-          {FILTERS.map((f) => {
+          {(counts.awaiting_payment || filter === 'awaiting_payment' ? [FILTERS[0], AWAITING_FILTER, ...FILTERS.slice(1)] : FILTERS).map((f) => {
             const n = f.value === 'all' ? total : counts[f.value];
             const active = filter === f.value;
             return (
@@ -462,8 +466,10 @@ export function OrderDetailPage({ number }: { number: string }) {
   const [links, setLinks] = useState<TrackingLinkInfo[]>([]);
   const [account, setAccount] = useState<{ id: string; name: string; email: string; phone: string } | null>(null);
   const [retention, setRetention] = useState(180);
+  const [payments, setPayments] = useState<AdminPayment[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState(false);
+  const { user } = useAdmin();
 
   const load = useCallback(async () => {
     if (!/^\d+$/.test(number)) {
@@ -471,7 +477,7 @@ export function OrderDetailPage({ number }: { number: string }) {
       return;
     }
     try {
-      const data = await api.get<{ order: Order; items: OrderItem[]; history: StatusChange[]; tracking_links: TrackingLinkInfo[]; account: typeof account; retention_days: number }>(`/api/admin/orders/${number}`);
+      const data = await api.get<{ order: Order; items: OrderItem[]; history: StatusChange[]; tracking_links: TrackingLinkInfo[]; account: typeof account; retention_days: number; payments?: AdminPayment[] }>(`/api/admin/orders/${number}`);
       setError(false);
       setOrder(data.order);
       setItems(data.items);
@@ -479,6 +485,7 @@ export function OrderDetailPage({ number }: { number: string }) {
       setLinks(data.tracking_links);
       setAccount(data.account);
       setRetention(data.retention_days);
+      setPayments(data.payments ?? []);
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) setOrder(null);
       else setError(true);
@@ -494,7 +501,10 @@ export function OrderDetailPage({ number }: { number: string }) {
     if (status === 'cancelled') {
       const ok = await confirm({
         title: `Cancelar o pedido #${order.order_number}?`,
-        description: 'O estoque dos itens volta para a loja. Um pedido cancelado não pode ser reaberto.',
+        description:
+          order.order_status === 'awaiting_payment'
+            ? 'O cliente ainda não pagou. O estoque dos itens volta para a loja e o Pix em aberto deixa de valer. Um pedido cancelado não pode ser reaberto.'
+            : 'O estoque dos itens volta para a loja. Um pedido cancelado não pode ser reaberto.',
         confirmLabel: 'Cancelar pedido',
       });
       if (!ok) return;
@@ -734,37 +744,41 @@ export function OrderDetailPage({ number }: { number: string }) {
               <p className="text-sm text-white/70">O cliente vai retirar na loja.</p>
             )}
           </Card>
-          <Card title="Pagamento">
-            <p className="text-sm font-semibold text-white">
-              {PAYMENT_LABEL[order.payment_method]}
-              {order.payment_method === 'cash' && order.change_for ? <span className="font-normal text-white/60"> · troco para {money(Number(order.change_for))}</span> : null}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Situação do pagamento">
-              {(['pending', 'paid', 'refunded'] as PaymentStatus[]).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  aria-pressed={order.payment_status === p}
-                  disabled={busy === 'payment' || Boolean(paymentMoveProblem(order, p))}
-                  title={paymentMoveProblem(order, p) ?? undefined}
-                  onClick={() => void setPayment(p)}
-                  className={cx(
-                    'rounded-full px-3 py-1.5 text-xs font-bold ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]',
-                    order.payment_status === p
-                      ? p === 'paid'
-                        ? 'bg-emerald-500/20 text-emerald-200 ring-emerald-400/50'
-                        : p === 'refunded'
-                          ? 'bg-rose-500/15 text-rose-200 ring-rose-400/40'
-                          : 'bg-amber-400/15 text-amber-200 ring-amber-400/40'
-                      : 'text-white/50 ring-white/10 hover:text-white',
-                  )}
-                >
-                  {PAYMENT_STATUS_LABEL[p]}
-                </button>
-              ))}
-            </div>
-            {order.payment_method === 'pix' && order.payment_status !== 'paid' && <Badge tone="amber" className="mt-3">Confira o comprovante do PIX</Badge>}
-          </Card>
+          {order.payment_method === 'pix_online' ? (
+            <OnlinePaymentCard order={order} payments={payments} owner={user.role === 'owner'} onChanged={() => void load()} />
+          ) : (
+            <Card title="Pagamento">
+              <p className="text-sm font-semibold text-white">
+                {PAYMENT_LABEL[order.payment_method]}
+                {order.payment_method === 'cash' && order.change_for ? <span className="font-normal text-white/60"> · troco para {money(Number(order.change_for))}</span> : null}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Situação do pagamento">
+                {(['pending', 'paid', 'refunded'] as PaymentStatus[]).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    aria-pressed={order.payment_status === p}
+                    disabled={busy === 'payment' || Boolean(paymentMoveProblem(order, p))}
+                    title={paymentMoveProblem(order, p) ?? undefined}
+                    onClick={() => void setPayment(p)}
+                    className={cx(
+                      'rounded-full px-3 py-1.5 text-xs font-bold ring-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]',
+                      order.payment_status === p
+                        ? p === 'paid'
+                          ? 'bg-emerald-500/20 text-emerald-200 ring-emerald-400/50'
+                          : p === 'refunded'
+                            ? 'bg-rose-500/15 text-rose-200 ring-rose-400/40'
+                            : 'bg-amber-400/15 text-amber-200 ring-amber-400/40'
+                        : 'text-white/50 ring-white/10 hover:text-white',
+                    )}
+                  >
+                    {PAYMENT_STATUS_LABEL[p]}
+                  </button>
+                ))}
+              </div>
+              {order.payment_method === 'pix' && order.payment_status !== 'paid' && <Badge tone="amber" className="mt-3">Confira o comprovante do PIX</Badge>}
+            </Card>
+          )}
         </div>
       </div>
 

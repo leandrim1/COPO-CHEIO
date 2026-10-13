@@ -11,6 +11,9 @@ export function parseMoney(input: string): number | null {
   return Math.round(Number(normalized) * 100) / 100;
 }
 
+// Pontos-base → "2%" (200) ou "2,5%" (250), com vírgula decimal.
+export const percentFromBps = (bps: number | null | undefined) => `${((bps ?? 0) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
+
 export const moneyInput = (value: number | null | undefined) =>
   value === null || value === undefined ? '' : value.toFixed(2).replace('.', ',');
 
@@ -56,12 +59,15 @@ export function timeAgo(iso: string, now = Date.now()): string {
 }
 
 export const STATUS_FLOW: OrderStatus[] = ['new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered'];
+// Pedido de pagamento online: antes da loja receber, há a etapa do pagamento.
+export const ONLINE_FLOW: OrderStatus[] = ['awaiting_payment', ...STATUS_FLOW];
 
 // As mesmas regras do banco (admin_set_order_status): o painel não oferece o que o servidor vai recusar.
 // Para a frente vale pular etapas; para trás, só uma etapa; entregue só volta para "saiu para entrega" e não cancela; cancelado não reabre.
 export function statusMoveProblem(from: OrderStatus, to: OrderStatus): string | null {
   if (from === to) return null;
   if (from === 'cancelled') return 'Este pedido foi cancelado e não pode ser reaberto.';
+  if (from === 'awaiting_payment') return to === 'cancelled' ? null : 'Este pedido está aguardando o pagamento online: só segue para a loja depois que o pagamento for confirmado.';
   if (from === 'delivered') {
     if (to === 'cancelled') return 'Pedido entregue não pode ser cancelado. Para devolver o dinheiro, marque o pagamento como reembolsado.';
     return to === 'out_for_delivery' ? null : 'Pedido entregue só pode voltar para “Saiu para entrega” (se o clique foi por engano).';
@@ -71,14 +77,21 @@ export function statusMoveProblem(from: OrderStatus, to: OrderStatus): string | 
 }
 
 // Regras do pagamento (admin_set_payment_status): cancelado não vira "pago"; só se reembolsa o que estava pago.
-export function paymentMoveProblem(order: { order_status: OrderStatus; payment_status: PaymentStatus }, to: PaymentStatus): string | null {
+export function paymentMoveProblem(order: { order_status: OrderStatus; payment_status: PaymentStatus; payment_method?: PaymentMethod }, to: PaymentStatus): string | null {
   if (order.payment_status === to) return null;
+  if (order.payment_method === 'pix_online') return 'O pagamento deste pedido é online: quem confirma é a operadora de pagamento, então não dá para alterar à mão.';
   if (to === 'paid' && order.order_status === 'cancelled') return 'Pedido cancelado não pode ser marcado como pago. Se houve pagamento, marque como reembolsado.';
   if (to === 'refunded' && order.payment_status !== 'paid') return 'Só dá para reembolsar um pedido que estava marcado como pago.';
   return null;
 }
 
 export const STATUS: Record<OrderStatus, { label: string; action: string; badge: string; dot: string }> = {
+  awaiting_payment: {
+    label: 'AGUARDANDO PAGAMENTO',
+    action: 'AGUARDANDO PAGAMENTO',
+    badge: 'bg-amber-400/15 text-amber-200 ring-amber-400/40',
+    dot: 'bg-amber-300',
+  },
   new: {
     label: 'NOVO',
     action: 'NOVO',
@@ -128,10 +141,10 @@ export function statusLabel(status: OrderStatus, delivery: DeliveryType): string
 export function stepLabel(status: OrderStatus, delivery: DeliveryType): string {
   if (status === 'out_for_delivery') return delivery === 'pickup' ? 'Pronto para retirar' : 'Saiu para entrega';
   if (status === 'delivered') return delivery === 'pickup' ? 'Retirado' : 'Entregue';
-  return { new: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', cancelled: 'Cancelado' }[status];
+  return { awaiting_payment: 'Aguardando pagamento', new: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', cancelled: 'Cancelado' }[status];
 }
 
-export const PAYMENT_LABEL: Record<PaymentMethod, string> = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão' };
+export const PAYMENT_LABEL: Record<PaymentMethod, string> = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', pix_online: 'Pix online' };
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   pending: 'Aguardando pagamento',
   paid: 'Pago',
