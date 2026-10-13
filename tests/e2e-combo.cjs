@@ -1,6 +1,7 @@
 // Aviso dos combos no navegador (celular e computador): ao adicionar um produto da categoria "Combos" aparece a observação
 // "CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA."; ela também fica na linha do pedido (gaveta e checkout). Produtos de
-// outras categorias não recebem nada. O aviso se fecha, some sozinho e não bloqueia a página.
+// outras categorias não recebem nada. O aviso se fecha, some sozinho e não bloqueia a página. O botão "QUERO TROCAR O ENERGÉTICO" (no aviso e na
+// linha do combo) abre a lista de todos os energéticos do site, cada um com "Adicionar" ao pedido.
 // usage: bash tests/fresh.sh && npm run build && node tests/e2e-combo.cjs
 const { chromium } = (() => {
   try {
@@ -67,9 +68,17 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   const combo2 = await mk('COMBO GIN INVICTUS ( 4 gelos, 1 Gin Invictus, 1 Energético Jack Power 2L )', 50, catCombos);
   const beer = await mk('Heineken Long Neck', 8, catBeer, { featured: true });
   const other = await mk('Kit Cerveja Especial', 40, catOther);
-  ok(!!combo?.id && !!combo2?.id && !!beer?.id && !!other?.id, 'dados de teste criados (3 categorias, 4 produtos)');
+  const catEnergy = await mkCat('ENERGÉTICOS');
+  const catCopaoEnergy = await mkCat('COPÃO COM ENERGÉTICO 2L JACK POWER');
+  const en1 = await mk('Energético Monster 473ml', 9.5, catEnergy);
+  const en2 = await mk('Energético Red Bull 250ml', 10, catEnergy);
+  const en3 = await mk('Energético Jack Power 2L', 12, catEnergy, { promo_price: 11 });
+  const en4 = await mk('Energético Fusion 2L', 13, catEnergy, { sold_out: true });
+  const copaoEn = await mk('Copão com Energético Jack Power', 30, catCopaoEnergy);
+  ok(!!combo?.id && !!combo2?.id && !!beer?.id && !!other?.id && !!en1?.id && !!en4?.id && !!copaoEn?.id, 'dados de teste criados (5 categorias, 9 produtos)');
   const browser = await chromium.launch();
   const notice = (page) => page.locator('[data-add-notice]');
+  const swapDialog = (page) => page.getByRole('dialog', { name: 'Trocar o energético' });
 
   for (const [label, vp] of [['celular 390', { width: 390, height: 844 }], ['computador 1280', { width: 1280, height: 800 }]]) {
     console.log(`# ${label}`);
@@ -98,11 +107,45 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     ok(await noHScroll(page), `${label}: sem rolagem horizontal`);
     await page.screenshot({ path: `${SP}/combo-${vp.width}-1-aviso.png` });
 
+    ok((await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).count()) === 1, `${label}: o aviso tem o botão "QUERO TROCAR O ENERGÉTICO"`);
+
     // Fecha, e volta a aparecer ao adicionar outro combo
     await notice(page).getByRole('button', { name: 'Fechar aviso' }).click();
     ok(await until(async () => (await notice(page).count()) === 0), `${label}: o aviso se fecha no X`);
     await addButton(page, 'COMBO GIN INVICTUS').click();
     ok(await until(async () => (await notice(page).count()) === 1), `${label}: outro combo mostra o aviso de novo`);
+
+    // "QUERO TROCAR O ENERGÉTICO": abre a lista de todos os energéticos
+    await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).click();
+    const swap = swapDialog(page);
+    await swap.waitFor();
+    ok((await notice(page).count()) === 0, `${label}: ao abrir a lista, o aviso some`);
+    const rows = await swap.locator('li[data-energetic]').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
+    ok(rows.length === 4 && [en1, en2, en3, en4].every((p) => swap.locator(`li[data-energetic="${p.id}"]`)), `${label}: a lista mostra os 4 energéticos do site`, rows);
+    ok(!rows.some((r) => /Copão|Heineken|Kit Cerveja|COMBO/.test(r)), `${label}: nada que não seja energético (nem copão com energético, nem combo, nem cerveja)`, rows);
+    ok(/Energético Fusion/.test(rows[3]) && /ESGOTADO/.test(rows[3]) && (await swap.locator(`li[data-energetic="${en4.id}"] button`).count()) === 0, `${label}: o esgotado vai para o fim, marcado e sem botão de adicionar`, rows[3]);
+    ok(/Monster/.test(rows[0]) && /Red Bull/.test(rows[1]) && /Jack Power/.test(rows[2]), `${label}: em ordem de preço (9,50, 10,00, 11,00 em promoção), esgotado por último`, rows);
+    ok(/11,00/.test(rows[2]) && /12,00/.test(rows[2]), `${label}: promoção aparece com o preço novo e o antigo riscado`, rows[2]);
+    ok(/Obs: CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA\./.test(await swap.innerText()), `${label}: a lista repete a observação dos combos`);
+    ok((await swap.getAttribute('aria-modal')) === 'true' && (await page.evaluate(() => document.body.style.overflow === 'hidden')), `${label}: janela modal e a página de trás não rola`);
+    ok(await page.evaluate(() => document.activeElement?.getAttribute('aria-label') === 'Fechar a lista de energéticos'), `${label}: o foco vai para o botão de fechar`);
+    const sbox = await swap.boundingBox();
+    ok(sbox && sbox.x >= 0 && sbox.x + sbox.width <= vp.width + 1 && sbox.y >= 0 && sbox.y + sbox.height <= vp.height + 1, `${label}: a lista cabe na tela (${Math.round(sbox?.width)}x${Math.round(sbox?.height)})`, sbox);
+    await page.screenshot({ path: `${SP}/combo-${vp.width}-1b-lista.png` });
+    // Adicionar ao pedido, trocar quantidade
+    await swap.getByRole('button', { name: /^Adicionar Energético Monster/ }).click();
+    ok(await until(async () => (await cartOf(page))[en1.id] === 1), `${label}: "Adicionar" põe o energético no pedido`, await cartOf(page));
+    ok(await until(async () => (await swap.locator(`li[data-energetic="${en1.id}"] [data-qty]`).innerText()) === '1'), `${label}: o botão vira o contador de quantidade (1)`);
+    await swap.getByRole('button', { name: /^Aumentar Energético Monster/ }).click();
+    ok(await until(async () => (await cartOf(page))[en1.id] === 2), `${label}: "+" sobe para 2`, await cartOf(page));
+    await swap.getByRole('button', { name: /^Diminuir Energético Monster/ }).click();
+    ok(await until(async () => (await cartOf(page))[en1.id] === 1), `${label}: "−" volta para 1`, await cartOf(page));
+    await swap.getByRole('button', { name: /^Adicionar Energético Red Bull/ }).click();
+    ok(await until(async () => (await cartOf(page))[en2.id] === 1), `${label}: dá para adicionar mais de um energético`);
+    ok(/Pronto \(2 no pedido\)/.test(await swap.getByRole('button', { name: /^Pronto/ }).innerText()), `${label}: o rodapé mostra quantos energéticos já estão no pedido`);
+    await page.keyboard.press('Escape');
+    ok(await until(async () => (await swapDialog(page).count()) === 0), `${label}: Esc fecha a lista`);
+    ok(await page.evaluate(() => document.body.style.overflow !== 'hidden'), `${label}: ao fechar, a rolagem volta`);
 
     // Gaveta do pedido: o aviso some e a observação fica na linha de cada combo (só dos combos)
     await page.getByRole('button', { name: /Ver pedido/ }).click();
@@ -111,8 +154,15 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     ok((await notice(page).count()) === 0, `${label}: com a gaveta aberta o aviso não aparece por cima`);
     const notes = await drawer.locator('[data-combo-note]').allInnerTexts();
     ok(notes.length === 2 && notes.every((n) => n.trim() === `Obs: ${NOTE}`), `${label}: gaveta: os 2 combos mostram "Obs: ${NOTE}"`, notes);
-    ok((await drawer.locator('li[data-line]').count()) === 4, `${label}: gaveta: 4 linhas (2 combos + cerveja + kit); só os combos têm a observação`);
+    ok((await drawer.locator('li[data-line]').count()) === 6, `${label}: gaveta: 6 linhas (2 combos + cerveja + kit + 2 energéticos); só os combos têm a observação`);
+    ok((await drawer.locator('[data-swap-energetic]').count()) === 2, `${label}: gaveta: os 2 combos têm o botão "QUERO TROCAR O ENERGÉTICO" (as outras linhas não)`);
     await page.screenshot({ path: `${SP}/combo-${vp.width}-2-gaveta.png` });
+    await drawer.locator('[data-swap-energetic]').first().click();
+    await swapDialog(page).waitFor();
+    ok((await page.getByRole('dialog', { name: 'Seu pedido' }).count()) === 1, `${label}: a lista abre por cima da gaveta`);
+    await page.keyboard.press('Escape');
+    ok(await until(async () => (await swapDialog(page).count()) === 0), `${label}: Esc fecha só a lista`);
+    ok((await drawer.isVisible()) && (await page.evaluate(() => document.body.style.overflow === 'hidden')), `${label}: a gaveta continua aberta (e a página de trás travada)`);
 
     // Checkout: a observação também aparece no resumo
     await drawer.getByRole('link', { name: /Finalizar pedido/ }).click();
@@ -121,6 +171,14 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     const cnotes = await page.locator('[data-combo-note]').allInnerTexts();
     ok(cnotes.length === 2 && cnotes.every((n) => n.trim() === `Obs: ${NOTE}`), `${label}: checkout: os 2 combos mostram a observação`, cnotes);
     ok(await noHScroll(page), `${label}: checkout sem rolagem horizontal`);
+    ok((await page.locator('[data-swap-energetic]').count()) === 2, `${label}: checkout: os 2 combos têm o botão "QUERO TROCAR O ENERGÉTICO"`);
+    await page.locator('[data-swap-energetic]').first().click();
+    await swapDialog(page).waitFor();
+    await swapDialog(page).getByRole('button', { name: /^Adicionar Energético Jack Power/ }).click();
+    ok(await until(async () => (await cartOf(page))[en3.id] === 1), `${label}: checkout: dá para adicionar o energético pela lista`, await cartOf(page));
+    await swapDialog(page).getByRole('button', { name: /^Pronto/ }).click();
+    ok(await until(async () => (await swapDialog(page).count()) === 0), `${label}: "Pronto" fecha a lista`);
+    ok(await until(async () => (await page.locator('li[data-line]').count()) === 7), `${label}: checkout: o resumo já mostra o energético novo (7 linhas)`);
     await page.screenshot({ path: `${SP}/combo-${vp.width}-3-checkout.png` });
     await ctx.close();
   }
@@ -132,6 +190,22 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     await addButton(page, 'COMBO BUSCA BRISA').click();
     ok(await until(async () => (await notice(page).count()) === 1), 'o aviso aparece');
     ok(await until(async () => (await notice(page).count()) === 0, 12000), 'o aviso some sozinho depois de alguns segundos');
+    await ctx.close();
+  }
+
+  // Sem nenhum energético no site (categoria desativada): o aviso e a observação continuam, mas o botão não aparece
+  {
+    const patched = await api('PATCH', `/api/admin/categories/${catEnergy.id}`, { name: 'ENERGÉTICOS', active: false });
+    ok(patched.status === 200, 'categoria ENERGÉTICOS desativada', patched);
+    const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
+    await page.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
+    await addButton(page, 'COMBO BUSCA BRISA').click();
+    ok(await until(async () => (await notice(page).count()) === 1), 'sem energéticos: o aviso do combo continua aparecendo');
+    ok((await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).count()) === 0, 'sem energéticos: o botão "QUERO TROCAR O ENERGÉTICO" não aparece no aviso');
+    await page.getByRole('button', { name: /Ver pedido/ }).click();
+    const drawer = page.getByRole('dialog', { name: 'Seu pedido' });
+    await drawer.waitFor();
+    ok((await drawer.locator('[data-combo-note]').count()) === 1 && (await drawer.locator('[data-swap-energetic]').count()) === 0, 'sem energéticos: a observação fica na linha do combo e o botão não aparece');
     await ctx.close();
   }
 

@@ -5,6 +5,7 @@ import { money } from '../lib/format';
 import { ICE_INFO, iceLabel } from '../lib/ice';
 import { instagramHandle, unitPrice, useShop } from './data';
 import type { CartLine, Product } from './data';
+import { useEnergeticSwap } from './energeticSwap';
 import { useIcePicker } from './icePicker';
 
 // Peças visuais usadas em mais de uma página do site.
@@ -222,6 +223,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
   const name = ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
   const askIce = product.iceRequired && !product.soldOut;
   const note = comboNote(product.category);
+  const swap = useEnergeticSwap();
   return (
     <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsIce ? 'border-amber-400/50' : 'border-white/10'}`}>
       <div className="flex items-center gap-3">
@@ -266,6 +268,16 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
           Obs: {note}
         </p>
       )}
+      {note && swap.available && (
+        <button
+          type="button"
+          data-swap-energetic=""
+          onClick={swap.open}
+          className="mt-2 w-full rounded-xl border border-[#2563FF]/60 bg-[#145CFF]/15 px-3 py-2.5 text-xs font-extrabold tracking-wide text-white transition-colors hover:bg-[#145CFF]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        >
+          QUERO TROCAR O ENERGÉTICO
+        </button>
+      )}
       {/* O gelo escolhido, na largura toda da linha (alinhado ao texto, depois da foto): cabe inteiro até em celular pequeno. */}
       {askIce && (
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[4.75rem]">
@@ -304,6 +316,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
 // Aviso que aparece logo depois de adicionar um produto com observação (os combos). Não rouba o foco, o leitor de tela o anuncia
 // (role="status") e dá para fechar; some sozinho depois de alguns segundos. Fica acima da barra "Ver pedido".
 export function AddNotice({ notice, onClose }: { notice: { id: number; text: string } | null; onClose: () => void }) {
+  const swap = useEnergeticSwap();
   return (
     <div role="status" className="pointer-events-none fixed inset-x-0 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-[45] flex justify-center px-4">
       {notice && (
@@ -316,6 +329,19 @@ export function AddNotice({ notice, onClose }: { notice: { id: number; text: str
           <p className="min-w-0 flex-1">
             <strong className="block text-white">Combo adicionado ao pedido.</strong>
             <span className="font-semibold">Obs: {notice.text}</span>
+            {swap.available && (
+              <button
+                type="button"
+                data-swap-energetic=""
+                onClick={() => {
+                  onClose();
+                  swap.open();
+                }}
+                className="mt-2.5 block w-full rounded-xl bg-[#145CFF] px-3 py-2.5 text-xs font-extrabold tracking-wide text-white transition-colors hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                QUERO TROCAR O ENERGÉTICO
+              </button>
+            )}
           </p>
           <button
             type="button"

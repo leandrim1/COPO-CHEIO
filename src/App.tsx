@@ -27,6 +27,7 @@ import { CheckoutPage } from './site/Checkout';
 import type { CustomerPage } from './site/CustomerPages';
 import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
 import type { Product } from './site/data';
+import { EnergeticSwapProvider } from './site/EnergeticSwap';
 import { IcePickerProvider } from './site/IceChoice';
 import { useIcePicker } from './site/icePicker';
 import {
@@ -1924,25 +1925,27 @@ function PublicSite({ pathname }: { pathname: string }) {
 
   return (
     <IcePickerProvider>
-      <style>
-        {MOTION_STYLES}
-        {VIEWPORT_STYLES}
-      </style>
-      {page.name === 'bebidas' && <BebidasPage />}
-      {page.name === 'checkout' && <CheckoutPage />}
-      {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
-      {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
-        <Suspense fallback={<CustomerLoading />}>
-          <CustomerPages page={page} />
-        </Suspense>
-      )}
-      {showOrder && (
-        <>
-          {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
-          <AddNotice notice={orderOpen ? null : cart.notice} onClose={cart.dismissNotice} />
-          <OrderDrawer open={orderOpen} onClose={closeOrder} />
-        </>
-      )}
+      <EnergeticSwapProvider>
+        <style>
+          {MOTION_STYLES}
+          {VIEWPORT_STYLES}
+        </style>
+        {page.name === 'bebidas' && <BebidasPage />}
+        {page.name === 'checkout' && <CheckoutPage />}
+        {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
+        {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
+          <Suspense fallback={<CustomerLoading />}>
+            <CustomerPages page={page} />
+          </Suspense>
+        )}
+        {showOrder && (
+          <>
+            {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
+            <AddNotice notice={orderOpen ? null : cart.notice} onClose={cart.dismissNotice} />
+            <OrderDrawer open={orderOpen} onClose={closeOrder} />
+          </>
+        )}
+      </EnergeticSwapProvider>
     </IcePickerProvider>
   );
 }

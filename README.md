@@ -200,6 +200,13 @@ produto e envie a foto.
   precisa ser menor que o preço, e o fim depois do início. Produto com nome e categoria repetidos pede confirmação antes de salvar.
 - **Entrega**: taxa única, ou taxa por bairro (*Configurações → Entrega → Taxa por bairro*). Com bairros cadastrados,
   o cliente escolhe o bairro numa lista.
+- **Combos (trocar o energético)**: nos produtos da categoria **Combos** (achada pelo NOME, sem diferenciar acento nem maiúsculas; "Combos de
+  cerveja" e outras **não** contam), ao adicionar aparece o aviso "Combo adicionado ao pedido. Obs: CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A
+  DIFERENÇA." (fecha no X e some sozinho); a mesma observação fica na linha do combo na gaveta do pedido e no checkout. O botão **QUERO TROCAR O
+  ENERGÉTICO** (no aviso e na linha do combo) abre a lista com **todos os produtos da categoria "Energéticos"** (nome que começa com "Energético(s)";
+  "Copão com Energético…" não entra), cada um com "Adicionar" ao pedido. O energético escolhido entra como item próprio, pelo preço dele: o site
+  **não calcula nem desconta a diferença** (o Energético do combo continua no combo; o acerto é feito pela loja). Sem categoria de energéticos o botão não aparece. Os textos
+  ficam no código (`src/lib/combo.ts`); não há campo no painel nem mudança no banco.
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo). A chave PIX
   (opcional) aparece para o cliente depois do pedido. O **Pix online** (pagar pelo site) tem a base pronta, mas está **desligado e sem
   operadora conectada**: veja o item abaixo.
