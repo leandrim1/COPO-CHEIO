@@ -2,9 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
-import { comboNote } from '../lib/combo';
+import { comboNote, swapBaseOf, swapDifference, swapStillValid } from '../lib/combo';
 import { isOpenNow } from '../lib/hours';
-import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, settleCart } from '../lib/ice';
+import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, setProductTotal, settleCart, swapUnits } from '../lib/ice';
 import type { Cart, IceChoice } from '../lib/ice';
 import type { Banner, Category, DayHours, DayKey, DeliveryZone, HeroSettings, OpeningHours, PaymentOption, SiteSettings, StoreSettings } from '../lib/types';
 
@@ -23,6 +23,8 @@ export type Product = {
   position: number;
   // A categoria do produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido.
   iceRequired: boolean;
+  // Combos: o energético que vem no produto (o painel define). Sem ele o produto não aceita a troca de energético.
+  swapBaseId: string | null;
 };
 
 export const unitPrice = (p: Product) => p.promoPrice ?? p.price;
@@ -137,10 +139,13 @@ function readCache(): ShopData | null {
     if (!isObject(parsed) || !isObject(parsed.store) || !isObject(parsed.site) || !isObject(parsed.hero) || !Array.isArray(parsed.products)) return null;
     // A cópia salva passa pelas mesmas conferências da resposta da API (um formato antigo ou corrompido não derruba a página).
     const content = normalizeContent({ ...parsed, cover_banners: parsed.coverBanners });
-    const products = (parsed.products as unknown[]).filter(
-      (p): p is Product =>
-        isObject(p) && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.price)) && typeof p.category === 'string' && typeof p.iceRequired === 'boolean',
-    );
+    const products = (parsed.products as unknown[])
+      .filter(
+        (p): p is Product =>
+          isObject(p) && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.price)) && typeof p.category === 'string' && typeof p.iceRequired === 'boolean',
+      )
+      // A cópia salva por uma versão de antes da troca de energético não tem esse campo.
+      .map((p) => ({ ...p, swapBaseId: typeof p.swapBaseId === 'string' ? p.swapBaseId : null }));
     return { ...EMPTY, ...content, products };
   } catch {
     return null;
@@ -158,6 +163,7 @@ type ProductRowFromDb = {
   featured: boolean;
   sold_out: boolean;
   position: number;
+  swap_base_product_id?: string | null;
 };
 
 function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[] {
@@ -179,6 +185,7 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         soldOut: row.sold_out,
         position: row.position,
         iceRequired: category?.ice_choice_required === true,
+        swapBaseId: typeof row.swap_base_product_id === 'string' ? row.swap_base_product_id : null,
       };
     })
     .sort(
@@ -253,12 +260,17 @@ function useShopData() {
 
 const CART_KEY = 'copocheio:pedido';
 
-// Uma linha do pedido é "produto + gelo". Produto que não pede o gelo tem `ice: null` e a chave é só o id (o formato de sempre).
+// Uma linha do pedido é "produto + gelo" ou "combo + energético trocado". Produto que não pede o gelo, sem troca, tem `ice: null` e a chave
+// é só o id (o formato de sempre).
 export type CartLine = {
   key: string;
   product: Product;
   qty: number;
   ice: IceChoice | null;
+  // Combo com o energético trocado: o energético escolhido (o preço da linha já leva a diferença).
+  swap: Product | null;
+  // Preço de UMA unidade desta linha, em reais (o produto; no combo trocado, o combo + a diferença).
+  unit: number;
   // O produto pede o gelo e a linha está sem escolha (ex.: pedido guardado antes de existir a pergunta): precisa escolher.
   needsIce: boolean;
 };
@@ -274,7 +286,7 @@ function loadCart(): Cart {
 function useCart(products: Product[], ready: boolean) {
   const [cart, setCart] = useState<Cart>(loadCart);
   // Aviso que aparece depois de adicionar um produto que tem observação (hoje, os combos); some sozinho.
-  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ id: number; text: string; productId: string } | null>(null);
   useEffect(() => {
     if (!notice) return;
     const timer = window.setTimeout(() => setNotice(null), 9000);
@@ -286,7 +298,8 @@ function useCart(products: Product[], ready: boolean) {
   useEffect(() => {
     if (!ready) return;
     const byId = new Map(products.map((p) => [p.id, p.iceRequired]));
-    setCart((prev) => settleCart(prev, (id) => byId.get(id)));
+    // A troca de energético de uma linha só vale se o combo ainda tem energético definido e o novo ainda existe (e é de 2L).
+    setCart((prev) => settleCart(prev, (id) => byId.get(id), (id, swapTo) => swapStillValid(products, id, swapTo)));
   }, [products, ready]);
 
   useEffect(() => {
@@ -304,8 +317,14 @@ function useCart(products: Product[], ready: boolean) {
   // Chamado pelos cartões de produto quando a pessoa aumenta a quantidade: se o produto tem observação (hoje, os combos), mostra o aviso.
   const announce = useCallback((product: Product) => {
     const text = comboNote(product.category);
-    if (text) setNotice({ id: Date.now(), text });
+    if (text) setNotice({ id: Date.now(), text, productId: product.id });
   }, []);
+  // Pedir de novo: o combo já com o energético trocado (se a troca ainda vale; senão o chamador põe o combo normal).
+  const addSwapped = useCallback((product: Product, swapTo: string, qty = 1) => setCart((prev) => swapUnits(addToCart(prev, product.id, null, qty), product.id, swapTo, qty)), []);
+  // Combo: passa `delta` unidades entre o energético que vem nele (delta < 0 volta a ele) e o energético `energeticId` (delta > 0).
+  const swapBy = useCallback((productId: string, energeticId: string, delta: number) => setCart((prev) => swapUnits(prev, productId, energeticId, delta)), []);
+  // O contador do cartão do produto (soma todas as linhas do produto): aumentar entra na linha normal; diminuir tira primeiro dela.
+  const setTotal = useCallback((productId: string, total: number) => setCart((prev) => setProductTotal(prev, productId, total)), []);
   // Troca o gelo de uma linha que já está no pedido (a quantidade vai junto).
   const changeIce = useCallback((key: string, ice: IceChoice) => setCart((prev) => changeLineIce(prev, key, ice)), []);
   const clear = useCallback(() => setCart({}), []);
@@ -313,28 +332,36 @@ function useCart(products: Product[], ready: boolean) {
   const countOf = useCallback((productId: string) => countFor(cart, productId), [cart]);
 
   const lines: CartLine[] = useMemo(() => {
-    const byProduct = new Map<string, { key: string; qty: number; ice: IceChoice | null }[]>();
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const byProduct = new Map<string, { key: string; qty: number; ice: IceChoice | null; swap: Product | null }[]>();
     for (const [key, qty] of Object.entries(cart)) {
       const parsed = parseLineKey(key);
       if (!parsed) continue;
+      const swap = parsed.swapTo ? byId.get(parsed.swapTo) ?? null : null;
+      if (parsed.swapTo && !swap) continue;
       const list = byProduct.get(parsed.productId) ?? [];
-      list.push({ key, qty, ice: parsed.ice });
+      list.push({ key, qty, ice: parsed.ice, swap });
       byProduct.set(parsed.productId, list);
     }
-    // Na ordem do cardápio; do mesmo produto, primeiro a linha sem escolha, depois gelo normal e gelo de sabor.
-    const rank = (ice: IceChoice | null) => (ice === null ? 0 : ice === 'normal' ? 1 : 2);
+    // Na ordem do cardápio; do mesmo produto, primeiro a linha sem escolha, depois gelo normal e gelo de sabor e, por fim, as de energético trocado.
+    const rank = (ice: IceChoice | null, swap: Product | null) => (swap ? 3 : ice === null ? 0 : ice === 'normal' ? 1 : 2);
     return products.flatMap((product) =>
       (byProduct.get(product.id) ?? [])
-        .sort((a, b) => rank(a.ice) - rank(b.ice))
-        .map(({ key, qty, ice }) => ({ key, product, qty, ice, needsIce: product.iceRequired && ice === null })),
+        .sort((a, b) => rank(a.ice, a.swap) - rank(b.ice, b.swap) || (a.swap?.name ?? '').localeCompare(b.swap?.name ?? '', 'pt-BR'))
+        .map(({ key, qty, ice, swap }) => {
+          // O combo trocado custa o combo + a diferença de preço dos energéticos (o banco recalcula igual ao criar o pedido).
+          const base = swap ? swapBaseOf(products, product) : undefined;
+          const unit = swap && base ? (Math.round(unitPrice(product) * 100) + Math.round(swapDifference(swap, base) * 100)) / 100 : unitPrice(product);
+          return { key, product, qty, ice, swap, unit, needsIce: product.iceRequired && ice === null };
+        }),
     );
   }, [products, cart]);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
-  const total = lines.reduce((sum, line) => sum + line.qty * unitPrice(line.product), 0);
-  const unavailable = lines.filter((line) => line.product.soldOut);
+  const total = lines.reduce((sum, line) => sum + Math.round(line.unit * 100) * line.qty, 0) / 100;
+  const unavailable = lines.filter((line) => line.product.soldOut || line.swap?.soldOut === true);
   const incomplete = lines.filter((line) => line.needsIce);
 
-  return { cart, setQty, add, changeIce, countOf, clear, lines, count, total, unavailable, incomplete, notice, announce, dismissNotice };
+  return { cart, setQty, add, addSwapped, swapBy, setTotal, changeIce, countOf, clear, lines, count, total, unavailable, incomplete, notice, announce, dismissNotice };
 }
 
 // ---- Contexto ---------------------------------------------------------------------------------

@@ -200,13 +200,24 @@ produto e envie a foto.
   precisa ser menor que o preço, e o fim depois do início. Produto com nome e categoria repetidos pede confirmação antes de salvar.
 - **Entrega**: taxa única, ou taxa por bairro (*Configurações → Entrega → Taxa por bairro*). Com bairros cadastrados,
   o cliente escolhe o bairro numa lista.
-- **Combos (trocar o energético)**: nos produtos da categoria **Combos** (achada pelo NOME, sem diferenciar acento nem maiúsculas; "Combos de
-  cerveja" e outras **não** contam), ao adicionar aparece o aviso "Combo adicionado ao pedido. Obs: CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A
-  DIFERENÇA." (fecha no X e some sozinho); a mesma observação fica na linha do combo na gaveta do pedido e no checkout. O botão **QUERO TROCAR O
-  ENERGÉTICO** (no aviso e na linha do combo) abre a lista só com os **energéticos de 2L** (produto de uma categoria "Energéticos" ou com o nome começando por
-  "Energético" e com "2L" no nome — "2 L", "2 litros" ou "2000ml"; 473 ml, 2,5L, refrigerantes, copões e combos ficam de fora), cada um com "Adicionar" ao pedido. O energético escolhido entra como item próprio, pelo preço dele: o site
-  **não calcula nem desconta a diferença** (o Energético do combo continua no combo; o acerto é feito pela loja). Sem nenhum energético de 2L o botão não aparece. Os textos
-  ficam no código (`src/lib/combo.ts`); não há campo no painel nem mudança no banco.
+- **Combos (trocar o energético, pagando só a diferença)**: nos produtos da categoria **Combos** (achada pelo NOME, sem diferenciar acento nem
+  maiúsculas; "Combos de cerveja" e outras **não** contam), ao adicionar aparece o aviso "Combo adicionado ao pedido. Obs: CASO QUEIRAM TROCAR O
+  ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA." (fecha no X e some sozinho); a mesma observação fica na linha do combo na gaveta do pedido e no checkout.
+  - *Qual energético vem no combo*: cada combo guarda o **energético que vem nele** (`products.swap_base_product_id`; no painel, em *Produtos →
+    editar o combo → "Energético que vem neste combo"*). A migration `0017` já preenche isso uma vez, procurando no nome do combo o energético de 2L
+    cujo nome aparece nele (ex.: "…1 Energético Jack Power 2L" → *Energético Jack Power 2L*); **confira cada combo no painel**. Combo sem energético
+    definido não aceita troca (o botão não aparece).
+  - *O botão QUERO TROCAR O ENERGÉTICO* (no aviso e na linha do combo) abre a lista só com os **energéticos de 2L** (produto de uma categoria
+    "Energéticos" ou com o nome começando por "Energético", e com "2L" no nome — "2 L", "2 litros" ou "2000ml"; 473 ml, 2,5L, refrigerantes, copões e
+    combos ficam de fora; o que já vem no combo também). Cada um mostra **+ R$ da diferença por combo**; **Trocar** passa UMA unidade do combo para
+    o energético novo (o botão vira um contador para trocar mais ou voltar atrás). Na gaveta e no checkout o combo trocado mostra o energético e a
+    diferença, com "Alterar" e "Voltar ao original".
+  - *A conta*: o combo trocado custa **preço do combo + max(0, preço do energético novo − preço do que vem no combo)**, com as promoções em vigor dos
+    dois; se o novo for igual ou mais barato, a diferença é zero (não há desconto nem devolução). O preço **nunca fica abaixo do combo sem troca**.
+  - *Quem calcula*: o **banco** (`create_order`), como todo o preço do pedido; o site só manda qual energético o cliente escolheu em cada linha
+    (`swap_to`). Troca em produto que não tem energético definido, energético que não é de 2L, esgotado, desativado, igual ao do combo ou sem estoque
+    é recusada, mesmo numa requisição feita direto à API. O pedido grava "…— troca do energético por X (+ R$ 2,00)", o estoque do energético novo
+    sai (e volta ao cancelar) e "pedir de novo" traz a troca de volta (se ainda valer).
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo). A chave PIX
   (opcional) aparece para o cliente depois do pedido. O **Pix online** (pagar pelo site) tem a base pronta, mas está **desligado e sem
   operadora conectada**: veja o item abaixo.
@@ -633,6 +644,10 @@ A migration `0013_ice_choice.sql` acrescenta `categories.ice_choice_required` e 
 grava a escolha do gelo) e `order_json` (a escolha chega ao cliente) e marca as categorias "Copão" e "Copão com Monster". É a única
 migration que **escreve um dado** (um `UPDATE` que liga a marca nessas duas categorias, achadas pelo nome só nesse momento); nenhum
 pedido, produto, preço ou estoque é alterado.
+A migration `0017_energetic_swap.sql` acrescenta `products.swap_base_product_id` (o energético que vem no combo; preenchida uma vez pelo nome),
+`order_items.swap_to_product_id` e funções de apoio (`norm_text`, `is_energetic_2l`...), e troca `create_order` (entende `swap_to` em cada item),
+`restore_order_stock` (devolve também o energético da troca) e `order_json` por versões iguais para tudo o que já existe: pedido sem troca se comporta
+exatamente como antes.
 A migration `0016_commission_2_percent.sql` troca a taxa da comissão de 5% para **2%** (só a função `payment_commission_bps()`; cobranças já criadas
 mantêm a taxa de quando nasceram).
 A migration `0015_merchant_account_flow.sql` acrescenta `merchant_accounts.ambiguous`, o índice que só deixa existir um cadastro de conta ativo por
@@ -643,7 +658,7 @@ A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
 operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
 [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
-As migrations 0009 a 0016 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0017 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado

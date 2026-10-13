@@ -2,6 +2,7 @@ import { Check, ChevronDown, Info, LoaderCircle, LogOut, Mail, RefreshCw, Shoppi
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
+import { swapStillValid } from '../lib/combo';
 import { maskPhone, onlyDigits } from '../lib/format';
 import { isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
@@ -898,7 +899,7 @@ export function MyOrderPage({ number }: { number: string }) {
       throw err;
     }
   });
-  const [again, setAgain] = useState<{ added: number; missing: string[] } | null>(null);
+  const [again, setAgain] = useState<{ added: number; missing: string[]; swapLost: string[] } | null>(null);
 
   if (status !== 'in' || feed.state === 'loading') {
     return (
@@ -925,6 +926,7 @@ export function MyOrderPage({ number }: { number: string }) {
   // Repete a compra com o que ainda está à venda.
   const orderAgain = () => {
     const missing: string[] = [];
+    const swapLost: string[] = [];
     let added = 0;
     for (const item of order.items) {
       const product = products.find((p) => p.id === item.product_id);
@@ -932,12 +934,22 @@ export function MyOrderPage({ number }: { number: string }) {
         missing.push(item.product_name);
         continue;
       }
+      // Combo com o energético trocado: volta com a troca se ela ainda vale; senão entra o combo normal e a pessoa é avisada.
+      if (item.swap_to_product_id) {
+        const swapTo = products.find((p) => p.id === item.swap_to_product_id);
+        if (swapTo && !swapTo.soldOut && swapStillValid(products, product.id, swapTo.id)) {
+          cart.addSwapped(product, swapTo.id, item.quantity);
+          added += 1;
+          continue;
+        }
+        swapLost.push(product.name);
+      }
       // O gelo escolhido naquele pedido vai junto; um pedido de antes da pergunta volta sem escolha e o checkout pede.
       cart.add(product, isIceChoice(item.ice_choice) ? item.ice_choice : null, item.quantity);
       added += 1;
     }
-    if (!missing.length && added) navigate('/checkout');
-    else setAgain({ added, missing });
+    if (!missing.length && !swapLost.length && added) navigate('/checkout');
+    else setAgain({ added, missing, swapLost });
   };
 
   return (
@@ -954,6 +966,7 @@ export function MyOrderPage({ number }: { number: string }) {
           {again && (
             <div role="status" className="mt-4 space-y-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
               {again.missing.length > 0 && <p>Estes itens não estão mais disponíveis: {again.missing.join(', ')}.</p>}
+              {again.swapLost.length > 0 && <p>A troca de energético não está mais disponível em: {again.swapLost.join(', ')}. O combo entrou com o energético original.</p>}
               {again.added > 0 ? (
                 <>
                   <p>Os outros {again.added} {again.added === 1 ? 'item foi adicionado' : 'itens foram adicionados'} ao seu pedido.</p>

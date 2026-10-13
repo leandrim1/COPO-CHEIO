@@ -28,10 +28,10 @@ test('só "normal" e "flavored" valem como escolha', () => {
 test('chave da linha: produto sem gelo é só o id (o formato de sempre); com gelo, id:gelo', () => {
   assert.equal(ice.lineKey(A, null), A);
   assert.equal(ice.lineKey(A, 'normal'), `${A}:normal`);
-  assert.deepEqual(ice.parseLineKey(A), { productId: A, ice: null });
-  assert.deepEqual(ice.parseLineKey(`${A}:flavored`), { productId: A, ice: 'flavored' });
+  assert.deepEqual(ice.parseLineKey(A), { productId: A, ice: null, swapTo: null });
+  assert.deepEqual(ice.parseLineKey(`${A}:flavored`), { productId: A, ice: 'flavored', swapTo: null });
   for (const bad of ['', ':normal', `${A}:banana`, `${A}:`]) assert.equal(ice.parseLineKey(bad), null, bad);
-  for (const choice of [null, 'normal', 'flavored']) assert.deepEqual(ice.parseLineKey(ice.lineKey(B, choice)), { productId: B, ice: choice });
+  for (const choice of [null, 'normal', 'flavored']) assert.deepEqual(ice.parseLineKey(ice.lineKey(B, choice)), { productId: B, ice: choice, swapTo: null });
 });
 
 test('o pedido guardado de antes continua valendo e o lixo é descartado', () => {
@@ -103,4 +103,56 @@ test('depois de carregar o cardápio: sai o que não existe mais e o gelo acompa
   // Produto de categoria que não pede, vindo com gelo de um pedido antigo, volta a ser o produto puro
   assert.deepEqual(ice.settleCart({ [`${B}:normal`]: 2 }, requires), { [B]: 2 });
   assert.deepEqual(ice.settleCart({ [A]: 1 }, () => undefined), {}, 'cardápio sem o produto: tudo sai');
+});
+
+// ---- Troca de energético (combos) ------------------------------------------------------------------
+const C = 'cccccccc-cccc-cccc-cccc-cccccccccccc'; // combo
+const E1 = 'e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1'; // energético
+const E2 = 'e2e2e2e2-e2e2-e2e2-e2e2-e2e2e2e2e2e2';
+
+test('chave da linha trocada: id-do-combo@id-do-energético', () => {
+  assert.equal(ice.lineKey(C, null, E1), `${C}@${E1}`);
+  assert.deepEqual(ice.parseLineKey(`${C}@${E1}`), { productId: C, ice: null, swapTo: E1 });
+  for (const bad of [`${C}@`, `@${E1}`, `${C}@${E1}@${E2}`, `${C}@${E1}:normal`, `${C}:normal@${E1}`]) assert.equal(ice.parseLineKey(bad), null, bad);
+  assert.deepEqual(ice.normalizeCart({ [`${C}@${E1}`]: 2, [C]: 1, [`${C}@`]: 3 }), { [`${C}@${E1}`]: 2, [C]: 1 }, 'a linha trocada sobrevive ao recarregar; a chave quebrada é descartada');
+});
+
+test('trocar e voltar: cada unidade trocada é uma unidade do combo (o total do produto não muda)', () => {
+  const start = { [C]: 3 };
+  const one = ice.swapUnits(start, C, E1, 1);
+  assert.deepEqual(one, { [C]: 2, [`${C}@${E1}`]: 1 });
+  assert.equal(ice.countFor(one, C), 3, 'o contador do cartão do combo continua 3');
+  const two = ice.swapUnits(one, C, E2, 2);
+  assert.deepEqual(two, { [`${C}@${E1}`]: 1, [`${C}@${E2}`]: 2 }, 'a linha normal some quando zera');
+  assert.deepEqual(ice.swapUnits(two, C, E1, 1), two, 'não há mais unidade normal para trocar: nada muda');
+  const back = ice.swapUnits(two, C, E2, -1);
+  assert.deepEqual(back, { [C]: 1, [`${C}@${E1}`]: 1, [`${C}@${E2}`]: 1 });
+  assert.deepEqual(ice.swapUnits(back, C, E2, -5), { [C]: 2, [`${C}@${E1}`]: 1 }, 'voltar mais do que há só devolve o que há');
+  assert.deepEqual(ice.swapUnits(start, C, E1, -1), start, 'nada trocado para voltar');
+  assert.deepEqual(ice.swapUnits(start, C, E1, 5), { [`${C}@${E1}`]: 3 }, 'trocar mais do que há só troca o que há');
+  assert.equal(ice.plainCount(one, C), 2);
+  assert.equal(ice.swappedCount(one, C, E1), 1);
+  assert.equal(ice.swappedCount(one, C, E2), 0);
+});
+
+test('o contador do cartão (total do produto): aumentar entra na linha normal; diminuir tira primeiro dela', () => {
+  const cart = { [C]: 1, [`${C}@${E1}`]: 2 };
+  assert.deepEqual(ice.setProductTotal(cart, C, 4), { [C]: 2, [`${C}@${E1}`]: 2 });
+  assert.deepEqual(ice.setProductTotal(cart, C, 2), { [`${C}@${E1}`]: 2 }, 'a linha normal sai primeiro');
+  assert.deepEqual(ice.setProductTotal(cart, C, 1), { [`${C}@${E1}`]: 1 }, 'depois as trocadas');
+  assert.deepEqual(ice.setProductTotal(cart, C, 0), {});
+  assert.equal(ice.setProductTotal(cart, C, 3), cart, 'sem mudança devolve o mesmo objeto');
+  assert.deepEqual(ice.setProductTotal({ [`${A}:normal`]: 1, [`${A}:flavored`]: 2, [A]: 1 }, A, 3), { [`${A}:normal`]: 1, [`${A}:flavored`]: 2 }, 'com gelos: tira primeiro a linha sem escolha, depois os gelos');
+  assert.equal(ice.countFor(ice.setProductTotal({ [`${A}:normal`]: 1 }, A, 99), A), 99);
+});
+
+test('depois que o cardápio chega: a troca que não vale mais volta a ser o combo normal', () => {
+  const cart = { [C]: 1, [`${C}@${E1}`]: 2, [`${C}@${E2}`]: 1 };
+  const known = (id) => (id === C ? false : undefined);
+  const keep = ice.settleCart(cart, known, () => true);
+  assert.equal(keep, cart, 'tudo vale: o mesmo objeto');
+  const dropE2 = ice.settleCart(cart, known, (_id, to) => to === E1);
+  assert.deepEqual(dropE2, { [C]: 2, [`${C}@${E1}`]: 2 }, 'a troca para o energético que sumiu volta ao combo normal (soma na linha normal)');
+  assert.deepEqual(ice.settleCart(cart, known, () => false), { [C]: 4 }, 'combo sem energético definido: todas voltam');
+  assert.deepEqual(ice.settleCart({ [`${C}@${E1}`]: 1 }, () => undefined, () => true), {}, 'combo que saiu do cardápio: a linha sai');
 });

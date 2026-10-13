@@ -2,6 +2,7 @@ import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, P
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
+import { comboNote, isEnergetico2L } from '../lib/combo';
 import { isoToLocal, localToIso, money, moneyInput, normalizeText, parseMoney, promoState } from '../lib/format';
 import { navigate } from '../lib/router';
 import type { Category, ProductRecord } from '../lib/types';
@@ -650,6 +651,8 @@ type Form = {
   promoFrom: string;
   promoUntil: string;
   category_id: string;
+  // Combos: o id do energético que vem no produto ('' = nenhum, o produto não aceita a troca de energético).
+  swap_base: string;
   sku: string;
   trackStock: boolean;
   stock: string;
@@ -668,6 +671,7 @@ const EMPTY_FORM: Form = {
   promoFrom: '',
   promoUntil: '',
   category_id: '',
+  swap_base: '',
   sku: '',
   trackStock: false,
   stock: '',
@@ -685,6 +689,8 @@ export function ProductFormPage({ id }: { id: string }) {
   const [original, setOriginal] = useState<ProductRecord | null>(null);
   const [form, setForm] = useState<Form | null>(isNew ? EMPTY_FORM : null);
   const [categories, setCategories] = useState<Category[]>([]);
+  // Todos os produtos: a lista de energéticos de 2L para escolher o que vem num combo.
+  const [allProducts, setAllProducts] = useState<ProductRecord[]>([]);
   const [errors, setErrors] = useState<Partial<Record<keyof Form, string>>>({});
   const [saving, setSaving] = useState(false);
   const [missing, setMissing] = useState(false);
@@ -705,6 +711,13 @@ export function ProductFormPage({ id }: { id: string }) {
       }
       if (!alive) return;
       setCategories(categories);
+      try {
+        const all = await api.get<{ products: ProductRecord[] }>('/api/admin/products');
+        if (alive) setAllProducts(all.products);
+      } catch {
+        /* sem a lista, só não dá para escolher o energético do combo agora */
+      }
+      if (!alive) return;
       if (isNew) {
         const first = categories[0];
         setForm((f) => (f && !f.category_id && first ? { ...f, category_id: first.id } : f));
@@ -723,6 +736,7 @@ export function ProductFormPage({ id }: { id: string }) {
         promoFrom: isoToLocal(product.promo_starts_at),
         promoUntil: isoToLocal(product.promo_ends_at),
         category_id: product.category_id ?? '',
+        swap_base: product.swap_base_product_id ?? '',
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
         stock: product.stock === null ? '' : String(product.stock),
@@ -750,6 +764,11 @@ export function ProductFormPage({ id }: { id: string }) {
     setForm((f) => (f ? { ...f, [key]: value } : f));
     setErrors((e) => ({ ...e, [key]: undefined }));
   };
+
+  // O campo do energético aparece nos produtos da categoria "Combos" (e em qualquer produto que já tenha um definido, para poder limpar).
+  const categoryOf = (categoryId: string | null) => categories.find((c) => c.id === categoryId)?.name ?? '';
+  const swapChoices = allProducts.filter((p) => !isNew && p.id === id ? false : isEnergetico2L({ name: p.name, category: categoryOf(p.category_id) }));
+  const swapOptionsVisible = comboNote(categoryOf(form.category_id || null)) !== null || form.swap_base !== '';
 
   const createCategory = async () => {
     const name = newCategory?.trim();
@@ -806,6 +825,7 @@ export function ProductFormPage({ id }: { id: string }) {
       promo_starts_at: promo === null ? null : promoFrom,
       promo_ends_at: promo === null ? null : promoUntil,
       category_id: form.category_id || null,
+      swap_base_product_id: form.swap_base || null,
       sku: form.sku.trim() || null,
       stock,
       featured: form.featured,
@@ -942,6 +962,24 @@ export function ProductFormPage({ id }: { id: string }) {
                   )
                 }
               </Field>
+              {swapOptionsVisible && (
+                <Field
+                  label="Energético que vem neste combo"
+                  className="sm:col-span-2"
+                  hint="Os clientes poderão trocá-lo por outro energético de 2L, pagando só a diferença de preço (o site e o servidor calculam). Sem energético escolhido, o combo não aceita troca."
+                >
+                  {(p) => (
+                    <select {...p} value={form.swap_base} onChange={(e) => set('swap_base', e.target.value)} className={INPUT}>
+                      <option value="">Nenhum (não aceita troca)</option>
+                      {swapChoices.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.name} · {moneyInput(Number(choice.promo_price ?? choice.price))}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+              )}
               <Field label="SKU (opcional)" count={form.sku.length} max={40}>
                 {(p) => <input {...p} value={form.sku} maxLength={40} onChange={(e) => set('sku', e.target.value)} className={INPUT} />}
               </Field>

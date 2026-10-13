@@ -27,7 +27,8 @@ export function registerPublic(r: Router) {
         `select p.id, p.category_id, p.name, p.description, p.price,
                 effective_promo(p.promo_price, p.promo_starts_at, p.promo_ends_at) as promo_price,
                 p.image_url, p.featured,
-                (p.sold_out or (p.stock is not null and p.stock <= 0)) as sold_out, p.position
+                (p.sold_out or (p.stock is not null and p.stock <= 0)) as sold_out, p.position,
+                p.swap_base_product_id
            from products p
            left join categories c on c.id = p.category_id
           where p.active and (p.category_id is null or c.active)

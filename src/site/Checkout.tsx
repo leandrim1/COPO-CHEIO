@@ -11,7 +11,7 @@ import { rememberOrder } from '../lib/recent';
 import { navigate } from '../lib/router';
 import type { DeliveryType, PaymentMethod, PublicOrder } from '../lib/types';
 import { useCustomer } from './customer';
-import { fullAddress, unitPrice, useShop } from './data';
+import { fullAddress, useShop } from './data';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
 
@@ -135,7 +135,11 @@ const forgetOrderKey = () => {
 // O que o servidor respondeu quando o valor do pedido mudou entre a tela e o envio (409 price_changed).
 type PriceNotice = { previous: number; current: number; changes: string[] };
 
-type PriceChangedBody = { total?: number | string; delivery_fee?: number | string; items?: { product_id: string; name: string; quantity: number; unit_price: number | string }[] };
+type PriceChangedBody = {
+  total?: number | string;
+  delivery_fee?: number | string;
+  items?: { product_id: string; name: string; quantity: number; unit_price: number | string; ice_choice?: string | null; swap_to?: string | null }[];
+};
 
 export function CheckoutPage() {
   const { store, zones, payments, cart, isOpen, fresh, offline, refresh } = useShop();
@@ -178,7 +182,7 @@ export function CheckoutPage() {
   const zone = zones.find((z) => z.name.trim().toLowerCase() === form.neighborhood.trim().toLowerCase());
   const fee = delivery === 'delivery' ? (zones.length ? (zone?.fee ?? null) : store.delivery_fee) : 0;
   const total = subtotal + (fee ?? 0);
-  const totalCents = lines.reduce((sum, line) => sum + Math.round(unitPrice(line.product) * 100) * line.qty, 0) + Math.round((fee ?? 0) * 100);
+  const totalCents = lines.reduce((sum, line) => sum + Math.round(line.unit * 100) * line.qty, 0) + Math.round((fee ?? 0) * 100);
   const belowMinimum = delivery === 'delivery' && store.min_order > 0 && subtotal < store.min_order;
 
   const set = <K extends keyof Customer>(key: K, value: Customer[K]) => {
@@ -302,8 +306,14 @@ export function CheckoutPage() {
       payment_method: payment,
       change_for: change === null ? null : change.toFixed(2),
       notes: form.notes.trim(),
-      // A escolha do gelo vai junto de cada item que a pede (o servidor confere de novo).
-      items: lines.map((line) => ({ product_id: line.product.id, quantity: line.qty, ...(line.product.iceRequired ? { ice_choice: line.ice } : {}) })),
+      // A escolha do gelo vai junto de cada item que a pede e o energético escolhido numa troca de combo vai em "swap_to" (o servidor
+      // confere tudo de novo e calcula a diferença de preço).
+      items: lines.map((line) => ({
+        product_id: line.product.id,
+        quantity: line.qty,
+        ...(line.product.iceRequired ? { ice_choice: line.ice } : {}),
+        ...(line.swap ? { swap_to: line.swap.id } : {}),
+      })),
     };
     // O total que a pessoa está vendo (ou o novo total que ela acabou de aceitar), em centavos para não errar na soma.
     const seenTotal = priceNotice ? priceNotice.current : totalCents / 100;
@@ -322,12 +332,12 @@ export function CheckoutPage() {
       if (error instanceof ApiError && error.status === 409 && error.code === 'price_changed') {
         // Nada foi enviado: o valor mudou (preço, promoção ou taxa) e a pessoa precisa ver o novo total antes de confirmar.
         const body = error.data as PriceChangedBody;
-        const byId = new Map((body.items ?? []).map((item) => [item.product_id, Number(item.unit_price)]));
-        // Um produto pode estar em mais de uma linha (gelos diferentes): o aviso de preço sai uma vez por produto.
-        const products = [...new Map(lines.map((line) => [line.product.id, line.product])).values()];
-        const changes = products
-          .filter((product) => byId.has(product.id) && Math.abs((byId.get(product.id) ?? 0) - unitPrice(product)) >= 0.005)
-          .map((product) => `${product.name}: ${money(unitPrice(product))} → ${money(byId.get(product.id) ?? 0)}`);
+        // Uma linha é produto + gelo + energético trocado: o preço novo de cada uma vem do servidor, linha a linha.
+        const keyOf = (productId: string, ice: string | null | undefined, swapTo: string | null | undefined) => `${productId}|${ice ?? ''}|${swapTo ?? ''}`;
+        const byLine = new Map((body.items ?? []).map((item) => [keyOf(item.product_id, item.ice_choice, item.swap_to), Number(item.unit_price)]));
+        const changes = lines
+          .filter((line) => byLine.has(keyOf(line.product.id, line.ice, line.swap?.id)) && Math.abs((byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0) - line.unit) >= 0.005)
+          .map((line) => `${line.product.name}${line.swap ? ` (com ${line.swap.name})` : ''}: ${money(line.unit)} → ${money(byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0)}`);
         if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
         setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
         void refresh(true);

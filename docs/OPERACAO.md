@@ -93,6 +93,8 @@ ressalvas que você precisa conhecer:
    sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
    voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
 
+**A migration 0017 (troca do energético dos combos).** Só acrescenta (duas colunas e funções de apoio) e troca três funções (`create_order`, `restore_order_stock`, `order_json`) por versões iguais para tudo o que já existe: pedido sem troca não muda. Na criação da coluna `products.swap_base_product_id`, ela é **preenchida uma única vez** nos produtos da categoria "Combos", procurando no nome do combo o energético de 2L que ele cita (ex.: "…1 Energético Jack Power 2L"). **Depois do deploy, abra cada combo no painel (Produtos → editar) e confira o campo "Energético que vem neste combo"**: combo sem ele não oferece a troca. Nada mais muda para quem não usa a troca.
+
 **As migrations 0014, 0015 e 0016 (pagamento online).** A 0016 só troca a função que informa a taxa da comissão (de 5% para 2%); cobranças já criadas guardam a taxa com que nasceram. A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
 conta ativo por operadora) e dois desfechos permitidos em `payment_events`. A 0014 segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
 e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
@@ -229,7 +231,7 @@ agendador, então com o site parado ela só roda quando houver movimento.
    e o pedido de teste mostra a escolha em *Pedidos*.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
-7. Depois das migrations 0014 a 0016: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
+7. Depois das migrations 0014 a 0017: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
    variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
 8. Se ligou o Pix online: faça **um pedido de teste no sandbox** da ValidaPay e confira pedido, comissão e histórico antes de usar credenciais de produção.
 

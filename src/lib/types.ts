@@ -87,6 +87,8 @@ export type ProductRecord = {
   // Janela da promoção (vazio = sem limite de data).
   promo_starts_at?: string | null;
   promo_ends_at?: string | null;
+  // Combos: o energético que vem no produto (base da troca de energético com diferença de preço). Vazio = não aceita troca.
+  swap_base_product_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -246,7 +248,7 @@ export type PublicOrder = {
   // Por quantos dias, depois da última atualização, o link continua valendo.
   retention_days: number;
   // product_id só vem para o dono da conta (para "pedir de novo").
-  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null }[];
+  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null; swap_to_product_id?: string | null }[];
   history: { status: OrderStatus; at: string }[];
   // Resumo do pagamento online (só existe quando já houve uma cobrança). Os detalhes vêm de /api/tracking/:código/payment.
   payment?: { method: 'pix'; status: PaymentState; expires_at: string | null; paid_at: string | null; attempt: number };

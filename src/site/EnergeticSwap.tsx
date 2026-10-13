@@ -1,49 +1,60 @@
 import { Minus, Plus, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { COMBO_NOTE, isEnergetico2L } from '../lib/combo';
+import { COMBO_NOTE, canSwap, swapBaseOf, swapDifference, swapOptions } from '../lib/combo';
+import { money } from '../lib/format';
+import { plainCount, swappedCount } from '../lib/ice';
 import { unitPrice, useShop } from './data';
 import type { Product } from './data';
 import { EnergeticSwapContext } from './energeticSwap';
-import { BLUE_BUTTON, ProductImage, ProductPrice, SoldOutBadge } from './ui';
+import { BLUE_BUTTON, ProductImage, SoldOutBadge } from './ui';
 
-// "QUERO TROCAR O ENERGÉTICO" (combos): lista os energéticos de 2L do site, cada um com "Adicionar" ao pedido. O energético escolhido entra
-// no pedido como item próprio, pelo preço dele; o texto da janela repete o aviso dos combos (pagar a diferença).
+// "QUERO TROCAR O ENERGÉTICO" (combos): lista os energéticos de 2L do site. Escolher um troca UMA unidade do combo pelo energético
+// novo (o botão vira um contador para trocar mais ou voltar atrás) e o preço do combo passa a levar a diferença entre os dois
+// energéticos. O banco recalcula tudo ao criar o pedido.
 
-function EnergeticRow({ product, qty, setQty, announce }: { product: Product; qty: number; setQty: (id: string, qty: number) => void; announce: (text: string) => void }) {
-  const name = product.name;
-  const btn = 'grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30';
+const STEP = 'grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30';
+
+function EnergeticRow({ energetic, base, n, available, onSwap }: { energetic: Product; base: Product; n: number; available: number; onSwap: (delta: number) => void }) {
+  const diff = swapDifference(energetic, base);
+  const name = energetic.name;
   return (
-    <li data-energetic={product.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2.5">
+    <li data-energetic={energetic.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2.5">
       <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.4),transparent_75%)]">
-        <ProductImage product={product} padding="p-1" />
+        <ProductImage product={energetic} padding="p-1" />
       </div>
       <div className="min-w-0 flex-1">
         <p className="line-clamp-3 text-sm font-bold leading-tight text-white">{name}</p>
-        <div className="mt-1 text-sm">{product.soldOut ? <SoldOutBadge /> : <ProductPrice product={product} className="text-base" />}</div>
+        {energetic.soldOut ? (
+          <div className="mt-1">
+            <SoldOutBadge />
+          </div>
+        ) : (
+          <p data-swap-diff={diff} className={`mt-1 text-sm font-extrabold ${diff > 0 ? 'text-[#8FB1FF]' : 'text-emerald-300'}`}>
+            {diff > 0 ? `+ ${money(diff)}` : 'Sem diferença'}
+            <span className="ml-1 text-xs font-medium text-white/55">por combo</span>
+          </p>
+        )}
       </div>
-      {product.soldOut ? null : qty === 0 ? (
+      {energetic.soldOut ? null : n === 0 ? (
         <button
           type="button"
-          onClick={() => {
-            setQty(product.id, 1);
-            announce(`${name} adicionado ao pedido.`);
-          }}
-          aria-label={`Adicionar ${name} ao pedido`}
-          className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-full bg-[#145CFF] px-3.5 text-[13px] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-colors hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          disabled={available <= 0}
+          onClick={() => onSwap(1)}
+          aria-label={`Trocar por ${name}${diff > 0 ? `, mais ${money(diff)} por combo` : ', sem diferença de preço'}`}
+          className="inline-flex h-10 shrink-0 items-center justify-center rounded-full bg-[#145CFF] px-3.5 text-[13px] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-colors hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-40"
         >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-          Adicionar
+          Trocar
         </button>
       ) : (
-        <div role="group" aria-label={`Quantidade de ${name}`} className="flex shrink-0 items-center rounded-full border border-[#2563FF]/60 bg-[#145CFF]/15">
-          <button type="button" onClick={() => setQty(product.id, qty - 1)} aria-label={qty === 1 ? `Remover ${name} do pedido` : `Diminuir ${name}`} className={btn}>
+        <div role="group" aria-label={`Combos com ${name}`} className="flex shrink-0 items-center rounded-full border border-[#2563FF]/60 bg-[#145CFF]/15">
+          <button type="button" onClick={() => onSwap(-1)} aria-label={n === 1 ? `Voltar ao energético original (tirar ${name})` : `Diminuir os combos com ${name}`} className={STEP}>
             <Minus className="h-4 w-4" aria-hidden="true" />
           </button>
-          <span className="w-6 text-center text-sm font-bold tabular-nums text-white" data-qty={qty}>
-            {qty}
+          <span className="w-6 text-center text-sm font-bold tabular-nums text-white" data-qty={n}>
+            {n}
           </span>
-          <button type="button" onClick={() => setQty(product.id, qty + 1)} aria-label={`Aumentar ${name}`} className={btn}>
+          <button type="button" disabled={available <= 0} onClick={() => onSwap(1)} aria-label={`Trocar mais um combo por ${name}`} className={STEP}>
             <Plus className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
@@ -52,10 +63,18 @@ function EnergeticRow({ product, qty, setQty, announce }: { product: Product; qt
   );
 }
 
-function EnergeticSheet({ items, onClose }: { items: Product[]; onClose: () => void }) {
-  const { cart } = useShop();
+function EnergeticSheet({ combo, onClose }: { combo: Product; onClose: () => void }) {
+  const { products, cart } = useShop();
   const closeRef = useRef<HTMLButtonElement>(null);
   const [announcement, setAnnouncement] = useState('');
+  const base = swapBaseOf(products, combo);
+  const options = useMemo(
+    () =>
+      swapOptions(products, combo).sort(
+        (a, b) => Number(a.soldOut) - Number(b.soldOut) || (base ? swapDifference(a, base) - swapDifference(b, base) : 0) || unitPrice(a) - unitPrice(b) || a.name.localeCompare(b.name, 'pt-BR'),
+      ),
+    [products, combo, base],
+  );
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -76,7 +95,10 @@ function EnergeticSheet({ items, onClose }: { items: Product[]; onClose: () => v
     };
   }, [onClose]);
 
-  const inOrder = items.reduce((sum, p) => sum + cart.countOf(p.id), 0);
+  if (!base) return null;
+  const plain = plainCount(cart.cart, combo.id);
+  const total = cart.countOf(combo.id);
+  const swapped = options.reduce((sum, p) => sum + swappedCount(cart.cart, combo.id, p.id), 0);
 
   return (
     <div className="fixed inset-0 z-[60]">
@@ -102,15 +124,33 @@ function EnergeticSheet({ items, onClose }: { items: Product[]; onClose: () => v
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
-        <p className="px-5 pb-3 text-sm font-semibold leading-snug text-amber-100 sm:px-6">Energéticos de 2L: escolha o que você quer e toque em Adicionar. Obs: {COMBO_NOTE}</p>
+        <div className="px-5 pb-3 text-sm leading-snug sm:px-6">
+          <p className="font-semibold text-white" data-swap-combo={combo.id}>
+            Vem no combo: <span className="text-[#8FB1FF]">{base.name}</span>
+          </p>
+          <p className="mt-1 text-white/70">Energéticos de 2L: toque em Trocar e pague só a diferença de preço por combo.</p>
+          <p className="mt-1 font-semibold text-amber-100">Obs: {COMBO_NOTE}</p>
+          {total === 0 && <p className="mt-2 font-bold text-rose-200">Este combo não está mais no seu pedido.</p>}
+          {total > 0 && plain === 0 && <p className="mt-2 font-bold text-amber-100">Todos os combos já estão com energético trocado. Diminua um para trocar por outro.</p>}
+        </div>
         <ul className="flex-1 space-y-3 overflow-y-auto px-5 py-2 sm:px-6">
-          {items.map((product) => (
-            <EnergeticRow key={product.id} product={product} qty={cart.countOf(product.id)} setQty={cart.setQty} announce={setAnnouncement} />
+          {options.map((energetic) => (
+            <EnergeticRow
+              key={energetic.id}
+              energetic={energetic}
+              base={base}
+              n={swappedCount(cart.cart, combo.id, energetic.id)}
+              available={plain}
+              onSwap={(delta) => {
+                cart.swapBy(combo.id, energetic.id, delta);
+                setAnnouncement(delta > 0 ? `Um combo trocado por ${energetic.name}.` : `Um combo voltou ao energético ${base.name}.`);
+              }}
+            />
           ))}
         </ul>
         <div className="border-t border-white/10 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-4 sm:px-6">
           <button type="button" onClick={onClose} className={`${BLUE_BUTTON} w-full py-4`}>
-            Pronto{inOrder > 0 ? ` (${inOrder} no pedido)` : ''}
+            Pronto{total > 0 ? ` (${swapped} de ${total} ${total === 1 ? 'combo trocado' : 'combos trocados'})` : ''}
           </button>
         </div>
         <div role="status" aria-live="polite" className="sr-only">
@@ -124,22 +164,14 @@ function EnergeticSheet({ items, onClose }: { items: Product[]; onClose: () => v
 // Uma só lista de energéticos para o site inteiro: o aviso dos combos e a linha do combo no pedido (gaveta e checkout) chamam daqui.
 export function EnergeticSwapProvider({ children }: { children: ReactNode }) {
   const { products } = useShop();
-  const [open, setOpen] = useState(false);
-  const items = useMemo(
-    () =>
-      products
-        .filter((p) => isEnergetico2L(p))
-        .sort((a, b) => Number(a.soldOut) - Number(b.soldOut) || unitPrice(a) - unitPrice(b) || a.name.localeCompare(b.name, 'pt-BR')),
-    [products],
-  );
-  const available = items.length > 0;
-  const api = useMemo(() => ({ open: () => setOpen(true), available }), [available]);
-  const close = useMemo(() => () => setOpen(false), []);
+  const [target, setTarget] = useState<Product | null>(null);
+  const api = useMemo(() => ({ open: (combo: Product) => setTarget(combo), canSwap: (combo: Product) => canSwap(products, combo) }), [products]);
+  const close = useMemo(() => () => setTarget(null), []);
 
   return (
     <EnergeticSwapContext.Provider value={api}>
       {children}
-      {open && available && <EnergeticSheet items={items} onClose={close} />}
+      {target && <EnergeticSheet key={target.id} combo={target} onClose={close} />}
     </EnergeticSwapContext.Provider>
   );
 }

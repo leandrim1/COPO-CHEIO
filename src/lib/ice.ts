@@ -21,22 +21,31 @@ export const isIceChoice = (value: unknown): value is IceChoice => value === 'no
 export const iceLabel = (value: unknown): string => (isIceChoice(value) ? ICE_INFO[value].label : '');
 
 // ---- Carrinho ------------------------------------------------------------------------------------
-// O carrinho é { chave: quantidade }. A chave é o id do produto (produto sem escolha de gelo, o formato de sempre) ou
-// "id-do-produto:normal" / "id-do-produto:flavored" (produto que pede o gelo).
+// O carrinho é { chave: quantidade }. A chave é o id do produto (produto sem escolha de gelo, o formato de sempre),
+// "id-do-produto:normal" / "id-do-produto:flavored" (produto que pede o gelo) ou "id-do-combo@id-do-energético" (combo com o energético
+// trocado: cada unidade trocada é uma unidade do combo, só que com outro energético, e o preço dela leva a diferença).
 
 export type Cart = Record<string, number>;
 
 // Mais do que isso de um mesmo produto (somando todos os gelos) o servidor recusa.
 export const MAX_PER_PRODUCT = 99;
 
-export const lineKey = (productId: string, ice: IceChoice | null): string => (ice ? `${productId}:${ice}` : productId);
+export const lineKey = (productId: string, ice: IceChoice | null, swapTo: string | null = null): string => (swapTo ? `${productId}@${swapTo}` : ice ? `${productId}:${ice}` : productId);
 
-export function parseLineKey(key: string): { productId: string; ice: IceChoice | null } | null {
+export type ParsedKey = { productId: string; ice: IceChoice | null; swapTo: string | null };
+
+export function parseLineKey(key: string): ParsedKey | null {
+  const swapAt = key.indexOf('@');
+  if (swapAt >= 0) {
+    const productId = key.slice(0, swapAt);
+    const swapTo = key.slice(swapAt + 1);
+    return productId && swapTo && !/[@:]/.test(swapTo) && !productId.includes(':') ? { productId, ice: null, swapTo } : null;
+  }
   const at = key.lastIndexOf(':');
-  if (at < 0) return key ? { productId: key, ice: null } : null;
+  if (at < 0) return key ? { productId: key, ice: null, swapTo: null } : null;
   const productId = key.slice(0, at);
   const ice = key.slice(at + 1);
-  return productId && isIceChoice(ice) ? { productId, ice } : null;
+  return productId && isIceChoice(ice) ? { productId, ice, swapTo: null } : null;
 }
 
 export function countFor(cart: Cart, productId: string): number {
@@ -79,7 +88,7 @@ export const setLineQty = (cart: Cart, key: string, qty: number): Cart => put(ca
 export function changeLineIce(cart: Cart, key: string, ice: IceChoice | null): Cart {
   const parsed = parseLineKey(key);
   const qty = cart[key];
-  if (!parsed || !qty) return cart;
+  if (!parsed || parsed.swapTo || !qty) return cart;
   const target = lineKey(parsed.productId, ice);
   if (target === key) return cart;
   const without = { ...cart };
@@ -89,8 +98,10 @@ export function changeLineIce(cart: Cart, key: string, ice: IceChoice | null): C
 
 // Depois que o cardápio chega: tira o que não está mais nele e acerta as linhas ao que cada produto pede AGORA (se a categoria deixou
 // de pedir o gelo, a linha volta a ser só o produto; se passou a pedir, a linha que veio sem escolha continua no pedido, marcada como
-// "falta escolher"). `requiresIce` devolve undefined para produto desconhecido. Devolve o mesmo objeto quando nada muda.
-export function settleCart(cart: Cart, requiresIce: (productId: string) => boolean | undefined): Cart {
+// "falta escolher"). `requiresIce` devolve undefined para produto desconhecido. `swapOk` diz se a troca de energético de uma linha ainda
+// vale (o combo ainda tem energético definido e o novo ainda existe e é de 2L): se não vale, a linha volta a ser o combo normal.
+// Devolve o mesmo objeto quando nada muda.
+export function settleCart(cart: Cart, requiresIce: (productId: string) => boolean | undefined, swapOk?: (productId: string, swapTo: string) => boolean): Cart {
   let next: Cart = {};
   let changed = false;
   for (const [key, qty] of Object.entries(cart)) {
@@ -100,10 +111,52 @@ export function settleCart(cart: Cart, requiresIce: (productId: string) => boole
       changed = true;
       continue;
     }
-    const target = requires ? key : parsed.productId;
+    const target = parsed.swapTo ? (swapOk ? swapOk(parsed.productId, parsed.swapTo) : true) ? key : parsed.productId : requires ? key : parsed.productId;
     if (target !== key) changed = true;
     next = put(next, target, (next[target] ?? 0) + qty);
   }
   if (!changed && Object.keys(next).length === Object.keys(cart).length && Object.entries(next).every(([key, qty]) => cart[key] === qty)) return cart;
+  return next;
+}
+
+// ---- Troca de energético (combos) ----------------------------------------------------------------
+// Passa `delta` unidades do combo entre a linha normal ("id") e a linha com o energético trocado ("id@energético"):
+// delta > 0 troca (só dá para trocar o que está na linha normal); delta < 0 devolve ao energético original.
+export function swapUnits(cart: Cart, productId: string, energeticId: string, delta: number): Cart {
+  const plain = lineKey(productId, null);
+  const swapped = lineKey(productId, null, energeticId);
+  if (delta > 0) {
+    const move = Math.min(delta, cart[plain] ?? 0);
+    if (move <= 0) return cart;
+    return put(put(cart, plain, (cart[plain] ?? 0) - move), swapped, (cart[swapped] ?? 0) + move);
+  }
+  const move = Math.min(-delta, cart[swapped] ?? 0);
+  if (move <= 0) return cart;
+  return put(put(cart, swapped, (cart[swapped] ?? 0) - move), plain, (cart[plain] ?? 0) + move);
+}
+
+// Quantas unidades do combo estão com o energético `energeticId` e quantas ainda estão com o energético original.
+export const swappedCount = (cart: Cart, productId: string, energeticId: string): number => cart[lineKey(productId, null, energeticId)] ?? 0;
+export const plainCount = (cart: Cart, productId: string): number => cart[lineKey(productId, null)] ?? 0;
+
+// Muda o total de unidades de um produto (o contador do cartão do produto): aumentar entra na linha normal; diminuir tira primeiro da linha
+// normal, depois das de gelo e por fim das de energético trocado.
+export function setProductTotal(cart: Cart, productId: string, total: number): Cart {
+  const current = countFor(cart, productId);
+  if (total === current) return cart;
+  if (total > current) return put(cart, productId, (cart[productId] ?? 0) + (total - current));
+  const rank = (key: string) => (parseLineKey(key)?.swapTo ? 2 : parseLineKey(key)?.ice ? 1 : 0);
+  const keys = Object.keys(cart)
+    .filter((key) => parseLineKey(key)?.productId === productId)
+    .sort((a, b) => rank(a) - rank(b));
+  const next = { ...cart };
+  let remove = current - Math.max(0, total);
+  for (const key of keys) {
+    if (remove <= 0) break;
+    const take = Math.min(remove, next[key]);
+    if (next[key] - take > 0) next[key] -= take;
+    else delete next[key];
+    remove -= take;
+  }
   return next;
 }

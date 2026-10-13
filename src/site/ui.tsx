@@ -215,15 +215,18 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
 export const FIELD =
   'w-full rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-[15px] text-white placeholder:text-white/50 focus:border-[#2563FF] focus:outline-none focus:ring-2 focus:ring-[#2563FF]/40 aria-[invalid=true]:border-rose-400/70';
 
-// Uma linha do pedido (produto + gelo). `setQty` recebe a chave da linha (o id do produto, ou id:gelo).
+// Uma linha do pedido (produto + gelo, ou combo + energético trocado). `setQty` recebe a chave da linha (o id do produto, id:gelo ou id@energético).
 export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: string, qty: number) => void }) {
-  const { product, qty, key, ice, needsIce } = line;
+  const { product, qty, key, ice, needsIce, swap: swapTo, unit } = line;
   const picker = useIcePicker();
-  // Nome para quem usa leitor de tela: a mesma bebida com gelos diferentes são linhas diferentes.
-  const name = ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
+  const swapper = useEnergeticSwap();
+  const { cart } = useShop();
+  // Nome para quem usa leitor de tela: a mesma bebida com gelos ou energéticos diferentes são linhas diferentes.
+  const name = swapTo ? `${product.name}, com ${swapTo.name}` : ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
   const askIce = product.iceRequired && !product.soldOut;
   const note = comboNote(product.category);
-  const swap = useEnergeticSwap();
+  const soldOut = product.soldOut || swapTo?.soldOut === true;
+  const extra = swapTo ? unit - unitPrice(product) : 0;
   return (
     <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsIce ? 'border-amber-400/50' : 'border-white/10'}`}>
       <div className="flex items-center gap-3">
@@ -234,10 +237,10 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
           {/* Produto que pede o gelo: até 3 linhas de nome (o mesmo copão em gelos diferentes precisa de nome inteiro para a pessoa saber
               qual é qual). Os demais produtos seguem com 2 linhas, como sempre. */}
           <p className={`${product.iceRequired ? 'line-clamp-3' : 'line-clamp-2'} text-sm font-bold leading-tight text-white`}>{product.name}</p>
-          {product.soldOut ? (
-            <p className="mt-1 text-xs font-bold text-rose-300">Esgotado – remova do pedido</p>
+          {soldOut ? (
+            <p className="mt-1 text-xs font-bold text-rose-300">{product.soldOut ? 'Esgotado – remova do pedido' : `${swapTo?.name} esgotou – troque ou remova`}</p>
           ) : (
-            <p className="mt-1 text-sm font-semibold text-[#8FB1FF]">{money(unitPrice(product) * qty)}</p>
+            <p className="mt-1 text-sm font-semibold text-[#8FB1FF]">{money(unit * qty)}</p>
           )}
         </div>
         <div className="flex items-center rounded-full border border-white/15 bg-black/20">
@@ -263,20 +266,49 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
           </button>
         </div>
       </div>
-      {note && (
+      {note && !swapTo && (
         <p data-combo-note="" className="mt-2 rounded-xl bg-amber-400/10 px-3 py-2 text-xs font-semibold leading-snug text-amber-100 ring-1 ring-amber-400/30">
           Obs: {note}
         </p>
       )}
-      {note && swap.available && (
+      {note && !swapTo && swapper.canSwap(product) && (
         <button
           type="button"
           data-swap-energetic=""
-          onClick={swap.open}
+          onClick={() => swapper.open(product)}
           className="mt-2 w-full rounded-xl border border-[#2563FF]/60 bg-[#145CFF]/15 px-3 py-2.5 text-xs font-extrabold tracking-wide text-white transition-colors hover:bg-[#145CFF]/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
         >
           QUERO TROCAR O ENERGÉTICO
         </button>
+      )}
+      {/* Combo com o energético trocado: qual é, quanto a troca custa por combo, e atalhos para mudar ou voltar ao original. */}
+      {swapTo && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[4.75rem]">
+          <span data-swap-tag={swapTo.id} className="inline-block rounded-2xl bg-[#145CFF]/20 px-2.5 py-1 text-xs font-semibold leading-snug text-white ring-1 ring-[#2563FF]/50">
+            <span aria-hidden="true">⚡ </span>
+            {swapTo.name} <span className="whitespace-nowrap font-extrabold">{extra > 0 ? `(+ ${money(extra)})` : '(sem diferença)'}</span>
+          </span>
+          {swapper.canSwap(product) && (
+            <button
+              type="button"
+              data-swap-change=""
+              onClick={() => swapper.open(product)}
+              aria-label={`Alterar o energético de ${product.name}`}
+              className="-my-1 rounded px-1 py-1.5 text-xs font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Alterar
+            </button>
+          )}
+          <button
+            type="button"
+            data-swap-undo=""
+            onClick={() => cart.swapBy(product.id, swapTo.id, -qty)}
+            aria-label={`Voltar ao energético original de ${product.name}`}
+            className="-my-1 rounded px-1 py-1.5 text-xs font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            Voltar ao original
+          </button>
+        </div>
       )}
       {/* O gelo escolhido, na largura toda da linha (alinhado ao texto, depois da foto): cabe inteiro até em celular pequeno. */}
       {askIce && (
@@ -315,8 +347,10 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
 
 // Aviso que aparece logo depois de adicionar um produto com observação (os combos). Não rouba o foco, o leitor de tela o anuncia
 // (role="status") e dá para fechar; some sozinho depois de alguns segundos. Fica acima da barra "Ver pedido".
-export function AddNotice({ notice, onClose }: { notice: { id: number; text: string } | null; onClose: () => void }) {
-  const swap = useEnergeticSwap();
+export function AddNotice({ notice, onClose }: { notice: { id: number; text: string; productId: string } | null; onClose: () => void }) {
+  const swapper = useEnergeticSwap();
+  const { products } = useShop();
+  const combo = notice ? products.find((p) => p.id === notice.productId) : undefined;
   return (
     <div role="status" className="pointer-events-none fixed inset-x-0 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-[45] flex justify-center px-4">
       {notice && (
@@ -329,13 +363,13 @@ export function AddNotice({ notice, onClose }: { notice: { id: number; text: str
           <p className="min-w-0 flex-1">
             <strong className="block text-white">Combo adicionado ao pedido.</strong>
             <span className="font-semibold">Obs: {notice.text}</span>
-            {swap.available && (
+            {combo && swapper.canSwap(combo) && (
               <button
                 type="button"
                 data-swap-energetic=""
                 onClick={() => {
                   onClose();
-                  swap.open();
+                  swapper.open(combo);
                 }}
                 className="mt-2.5 block w-full rounded-xl bg-[#145CFF] px-3 py-2.5 text-xs font-extrabold tracking-wide text-white transition-colors hover:bg-[#2563FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               >

@@ -23,6 +23,8 @@ const productSpec: Spec = {
   featured: bool('Destaque'),
   active: bool('Ativo'),
   sold_out: bool('Esgotado'),
+  // Combos: o energético que vem no produto (para a troca com diferença de preço). Vazio = o produto não aceita troca.
+  swap_base_product_id: uuid('Energético que vem no combo', { nullable: true }),
   position: int('Ordem', { max: 100_000 }),
 };
 
@@ -61,6 +63,7 @@ const PRODUCT_LABELS: FieldLabels = {
   featured: { label: 'destaque', format: 'bool' },
   active: { label: 'ativo no site', format: 'bool' },
   sold_out: { label: 'esgotado', format: 'bool' },
+  swap_base_product_id: { label: 'energético que vem no combo', format: 'changed' },
   position: { label: 'ordem' },
 };
 
@@ -92,6 +95,14 @@ async function duplicateOf(name: string, categoryId: string | null, exceptId?: s
       limit 1`,
     [name, categoryId, exceptId ?? null],
   );
+}
+
+// O energético que vem no combo tem de ser outro produto, que exista (o banco também confere, mas aqui a mensagem sai em português).
+async function checkSwapBase(baseId: unknown, productId?: string) {
+  if (baseId === null || baseId === undefined) return;
+  if (productId && baseId === productId) throw new HttpError(400, 'Energético que vem no combo: escolha outro produto, não o próprio combo.', { code: 'swap_base_self' });
+  const found = await one<{ id: string }>('select id from products where id = $1', [baseId as string]);
+  if (!found) throw new HttpError(400, 'Energético que vem no combo: produto não encontrado.', { code: 'swap_base_missing' });
 }
 
 const duplicateError = (found: { id: string; name: string }) =>
@@ -131,6 +142,7 @@ export function registerCatalog(r: Router) {
       const found = await duplicateOf(String(values.name), (values.category_id as string | null) ?? null);
       if (found) throw duplicateError(found);
     }
+    await checkSwapBase(values.swap_base_product_id);
     if (values.position === undefined) {
       values.position = (await one<{ n: number }>('select coalesce(max(position), -1) + 1 as n from products'))?.n ?? 0;
     }
@@ -149,6 +161,7 @@ export function registerCatalog(r: Router) {
       values.promo_starts_at = null;
       values.promo_ends_at = null;
     }
+    await checkSwapBase(values.swap_base_product_id, id);
     const final = { ...before, ...values } as Row;
     checkPromo(Number(final.price), final.promo_price === null ? null : Number(final.promo_price), final.promo_starts_at ?? null, final.promo_ends_at ?? null);
     const renamed = ('name' in values && values.name !== before.name) || ('category_id' in values && values.category_id !== before.category_id);
@@ -176,8 +189,8 @@ export function registerCatalog(r: Router) {
   // o arquivo só sai do Blob quando nenhum produto o usa mais.
   r.post('/api/admin/products/:id/duplicate', 'admin', async (ctx) => {
     const product = await one<{ id: string; name: string }>(
-      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, featured, active, position)
-       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, false, false, position + 1
+      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, featured, active, position, swap_base_product_id)
+       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, false, false, position + 1, swap_base_product_id
          from products where id = $1
        returning *`,
       [uuidParam(ctx)],

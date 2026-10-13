@@ -825,11 +825,12 @@ function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty:
 
 function BebidasPage() {
   const { ready, fresh, failed, offline, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
-  const { setQty, countOf, announce } = cart;
-  // Aumentar a quantidade pelo cartão: produto com observação (combo) mostra o aviso na hora.
+  const { setTotal, countOf, announce } = cart;
+  // O contador do cartão soma todas as linhas do produto (um combo pode ter unidades com energético trocado): aumentar entra na linha
+  // normal e diminuir tira primeiro dela. Aumentar um produto com observação (combo) mostra o aviso na hora.
   const changeQty = (product: Product, qty: number) => {
     if (qty > countOf(product.id)) announce(product);
-    setQty(product.id, qty);
+    setTotal(product.id, qty);
   };
   const picker = useIcePicker();
   const [query, setQuery] = useState('');
