@@ -6,6 +6,13 @@ OUT="${TEST_OUT:-${TMPDIR:-/tmp}/copocheio-tests}"
 mkdir -p "$OUT"
 failed=0
 summary=""
+# Mostra por que um arquivo falhou: as linhas FAIL/CRASH; se não houver nenhuma (o processo caiu antes de terminar, ex.: erro solto do Node),
+# mostra o final da saída, para o motivo aparecer no log do CI.
+show_failure() { # nome [máximo de linhas]
+  local found
+  found="$(grep -E '^(FAIL|CRASH)' "$OUT/$1.txt" | head -"${2:-5}")"
+  if [ -n "$found" ]; then echo "$found"; else echo "  (sem linhas FAIL/CRASH; fim da saída de $1:)"; tail -25 "$OUT/$1.txt" | cut -c1-300; fi
+}
 run() { # nome [variável=valor ...]
   local name="$1"; shift
   local extra=0 code line note=""
@@ -18,7 +25,7 @@ run() { # nome [variável=valor ...]
     if [ $extra -lt "${E2E_RETRIES:-0}" ]; then
       extra=$((extra + 1))
       echo "  $name falhou (saída $code); tentando de novo ($extra/${E2E_RETRIES})"
-      grep -E '^(FAIL|CRASH)' "$OUT/$name.txt" | head -5
+      show_failure "$name"
       cp "$OUT/$name.txt" "$OUT/$name.tentativa$extra.txt"
       continue
     fi
@@ -27,7 +34,7 @@ run() { # nome [variável=valor ...]
   [ $extra -gt 0 ] && note=" [precisou de $extra nova(s) tentativa(s); veja $name.tentativa*.txt]"
   line="$(grep -E '^(OK|FALHOU|ALL PASSED|TUDO OK|[0-9]+ FALHA|CRASH)' "$OUT/$name.txt" | tail -1)"
   summary+="$name (saída $code)$note: ${line:-sem resumo}"$'\n'
-  if [ $code -ne 0 ]; then failed=1; grep -E '^(FAIL|CRASH)' "$OUT/$name.txt" | head -10; fi
+  if [ $code -ne 0 ]; then failed=1; show_failure "$name" 10; fi
 }
 if [ -n "$1" ]; then run "$1" X=1; else
   for t in e2e e2e-track e2e-verify e2e-recover e2e-cover e2e-whatsapp e2e-hardening e2e-ice e2e-pix e2e-account e2e-combo; do run "$t" X=1; done

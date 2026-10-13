@@ -18,6 +18,9 @@ fs.mkdirSync(SP, { recursive: true });
 const FX = require('node:path').join(__dirname, 'fixtures');
 const BASE = 'http://localhost:4180', BLOB = 'http://127.0.0.1:4181';
 const NOTE = 'CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA.';
+// Erro solto (rejeição que ninguém esperou, exceção fora do fluxo principal): o Node sairia com código 1 sem dizer nada que o resumo reconheça.
+// Vira uma linha CRASH com o motivo (e o resumo do run-e2e.sh mostra).
+for (const event of ['unhandledRejection', 'uncaughtException']) process.on(event, (e) => { console.error('CRASH (' + event + ')', e); process.exit(2); });
 let cookie = '';
 async function api(method, path, body, raw) {
   const init = { method, headers: { ...(raw ? { 'content-type': 'image/webp' } : { 'content-type': 'application/json' }), 'x-real-ip': '10.9.9.9', ...(cookie ? { cookie } : {}) }, body: raw ? body : body === undefined ? undefined : JSON.stringify(body) };
@@ -40,7 +43,8 @@ async function until(fn, ms = 6000) {
 const errors = [];
 async function newCtx(browser, viewport, init) {
   const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 1000, hasTouch: viewport.width < 1000 });
-  await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => { await route.fulfill({ response: await route.fetch({ url: BLOB + '/f' + new URL(route.request().url()).pathname }) }); });
+  // Se a página fecha ou navega no meio de uma imagem, o pedido ao servidor de arquivos de teste é abortado: não é erro do site.
+  await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => { try { await route.fulfill({ response: await route.fetch({ url: BLOB + '/f' + new URL(route.request().url()).pathname }) }); } catch { /* página fechada */ } });
   await ctx.route(/^https:\/\/www\.google\.com\/maps/, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>mapa</title>' }));
   if (init) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
