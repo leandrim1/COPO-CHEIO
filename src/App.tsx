@@ -30,6 +30,7 @@ import type { Product } from './site/data';
 import { IcePickerProvider } from './site/IceChoice';
 import { useIcePicker } from './site/icePicker';
 import {
+  AddNotice,
   BLUE_BUTTON,
   BrandName,
   CartLineItem,
@@ -823,7 +824,12 @@ function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty:
 
 function BebidasPage() {
   const { ready, fresh, failed, offline, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
-  const { setQty, countOf } = cart;
+  const { setQty, countOf, announce } = cart;
+  // Aumentar a quantidade pelo cartão: produto com observação (combo) mostra o aviso na hora.
+  const changeQty = (product: Product, qty: number) => {
+    if (qty > countOf(product.id)) announce(product);
+    setQty(product.id, qty);
+  };
   const picker = useIcePicker();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
@@ -1090,7 +1096,7 @@ function BebidasPage() {
                     key={product.id}
                     product={product}
                     qty={countOf(product.id)}
-                    onChange={(qty) => setQty(product.id, qty)}
+                    onChange={(qty) => changeQty(product, qty)}
                     onPick={product.iceRequired ? () => picker.pick(product) : undefined}
                     className="w-[62%] shrink-0 snap-start sm:w-[44%] lg:w-72 xl:w-80"
                   />
@@ -1111,7 +1117,7 @@ function BebidasPage() {
                     key={product.id}
                     product={product}
                     qty={countOf(product.id)}
-                    onChange={(qty) => setQty(product.id, qty)}
+                    onChange={(qty) => changeQty(product, qty)}
                     onPick={product.iceRequired ? () => picker.pick(product) : undefined}
                   />
                 ))}
@@ -1933,6 +1939,7 @@ function PublicSite({ pathname }: { pathname: string }) {
       {showOrder && (
         <>
           {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
+          <AddNotice notice={orderOpen ? null : cart.notice} onClose={cart.dismissNotice} />
           <OrderDrawer open={orderOpen} onClose={closeOrder} />
         </>
       )}

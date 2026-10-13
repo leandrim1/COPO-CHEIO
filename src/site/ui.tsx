@@ -1,5 +1,6 @@
-import { GlassWater, Minus, Plus, X } from 'lucide-react';
+import { GlassWater, Info, Minus, Plus, X } from 'lucide-react';
 import { useState } from 'react';
+import { comboNote } from '../lib/combo';
 import { money } from '../lib/format';
 import { ICE_INFO, iceLabel } from '../lib/ice';
 import { instagramHandle, unitPrice, useShop } from './data';
@@ -220,6 +221,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
   // Nome para quem usa leitor de tela: a mesma bebida com gelos diferentes são linhas diferentes.
   const name = ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
   const askIce = product.iceRequired && !product.soldOut;
+  const note = comboNote(product.category);
   return (
     <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsIce ? 'border-amber-400/50' : 'border-white/10'}`}>
       <div className="flex items-center gap-3">
@@ -259,6 +261,11 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
           </button>
         </div>
       </div>
+      {note && (
+        <p data-combo-note="" className="mt-2 rounded-xl bg-amber-400/10 px-3 py-2 text-xs font-semibold leading-snug text-amber-100 ring-1 ring-amber-400/30">
+          Obs: {note}
+        </p>
+      )}
       {/* O gelo escolhido, na largura toda da linha (alinhado ao texto, depois da foto): cabe inteiro até em celular pequeno. */}
       {askIce && (
         <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-[4.75rem]">
@@ -291,5 +298,35 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
         </div>
       )}
     </li>
+  );
+}
+
+// Aviso que aparece logo depois de adicionar um produto com observação (os combos). Não rouba o foco, o leitor de tela o anuncia
+// (role="status") e dá para fechar; some sozinho depois de alguns segundos. Fica acima da barra "Ver pedido".
+export function AddNotice({ notice, onClose }: { notice: { id: number; text: string } | null; onClose: () => void }) {
+  return (
+    <div role="status" className="pointer-events-none fixed inset-x-0 bottom-[calc(5.75rem+env(safe-area-inset-bottom))] z-[45] flex justify-center px-4">
+      {notice && (
+        <div
+          key={notice.id}
+          data-add-notice=""
+          className="pointer-events-auto flex w-full max-w-md items-start gap-3 rounded-2xl border border-amber-400/40 bg-[#1B1405]/95 p-3.5 text-sm leading-snug text-amber-50 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] backdrop-blur"
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
+          <p className="min-w-0 flex-1">
+            <strong className="block text-white">Combo adicionado ao pedido.</strong>
+            <span className="font-semibold">Obs: {notice.text}</span>
+          </p>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Fechar aviso"
+            className="-m-1 grid h-8 w-8 shrink-0 place-items-center rounded-full text-amber-100/80 hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

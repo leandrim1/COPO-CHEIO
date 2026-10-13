@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
+import { comboNote } from '../lib/combo';
 import { isOpenNow } from '../lib/hours';
 import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, settleCart } from '../lib/ice';
 import type { Cart, IceChoice } from '../lib/ice';
@@ -272,6 +273,14 @@ function loadCart(): Cart {
 
 function useCart(products: Product[], ready: boolean) {
   const [cart, setCart] = useState<Cart>(loadCart);
+  // Aviso que aparece depois de adicionar um produto que tem observação (hoje, os combos); some sozinho.
+  const [notice, setNotice] = useState<{ id: number; text: string } | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 9000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  const dismissNotice = useCallback(() => setNotice(null), []);
 
   // Depois de carregar o cardápio, tira o que não está mais nele e acerta o gelo ao que cada produto pede agora.
   useEffect(() => {
@@ -292,6 +301,11 @@ function useCart(products: Product[], ready: boolean) {
   const setQty = useCallback((key: string, qty: number) => setCart((prev) => setLineQty(prev, key, qty)), []);
   // Põe unidades de um produto no pedido; `ice` só vale (e é obrigatório) para produto que pede o gelo.
   const add = useCallback((product: Product, ice: IceChoice | null, qty = 1) => setCart((prev) => addToCart(prev, product.id, product.iceRequired ? ice : null, qty)), []);
+  // Chamado pelos cartões de produto quando a pessoa aumenta a quantidade: se o produto tem observação (hoje, os combos), mostra o aviso.
+  const announce = useCallback((product: Product) => {
+    const text = comboNote(product.category);
+    if (text) setNotice({ id: Date.now(), text });
+  }, []);
   // Troca o gelo de uma linha que já está no pedido (a quantidade vai junto).
   const changeIce = useCallback((key: string, ice: IceChoice) => setCart((prev) => changeLineIce(prev, key, ice)), []);
   const clear = useCallback(() => setCart({}), []);
@@ -320,7 +334,7 @@ function useCart(products: Product[], ready: boolean) {
   const unavailable = lines.filter((line) => line.product.soldOut);
   const incomplete = lines.filter((line) => line.needsIce);
 
-  return { cart, setQty, add, changeIce, countOf, clear, lines, count, total, unavailable, incomplete };
+  return { cart, setQty, add, changeIce, countOf, clear, lines, count, total, unavailable, incomplete, notice, announce, dismissNotice };
 }
 
 // ---- Contexto ---------------------------------------------------------------------------------
