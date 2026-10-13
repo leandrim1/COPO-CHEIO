@@ -200,6 +200,8 @@ async function uiLogin(page, creds = OWNER, code) {
   await c1.goto(BASE + '/admin/configuracoes', { waitUntil: 'networkidle' });
   await c1.getByRole('tab', { name: 'Atividades' }).click();
   await c1.waitForSelector('text=Atividades do painel');
+  // O título aparece antes de a lista chegar da API: espera as linhas (sem isso, em máquina lenta, a contagem sai 0).
+  await c1.waitForSelector('ul.divide-y li', { timeout: 10000 }).catch(() => undefined);
   const rows = await c1.locator('ul.divide-y li').count();
   ok(rows >= 3, 'o owner vê a lista de atividades', rows);
   ok(/Configurações da loja/.test(await body(c1)) && /Dono Teste/.test(await body(c1)), 'cada linha diz o que mudou e quem mudou');
