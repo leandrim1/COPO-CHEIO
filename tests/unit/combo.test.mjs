@@ -45,19 +45,37 @@ test('a lista de troca só tem energéticos de 2L (por categoria ou pelo começo
 });
 
 // ---- Troca do energético: preço (as mesmas contas do banco) ------------------------------------------
-const P = (id, name, category, price, promoPrice = null, swapBaseId = null, soldOut = false) => ({ id, name, category, price, promoPrice, swapBaseId, soldOut });
+const P = (id, name, category, price, promoPrice = null, swapBaseId = null, soldOut = false, swapBasePrice = null, swapOptionIds = []) => ({
+  id, name, category, price, promoPrice, swapBaseId, swapBasePrice, swapOptionIds, soldOut,
+});
+const NP = (price, promoPrice = null) => ({ price, promoPrice });
 
 test('a diferença da troca: novo − o que vem no combo, nunca abaixo de zero, com a promoção de agora', () => {
-  assert.equal(c.swapDifference({ price: 14, promoPrice: null }, { price: 12, promoPrice: null }), 2);
-  assert.equal(c.swapDifference({ price: 10, promoPrice: null }, { price: 12, promoPrice: null }), 0, 'mais barato: sem desconto nem devolução');
-  assert.equal(c.swapDifference({ price: 12, promoPrice: null }, { price: 12, promoPrice: null }), 0);
-  assert.equal(c.swapDifference({ price: 14, promoPrice: null }, { price: 12, promoPrice: 11 }), 3, 'promoção do que vem no combo');
-  assert.equal(c.swapDifference({ price: 14, promoPrice: 12.5 }, { price: 12, promoPrice: 11 }), 1.5, 'promoção dos dois');
-  assert.equal(c.swapDifference({ price: 9.9, promoPrice: null }, { price: 9.7, promoPrice: null }), 0.2, 'sem erro de ponto flutuante (9,90 − 9,70)');
-  assert.equal(c.swapDifference({ price: 0.3, promoPrice: null }, { price: 0.1, promoPrice: null }), 0.2);
+  assert.equal(c.swapDifference(NP(14), 12), 2);
+  assert.equal(c.swapDifference(NP(10), 12), 0, 'mais barato: sem desconto nem devolução');
+  assert.equal(c.swapDifference(NP(12), 12), 0, 'mesmo valor: o preço do combo se mantém');
+  assert.equal(c.swapDifference(NP(14), 11), 3, 'promoção do que vem no combo (valor já com a promoção)');
+  assert.equal(c.swapDifference(NP(14, 12.5), 11), 1.5, 'promoção do novo');
+  assert.equal(c.swapDifference(NP(9.9), 9.7), 0.2, 'sem erro de ponto flutuante (9,90 − 9,70)');
+  assert.equal(c.swapDifference(NP(0.3), 0.1), 0.2);
 });
 
-test('quais energéticos entram na troca de um combo', () => {
+test('o valor do energético que vem no combo: o produto escolhido (preço de agora) ou o valor digitado', () => {
+  const jack = P('j', 'Energético Jack Power 2L', 'ENERGÉTICOS', 12, 11);
+  const withProduct = P('c', 'COMBO A', 'COMBOS', 90, null, 'j', false, 99);
+  const withValue = P('c2', 'COMBO B', 'COMBOS', 60, null, null, false, 13.5);
+  const none = P('c3', 'COMBO C', 'COMBOS', 60);
+  const all = [jack, withProduct, withValue, none];
+  assert.equal(c.swapBasePrice(all, withProduct), 11, 'o produto escolhido vale mais que o valor digitado, e a promoção em vigor conta');
+  assert.equal(c.swapBasePrice(all, withValue), 13.5);
+  assert.equal(c.swapBasePrice(all, none), null);
+  assert.equal(c.swapBasePrice([withProduct], withProduct), 99, 'se o produto sumiu do cardápio, vale o valor digitado');
+  assert.equal(c.swapBaseLabel(all, withProduct), 'Energético Jack Power 2L');
+  assert.match(c.swapBaseLabel(all, withValue), /energético de R\$\s*13,50/);
+  assert.equal(c.swapBaseLabel(all, none), '');
+});
+
+test('quais energéticos entram na troca de um combo (sem lista: qualquer um de 2L; com lista: só os escolhidos)', () => {
   const jack = P('j', 'Energético Jack Power 2L', 'ENERGÉTICOS', 12);
   const trop = P('t', 'Energético Tropical 2L', 'ENERGÉTICOS', 14);
   const monster = P('m', 'Energético Monster 473ml', 'ENERGÉTICOS', 9.5);
@@ -67,15 +85,36 @@ test('quais energéticos entram na troca de um combo', () => {
   const all = [jack, trop, monster, copao, combo, semBase];
   assert.equal(c.swapBaseOf(all, combo), jack);
   assert.equal(c.swapBaseOf(all, semBase), undefined);
-  assert.deepEqual(c.swapOptions(all, combo).map((p) => p.id), ['t'], 'só energéticos de 2L, sem o que já vem no combo');
+  assert.deepEqual(c.swapOptions(all, combo).map((p) => p.id), ['t'], 'sem lista: só energéticos de 2L, sem o que já vem no combo');
   assert.deepEqual(c.swapOptions(all, semBase), [], 'combo sem energético definido não aceita troca');
   assert.equal(c.canSwap(all, combo), true);
   assert.equal(c.canSwap(all, semBase), false);
   assert.equal(c.canSwap([jack, combo], combo), false, 'sem nenhum outro energético de 2L, não há o que escolher');
-  assert.equal(c.canSwap([trop, combo], combo), false, 'o energético do combo sumiu do cardápio: não dá para calcular a diferença');
+  assert.equal(c.canSwap([trop, combo], combo), false, 'o energético do combo sumiu do cardápio e não há valor digitado: não dá para calcular a diferença');
   assert.equal(c.swapStillValid(all, 'c', 't'), true);
   assert.equal(c.swapStillValid(all, 'c', 'j'), false, 'trocar pelo que já vem não vale');
   assert.equal(c.swapStillValid(all, 'c', 'm'), false, 'não é de 2L');
   assert.equal(c.swapStillValid(all, 'c', 'nao-existe'), false);
   assert.equal(c.swapStillValid(all, 'c2', 't'), false);
+
+  // com lista escolhida no painel: só os marcados (mesmo que não sejam de 2L), nunca o combo nem o energético que já vem nele
+  const chosen = { ...combo, swapOptionIds: ['t', 'm', 'j', 'c'] };
+  const all2 = [jack, trop, monster, copao, chosen, semBase];
+  assert.deepEqual(c.swapOptions(all2, chosen).map((p) => p.id).sort(), ['m', 't']);
+  assert.equal(c.swapStillValid(all2, 'c', 'm'), true, 'o painel liberou este');
+  assert.equal(c.swapStillValid(all2, 'c', 'cp'), false, 'não está na lista do painel');
+  assert.equal(c.swapStillValid(all2, 'c', 'j'), false);
+  assert.equal(c.swapStillValid(all2, 'c', 'c'), false);
+});
+
+test('combo com valor digitado (sem produto do cardápio): troca por qualquer energético 2L ou pela lista, com a diferença sobre o valor', () => {
+  const trop = P('t', 'Energético Tropical 2L', 'ENERGÉTICOS', 15);
+  const fusion = P('f', 'Energético Fusion 2L', 'ENERGÉTICOS', 18);
+  const combo = P('c', 'COMBO ( 1 Energético Jack Power 2L )', 'COMBOS', 90, null, null, false, 15);
+  const all = [trop, fusion, combo];
+  assert.deepEqual(c.swapOptions(all, combo).map((p) => p.id), ['t', 'f'], 'o energético do combo não é um produto: todos os 2L entram');
+  assert.equal(c.swapDifference(trop, c.swapBasePrice(all, combo)), 0, 'mesmo valor: mantém o preço do combo');
+  assert.equal(c.swapDifference(fusion, c.swapBasePrice(all, combo)), 3, 'mais caro: paga a diferença');
+  const only = { ...combo, swapOptionIds: ['f'] };
+  assert.deepEqual(c.swapOptions([trop, fusion, only], only).map((p) => p.id), ['f']);
 });

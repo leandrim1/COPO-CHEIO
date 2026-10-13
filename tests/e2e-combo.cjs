@@ -140,7 +140,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     const rows = await swap.locator('li[data-energetic]').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
     ok(rows.length === 3 && (await Promise.all([tropical, baly, fusion].map((p) => swap.locator(`li[data-energetic="${p.id}"]`).count()))).every((n) => n === 1), `${label}: a lista mostra os 3 outros energéticos de 2L (o Jack Power já vem no combo)`, rows);
     ok(!rows.some((r) => /Jack Power|Monster|Red Bull|2,5L|Guaraná|Copão|Heineken|Kit Cerveja|COMBO/.test(r)), `${label}: só 2L e sem o que já vem no combo: ficam de fora o Jack Power, os de 473 ml, 250 ml e 2,5L, o refrigerante, o copão, o combo e a cerveja`, rows);
-    ok(/Vem no combo: Energético Jack Power 2L/.test(await swap.innerText()) && /Energéticos de 2L/.test(await swap.innerText()) && /Obs: CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA\./.test(await swap.innerText()), `${label}: a janela diz qual energético vem no combo, que são os de 2L e repete a observação`);
+    ok(/Vem no combo: Energético Jack Power 2L/.test(await swap.innerText()) && /se for o mesmo valor, o preço se mantém/.test(await swap.innerText()) && /Obs: CASO QUEIRAM TROCAR O ENERGÉTICO POR OUTRO, PAGAR A DIFERENÇA\./.test(await swap.innerText()), `${label}: a janela diz qual energético vem no combo, que o mesmo valor mantém o preço e repete a observação`);
     ok(/Tropical/.test(rows[0]) && /\+ R\$ 1,50/.test(rows[0]) && /Baly/.test(rows[1]) && /\+ R\$ 3,00/.test(rows[1]), `${label}: cada um mostra a diferença POR COMBO (Tropical + R$ 1,50 = 12,50 − 11,00 da promoção; Baly + R$ 3,00), do mais barato ao mais caro`, rows);
     ok(/Fusion/.test(rows[2]) && /ESGOTADO/.test(rows[2]) && (await swap.locator(`li[data-energetic="${fusion.id}"] button`).count()) === 0, `${label}: o esgotado vai para o fim, marcado e sem botão`, rows[2]);
     ok((await swap.getAttribute('aria-modal')) === 'true' && (await page.evaluate(() => document.body.style.overflow === 'hidden')), `${label}: janela modal e a página de trás não rola`);
@@ -270,7 +270,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     await ctx.close();
   }
 
-  // Painel: o campo "Energético que vem neste combo" no cadastro do produto
+  // Painel: a troca do energético no cadastro do combo (energético que vem nele ou o valor dele + lista de energéticos da troca)
   {
     const { ctx, page } = await newCtx(browser, { width: 1280, height: 900 });
     await page.goto(BASE + '/admin/login', { waitUntil: 'networkidle' });
@@ -278,19 +278,119 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     await page.fill('#login-senha', 'senha-forte-123');
     await page.click('button[type=submit]');
     await page.waitForURL('**/admin/dashboard');
-    await page.goto(BASE + `/admin/produtos/${combo3.id}`, { waitUntil: 'networkidle' });
-    const field = page.getByLabel('Energético que vem neste combo');
-    await field.waitFor();
-    const opts = (await field.locator('option').allInnerTexts()).map(flat);
+    const openCombo = async (id) => {
+      await page.goto(BASE + `/admin/produtos/${id}`, { waitUntil: 'networkidle' });
+      await page.getByLabel('Energético que vem neste combo').waitFor();
+    };
+    const field = () => page.getByLabel('Energético que vem neste combo');
+    const valueInput = () => page.getByLabel('Valor do energético que vem no combo (R$)');
+    const group = () => page.getByRole('group', { name: /Energéticos que o cliente pode escolher na troca/ });
+    const boxes = () => group().getByRole('checkbox');
+    const labelsOf = async () => (await group().locator('li label').allInnerTexts()).map(flat);
+    const checkedOf = async () => (await group().locator('li label').evaluateAll((els) => els.map((e) => [e.innerText.replace(/\s+/g, ' ').trim(), e.querySelector('input').checked]))).filter(([, c]) => c).map(([t]) => t);
+    const save = () => page.getByRole('button', { name: /^Salvar/ }).first().click();
+    const productOf = async (id) => (await api('GET', `/api/admin/products/${id}`)).data.product;
+    const ids = (list) => [...list].sort();
+
+    await openCombo(combo3.id);
+    const opts = (await field().locator('option').allInnerTexts()).map(flat);
     ok(opts.length === 5 && /^Nenhum/.test(opts[0]) && ['Jack Power 2L', 'Tropical 2L', 'Fusion 2L', 'Baly 2 Litros'].every((n) => opts.some((o) => o.includes(n))), 'painel: o combo tem o campo "Energético que vem neste combo" só com energéticos de 2L (e "Nenhum")', opts);
     ok(!opts.some((o) => /Monster|Red Bull|2,5L|Guaraná|Copão/.test(o)), 'painel: nada que não seja energético de 2L na lista do campo', opts);
-    ok(/Nenhum/.test(await field.evaluate((el) => el.selectedOptions[0].textContent)), 'painel: o combo sem energético definido mostra "Nenhum"');
-    await field.selectOption({ label: opts.find((o) => o.includes('Jack Power 2L')) });
-    await page.getByRole('button', { name: /^Salvar/ }).first().click();
-    ok(await until(async () => (await api('GET', `/api/admin/products/${combo3.id}`)).data.product.swap_base_product_id === jack.id), 'painel: salvar grava o energético do combo (o combo passa a aceitar a troca)');
+    ok(/Nenhum/.test(await field().evaluate((el) => el.selectedOptions[0].textContent)), 'painel: o combo sem energético definido mostra "Nenhum (informar o valor)"');
+    ok((await valueInput().count()) === 1, 'painel: sem produto escolhido aparece o campo do VALOR do energético que vem no combo');
+    const labels = await labelsOf();
+    ok(labels.length === 4 && ['Jack Power 2L', 'Tropical 2L', 'Fusion 2L', 'Baly 2 Litros'].every((n) => labels.some((l) => l.includes(n))) && !labels.some((l) => /Monster|Red Bull|2,5L|Guaraná|Copão|COMBO/.test(l)), 'painel: a lista de energéticos da troca tem os 4 energéticos de 2L (com o preço de cada um) e nada além', labels);
+    ok(/Nenhum marcado: vale qualquer energético de 2L/.test(await group().innerText()), 'painel: sem nada marcado o painel explica que vale qualquer energético de 2L');
+    await group().getByRole('button', { name: 'Marcar todos' }).click();
+    ok((await checkedOf()).length === 4 && /4 marcado\(s\)/.test(await group().innerText()), 'painel: "Marcar todos" marca os 4 e conta');
+    await group().getByRole('button', { name: 'Limpar' }).click();
+    ok((await checkedOf()).length === 0, 'painel: "Limpar" desmarca tudo');
+    await boxes().nth(labels.findIndex((l) => l.includes('Tropical'))).check();
+    await boxes().nth(labels.findIndex((l) => l.includes('Baly'))).check();
+    ok(/2 marcado\(s\)/.test(await group().innerText()), 'painel: marcou Tropical e Baly (2 marcados)');
+    await page.locator('div.rounded-2xl', { has: group() }).first().screenshot({ path: `${SP}/combo-admin-troca.png` });
+    await save();
+    ok(await until(async () => (await page.getByText(/Informe o valor do energético que vem no combo/).count()) >= 1), 'painel: lista marcada sem energético nem valor do combo: o painel pede o valor e não salva');
+    const stillEmpty = await productOf(combo3.id);
+    ok(stillEmpty.swap_base_product_id === null && stillEmpty.swap_base_price === null && stillEmpty.swap_option_ids.length === 0, 'painel: ...e nada foi gravado');
+    await valueInput().fill('abc');
+    await save();
+    ok(await until(async () => (await page.getByText(/Informe um valor maior que zero/).count()) >= 1), 'painel: valor que não é número é recusado na tela');
+    await valueInput().fill('12,00');
+    await save();
+    ok(await until(async () => { const p = await productOf(combo3.id); return Number(p.swap_base_price) === 12 && p.swap_base_product_id === null && JSON.stringify(ids(p.swap_option_ids)) === JSON.stringify(ids([tropical.id, baly.id])); }), 'painel: salvar grava o valor do energético do combo (R$ 12,00) e os 2 energéticos da troca', await productOf(combo3.id));
+
+    // Ao reabrir, o que foi salvo aparece (valor, marcados)
+    await openCombo(combo3.id);
+    ok((await valueInput().inputValue()) === '12,00' && /Nenhum/.test(await field().evaluate((el) => el.selectedOptions[0].textContent)), 'painel: ao reabrir o combo, o valor R$ 12,00 e "Nenhum" aparecem preenchidos');
+    const checked = await checkedOf();
+    ok(checked.length === 2 && checked.some((t) => t.includes('Tropical')) && checked.some((t) => t.includes('Baly')), 'painel: ...e só o Tropical e o Baly continuam marcados', checked);
+
+    // Escolher um produto como energético do combo: some o campo do valor e ele sai da lista de opções
+    await field().selectOption({ label: opts.find((o) => o.includes('Jack Power 2L')) });
+    ok((await valueInput().count()) === 0, 'painel: escolhendo um produto, o campo do valor some (vale o preço do produto)');
+    const labelsJack = await labelsOf();
+    ok(labelsJack.length === 3 && !labelsJack.some((l) => l.includes('Jack Power')), 'painel: o energético que vem no combo não aparece na lista da troca (3 sobraram)', labelsJack);
+    await save();
+    ok(await until(async () => { const p = await productOf(combo3.id); return p.swap_base_product_id === jack.id && p.swap_base_price === null && p.swap_option_ids.length === 2; }), 'painel: salvar com o produto grava o produto, zera o valor digitado e mantém a lista', await productOf(combo3.id));
+
+    // Volta para o valor digitado e libera os dois (é assim que o combo fica para o teste do site)
+    await openCombo(combo3.id);
+    await field().selectOption({ index: 0 });
+    await valueInput().fill('12,00');
+    await save();
+    ok(await until(async () => { const p = await productOf(combo3.id); return Number(p.swap_base_price) === 12 && p.swap_base_product_id === null; }), 'painel: voltar para "Nenhum" + valor R$ 12,00 grava o valor e solta o produto');
+
+    await openCombo(combo2.id);
+    ok(/Jack Power/.test(await field().evaluate((el) => el.selectedOptions[0].textContent)) && (await valueInput().count()) === 0 && (await checkedOf()).length === 0, 'painel: o combo que já tinha o Jack Power continua com ele, sem valor digitado e sem lista (vale qualquer 2L)');
     await page.goto(BASE + `/admin/produtos/${beer.id}`, { waitUntil: 'networkidle' });
     await page.getByLabel('Nome').first().waitFor();
     ok((await page.getByLabel('Energético que vem neste combo').count()) === 0, 'painel: um produto que não é combo (cerveja) não mostra o campo');
+    await ctx.close();
+  }
+
+  // Site: combo com o VALOR do energético (sem produto do cardápio) e a lista escolhida no painel
+  {
+    const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
+    await page.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
+    await addButton(page, 'COMBO SEM ENERGÉTICO').click();
+    ok(await until(async () => (await notice(page).count()) === 1), 'valor do combo: o aviso aparece');
+    ok((await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).count()) === 1, 'valor do combo: agora o combo tem o botão "QUERO TROCAR O ENERGÉTICO" (o painel informou o valor do energético dele)');
+    await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).click();
+    const swap = swapDialog(page);
+    await swap.waitFor();
+    const rows = await swap.locator('li[data-energetic]').evaluateAll((els) => els.map((e) => e.innerText.replace(/\s+/g, ' ').trim()));
+    ok(rows.length === 2 && (await Promise.all([tropical, baly].map((p) => swap.locator(`li[data-energetic="${p.id}"]`).count()))).every((n) => n === 1), 'valor do combo: a lista mostra só os 2 energéticos que o painel liberou (Tropical e Baly; o Jack Power e o Fusion ficam de fora)', rows);
+    ok(/Vem no combo: energético de R\$\s*12,00/.test(await swap.innerText()), 'valor do combo: a janela diz "Vem no combo: energético de R$ 12,00"', (await swap.innerText()).slice(0, 300));
+    ok(/Tropical/.test(rows[0]) && /\+ R\$ 0,50/.test(rows[0]) && /Baly/.test(rows[1]) && /\+ R\$ 2,00/.test(rows[1]), 'valor do combo: Tropical (R$ 12,50) + R$ 0,50 e Baly (R$ 14,00) + R$ 2,00 sobre o valor de R$ 12,00', rows);
+    await swap.getByRole('button', { name: /^Trocar por Energético Baly/ }).click();
+    const kb3 = `${combo3.id}@${baly.id}`;
+    ok(await until(async () => (await cartOf(page))[kb3] === 1), 'valor do combo: trocou pelo Baly', await cartOf(page));
+    await swap.getByRole('button', { name: /^Pronto/ }).click();
+    await page.getByRole('button', { name: /Ver pedido/ }).click();
+    const drawer = page.getByRole('dialog', { name: 'Seu pedido' });
+    await drawer.waitFor();
+    const line = drawer.locator(`li[data-line="${kb3}"]`);
+    ok(new RegExp(R(62)).test(await line.innerText()) && /Energético Baly 2 Litros \(\+ R\$ 2,00\)/.test(flat(await line.innerText())), 'valor do combo: gaveta: R$ 60,00 + R$ 2,00 = R$ 62,00 com "Energético Baly 2 Litros (+ R$ 2,00)"', await line.innerText());
+    await drawer.getByRole('link', { name: /Finalizar pedido/ }).click();
+    await page.waitForURL('**/checkout');
+    await page.getByLabel('Nome *').fill('Cliente Valor');
+    await page.getByLabel('Telefone / WhatsApp *').fill('34 99666-0001');
+    await page.getByText('Retirar na loja', { exact: true }).click();
+    await page.waitForTimeout(900);
+    await page.getByRole('button', { name: /^Finalizar pedido/ }).click();
+    await page.waitForURL('**/pedido/**', { timeout: 15000 });
+    const number = Number((await page.locator('h1').first().innerText()).match(/#?(\d{4,})/)?.[1] ?? (await page.locator('body').innerText()).match(/#(\d{4,})/)?.[1]);
+    const saved = (await api('GET', `/api/admin/orders/${number}`)).data;
+    ok(Math.abs(Number(saved?.order?.total) - 62) < 0.001 && saved.items.some((i) => /troca do energético por Energético Baly 2 Litros \(\+ R\$ 2,00\)/.test(i.product_name)), 'valor do combo: o servidor gravou R$ 62,00 com a troca (mesmo valor da tela)', saved?.order?.total);
+    // O painel tira a lista: o site volta a oferecer todos os energéticos de 2L (menos nenhum que "vem" no combo, porque aqui só há valor)
+    await api('PATCH', `/api/admin/products/${combo3.id}`, { swap_option_ids: [] });
+    await page.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
+    await addButton(page, 'COMBO SEM ENERGÉTICO').click();
+    await notice(page).getByRole('button', { name: 'QUERO TROCAR O ENERGÉTICO' }).click();
+    ok(await until(async () => (await swapDialog(page).locator('li[data-energetic]').count()) === 4), 'valor do combo: sem lista, voltam todos os energéticos de 2L (Jack Power, Tropical, Baly e o esgotado Fusion)');
+    const withJack = flat(await swapDialog(page).locator(`li[data-energetic="${jack.id}"]`).innerText());
+    ok(/Sem diferença/.test(withJack) && (await swapDialog(page).locator(`li[data-energetic="${jack.id}"] [data-swap-diff]`).getAttribute('data-swap-diff')) === '0', 'valor do combo: o Jack Power em promoção (R$ 11,00), abaixo do valor R$ 12,00, aparece como "Sem diferença"', withJack);
     await ctx.close();
   }
 

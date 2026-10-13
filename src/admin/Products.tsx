@@ -651,8 +651,11 @@ type Form = {
   promoFrom: string;
   promoUntil: string;
   category_id: string;
-  // Combos: o id do energético que vem no produto ('' = nenhum, o produto não aceita a troca de energético).
+  // Combos (troca de energético): o produto do cardápio que é o energético que vem no combo ('' = nenhum), o VALOR dele quando não é um
+  // produto do cardápio, e os energéticos que o cliente pode escolher na troca (nenhum marcado = qualquer energético de 2L).
   swap_base: string;
+  swap_price: string;
+  swap_options: string[];
   sku: string;
   trackStock: boolean;
   stock: string;
@@ -672,6 +675,8 @@ const EMPTY_FORM: Form = {
   promoUntil: '',
   category_id: '',
   swap_base: '',
+  swap_price: '',
+  swap_options: [],
   sku: '',
   trackStock: false,
   stock: '',
@@ -737,6 +742,8 @@ export function ProductFormPage({ id }: { id: string }) {
         promoUntil: isoToLocal(product.promo_ends_at),
         category_id: product.category_id ?? '',
         swap_base: product.swap_base_product_id ?? '',
+        swap_price: moneyInput(product.swap_base_price === null || product.swap_base_price === undefined ? null : Number(product.swap_base_price)),
+        swap_options: product.swap_option_ids ?? [],
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
         stock: product.stock === null ? '' : String(product.stock),
@@ -768,7 +775,10 @@ export function ProductFormPage({ id }: { id: string }) {
   // O campo do energético aparece nos produtos da categoria "Combos" (e em qualquer produto que já tenha um definido, para poder limpar).
   const categoryOf = (categoryId: string | null) => categories.find((c) => c.id === categoryId)?.name ?? '';
   const swapChoices = allProducts.filter((p) => !isNew && p.id === id ? false : isEnergetico2L({ name: p.name, category: categoryOf(p.category_id) }));
-  const swapOptionsVisible = comboNote(categoryOf(form.category_id || null)) !== null || form.swap_base !== '';
+  const swapOptionsVisible = comboNote(categoryOf(form.category_id || null)) !== null || form.swap_base !== '' || form.swap_price !== '' || form.swap_options.length > 0;
+  // Os energéticos de 2L que podem ser marcados na lista da troca (sem o que já vem no combo).
+  const optionChoices = swapChoices.filter((choice) => choice.id !== form.swap_base);
+  const toggleOption = (optionId: string) => set('swap_options', form.swap_options.includes(optionId) ? form.swap_options.filter((x) => x !== optionId) : [...form.swap_options, optionId]);
 
   const createCategory = async () => {
     const name = newCategory?.trim();
@@ -801,6 +811,9 @@ export function ProductFormPage({ id }: { id: string }) {
     if (promoFrom && promoUntil && new Date(promoUntil) <= new Date(promoFrom)) next.promoUntil = 'O fim precisa ser depois do início.';
     if (stock !== null && (!Number.isInteger(stock) || stock < 0)) next.stock = 'Use um número inteiro (0 ou mais).';
     if (!Number.isInteger(position)) next.position = 'Use um número inteiro.';
+    const swapPrice = form.swap_base ? null : parseMoney(form.swap_price);
+    if (swapPrice !== null && (Number.isNaN(swapPrice) || swapPrice <= 0)) next.swap_price = 'Informe um valor maior que zero. Ex.: 12,00';
+    if (swapPrice === null && !form.swap_base && form.swap_options.length > 0) next.swap_price = 'Informe o valor do energético que vem no combo (ou escolha o produto acima) para a troca funcionar.';
     setErrors(next);
     if (Object.keys(next).length) {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
@@ -826,6 +839,9 @@ export function ProductFormPage({ id }: { id: string }) {
       promo_ends_at: promo === null ? null : promoUntil,
       category_id: form.category_id || null,
       swap_base_product_id: form.swap_base || null,
+      // Com um produto escolhido, o valor vem do preço dele; o valor digitado só vale quando o energético não é um produto do cardápio.
+      swap_base_price: form.swap_base ? null : swapPrice,
+      swap_option_ids: form.swap_options.filter((id) => id !== form.swap_base),
       sku: form.sku.trim() || null,
       stock,
       featured: form.featured,
@@ -963,22 +979,62 @@ export function ProductFormPage({ id }: { id: string }) {
                 }
               </Field>
               {swapOptionsVisible && (
-                <Field
-                  label="Energético que vem neste combo"
-                  className="sm:col-span-2"
-                  hint="Os clientes poderão trocá-lo por outro energético de 2L, pagando só a diferença de preço (o site e o servidor calculam). Sem energético escolhido, o combo não aceita troca."
-                >
-                  {(p) => (
-                    <select {...p} value={form.swap_base} onChange={(e) => set('swap_base', e.target.value)} className={INPUT}>
-                      <option value="">Nenhum (não aceita troca)</option>
-                      {swapChoices.map((choice) => (
-                        <option key={choice.id} value={choice.id}>
-                          {choice.name} · {moneyInput(Number(choice.promo_price ?? choice.price))}
-                        </option>
-                      ))}
-                    </select>
+                <div className="space-y-4 rounded-2xl border border-[#2563FF]/30 bg-[#145CFF]/[0.06] p-4 sm:col-span-2">
+                  <div>
+                    <p className="text-sm font-bold text-white">Troca do energético (combos)</p>
+                    <p className="mt-1 text-xs text-white/60">
+                      O cliente pode trocar o energético que vem no combo por outro. Se o novo for mais caro, ele paga só a diferença; se for o mesmo valor, o preço se mantém.
+                    </p>
+                  </div>
+                  <Field label="Energético que vem neste combo" hint="Escolha o produto do cardápio. Se o energético do combo não é vendido avulso, deixe “Nenhum” e informe o valor logo abaixo.">
+                    {(p) => (
+                      <select {...p} value={form.swap_base} onChange={(e) => set('swap_base', e.target.value)} className={INPUT}>
+                        <option value="">Nenhum (informar o valor)</option>
+                        {swapChoices.map((choice) => (
+                          <option key={choice.id} value={choice.id}>
+                            {choice.name} · {moneyInput(Number(choice.promo_price ?? choice.price))}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
+                  {!form.swap_base && (
+                    <Field label="Valor do energético que vem no combo (R$)" error={errors.swap_price} hint="É a base da conta: o cliente paga a diferença de quem custar mais que isso. Ex.: 12,00">
+                      {(p) => <input {...p} inputMode="decimal" value={form.swap_price} onChange={(e) => set('swap_price', e.target.value)} className={INPUT} placeholder="12,00" />}
+                    </Field>
                   )}
-                </Field>
+                  <fieldset>
+                    <legend className="text-sm font-semibold text-white">Energéticos que o cliente pode escolher na troca</legend>
+                    <p className="mt-1 text-xs text-white/60">
+                      {form.swap_options.length === 0 ? 'Nenhum marcado: vale qualquer energético de 2L do cardápio.' : `${form.swap_options.length} marcado(s): o cliente só vê estes na troca.`}
+                    </p>
+                    {optionChoices.length === 0 ? (
+                      <p className="mt-2 text-xs text-white/50">Não há energéticos de 2L cadastrados (o nome precisa ter “2L”, “2 litros” ou “2000ml”).</p>
+                    ) : (
+                      <>
+                        <div className="mt-2 flex gap-2">
+                          <Button size="sm" variant="secondary" onClick={() => set('swap_options', optionChoices.map((choice) => choice.id))}>
+                            Marcar todos
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => set('swap_options', [])} disabled={form.swap_options.length === 0}>
+                            Limpar
+                          </Button>
+                        </div>
+                        <ul className="mt-2 max-h-72 space-y-1 overflow-y-auto rounded-xl border border-white/10 bg-black/20 p-2">
+                          {optionChoices.map((choice) => (
+                            <li key={choice.id}>
+                              <label className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 text-sm text-white hover:bg-white/[0.06]">
+                                <input type="checkbox" checked={form.swap_options.includes(choice.id)} onChange={() => toggleOption(choice.id)} className="h-4 w-4 shrink-0 accent-[#2563FF]" />
+                                <span className="min-w-0 flex-1">{choice.name}</span>
+                                <span className="shrink-0 text-xs text-white/60">{moneyInput(Number(choice.promo_price ?? choice.price))}</span>
+                              </label>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </fieldset>
+                </div>
               )}
               <Field label="SKU (opcional)" count={form.sku.length} max={40}>
                 {(p) => <input {...p} value={form.sku} maxLength={40} onChange={(e) => set('sku', e.target.value)} className={INPUT} />}

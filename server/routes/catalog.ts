@@ -25,6 +25,8 @@ const productSpec: Spec = {
   sold_out: bool('Esgotado'),
   // Combos: o energético que vem no produto (para a troca com diferença de preço). Vazio = o produto não aceita troca.
   swap_base_product_id: uuid('Energético que vem no combo', { nullable: true }),
+  // Combos: o VALOR do energético que vem no combo, quando ele não é um produto do cardápio (a base da diferença de preço da troca).
+  swap_base_price: money('Valor do energético que vem no combo', { nullable: true, positive: true }),
   position: int('Ordem', { max: 100_000 }),
 };
 
@@ -64,6 +66,7 @@ const PRODUCT_LABELS: FieldLabels = {
   active: { label: 'ativo no site', format: 'bool' },
   sold_out: { label: 'esgotado', format: 'bool' },
   swap_base_product_id: { label: 'energético que vem no combo', format: 'changed' },
+  swap_base_price: { label: 'valor do energético do combo', format: 'money' },
   position: { label: 'ordem' },
 };
 
@@ -105,6 +108,30 @@ async function checkSwapBase(baseId: unknown, productId?: string) {
   if (!found) throw new HttpError(400, 'Energético que vem no combo: produto não encontrado.', { code: 'swap_base_missing' });
 }
 
+// Energéticos que o cliente pode escolher na troca deste combo (lista opcional; sem lista vale qualquer energético de 2L).
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SWAP_OPTIONS_SQL = 'array(select o.option_id from product_swap_options o where o.product_id = p.id order by o.option_id) as swap_option_ids';
+
+function swapOptionIds(body: Row, selfId?: string): string[] | undefined {
+  if (!('swap_option_ids' in body)) return undefined;
+  const raw = body.swap_option_ids;
+  if (raw === null) return [];
+  if (!Array.isArray(raw) || raw.length > 60 || raw.some((v) => typeof v !== 'string' || !UUID.test(v))) {
+    throw new HttpError(400, 'Energéticos da troca: lista inválida.', { code: 'swap_options_invalid' });
+  }
+  const ids = [...new Set(raw.map((v) => String(v).toLowerCase()))];
+  if (selfId && ids.includes(selfId)) throw new HttpError(400, 'Energéticos da troca: o próprio combo não pode ser um deles.', { code: 'swap_options_self' });
+  return ids;
+}
+
+async function checkSwapOptions(ids: string[]) {
+  if (!ids.length) return;
+  const found = await one<{ n: number }>('select count(*)::int as n from products where id = any($1::uuid[])', [ids]);
+  if (found?.n !== ids.length) throw new HttpError(400, 'Energéticos da troca: algum produto não foi encontrado.', { code: 'swap_options_missing' });
+}
+
+const withOptions = (id: string) => one<Row>(`select p.*, ${SWAP_OPTIONS_SQL} from products p where p.id = $1`, [id]);
+
 const duplicateError = (found: { id: string; name: string }) =>
   new HttpError(409, `Já existe um produto chamado “${found.name}” nesta categoria. Cadastre mesmo assim?`, { code: 'duplicate_product', existing_id: found.id });
 
@@ -113,7 +140,7 @@ export function registerCatalog(r: Router) {
 
   r.get('/api/admin/products', 'admin', async () => {
     const [products, categories, site] = await batch([
-      ['select * from products order by name'],
+      [`select p.*, ${SWAP_OPTIONS_SQL} from products p order by p.name`],
       ['select * from categories order by position, name'],
       ['select featured_limit from site_settings where id = 1'],
     ]);
@@ -122,7 +149,7 @@ export function registerCatalog(r: Router) {
 
   r.get('/api/admin/products/:id', 'admin', async (ctx) => {
     const [products, categories] = await batch([
-      ['select * from products where id = $1', [uuidParam(ctx)]],
+      [`select p.*, ${SWAP_OPTIONS_SQL} from products p where p.id = $1`, [uuidParam(ctx)]],
       ['select * from categories order by position, name'],
     ]);
     if (!products[0]) throw new HttpError(404, 'Produto não encontrado.');
@@ -143,10 +170,14 @@ export function registerCatalog(r: Router) {
       if (found) throw duplicateError(found);
     }
     await checkSwapBase(values.swap_base_product_id);
+    const optionIds = swapOptionIds(body);
+    await checkSwapOptions(optionIds ?? []);
     if (values.position === undefined) {
       values.position = (await one<{ n: number }>('select coalesce(max(position), -1) + 1 as n from products'))?.n ?? 0;
     }
-    const product = await insertRow<{ id: string }>('products', values, cast);
+    const created = await insertRow<{ id: string }>('products', values, cast);
+    if (created && optionIds?.length) await query('insert into product_swap_options (product_id, option_id) select $1::uuid, unnest($2::uuid[])', [created.id, optionIds]);
+    const product = created ? await withOptions(created.id) : created;
     await audit(ctx, { action: 'product.create', summary: `Cadastrou o produto “${values.name}” por ${brl(values.price as number)}`, entity: 'product', entityId: product?.id });
     return json({ product }, 201);
   });
@@ -162,6 +193,8 @@ export function registerCatalog(r: Router) {
       values.promo_ends_at = null;
     }
     await checkSwapBase(values.swap_base_product_id, id);
+    const optionIds = swapOptionIds(body, id);
+    await checkSwapOptions(optionIds ?? []);
     const final = { ...before, ...values } as Row;
     checkPromo(Number(final.price), final.promo_price === null ? null : Number(final.promo_price), final.promo_starts_at ?? null, final.promo_ends_at ?? null);
     const renamed = ('name' in values && values.name !== before.name) || ('category_id' in values && values.category_id !== before.category_id);
@@ -169,10 +202,25 @@ export function registerCatalog(r: Router) {
       const found = await duplicateOf(String(final.name), (final.category_id as string | null) ?? null, id);
       if (found) throw duplicateError(found);
     }
-    const product = await updateRow('products', { column: 'id', value: id }, values, cast);
+    await updateRow('products', { column: 'id', value: id }, values, cast);
+    // A lista de energéticos da troca é trocada inteira, junto (tudo ou nada).
+    let optionsText = '';
+    if (optionIds !== undefined) {
+      const previous = (await one<{ ids: string[] }>('select array(select option_id from product_swap_options where product_id = $1) as ids', [id]))?.ids ?? [];
+      const changed = previous.length !== optionIds.length || optionIds.some((x) => !previous.includes(x));
+      if (changed) {
+        await batch([
+          ['delete from product_swap_options where product_id = $1::uuid', [id]],
+          ['insert into product_swap_options (product_id, option_id) select $1::uuid, unnest($2::uuid[])', [id, optionIds]],
+        ]);
+        optionsText = `energéticos da troca: ${previous.length || 'todos de 2L'} → ${optionIds.length || 'todos de 2L'}`;
+      }
+    }
+    const product = await withOptions(id);
     if ('image_url' in values) await releaseImages([before.image_url as string | null]);
     const diff = changedFields(before, values, PRODUCT_LABELS);
-    if (diff) await audit(ctx, { action: 'product.update', summary: `Produto “${before.name}”: ${diff.text}`, entity: 'product', entityId: id, details: diff.details });
+    const summary = [diff?.text, optionsText].filter(Boolean).join('; ');
+    if (summary) await audit(ctx, { action: 'product.update', summary: `Produto “${before.name}”: ${summary}`, entity: 'product', entityId: id, details: diff?.details });
     return json({ product });
   });
 
@@ -189,13 +237,14 @@ export function registerCatalog(r: Router) {
   // o arquivo só sai do Blob quando nenhum produto o usa mais.
   r.post('/api/admin/products/:id/duplicate', 'admin', async (ctx) => {
     const product = await one<{ id: string; name: string }>(
-      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, featured, active, position, swap_base_product_id)
-       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, false, false, position + 1, swap_base_product_id
+      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price)
+       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price
          from products where id = $1
        returning *`,
       [uuidParam(ctx)],
     );
     if (!product) throw new HttpError(404, 'Produto não encontrado.');
+    await query('insert into product_swap_options (product_id, option_id) select $1::uuid, option_id from product_swap_options where product_id = $2::uuid', [product.id, uuidParam(ctx)]);
     await audit(ctx, { action: 'product.duplicate', summary: `Duplicou um produto: criou “${product.name}” (desativado)`, entity: 'product', entityId: product.id });
     return json({ product }, 201);
   });

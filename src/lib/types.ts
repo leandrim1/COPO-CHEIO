@@ -89,6 +89,10 @@ export type ProductRecord = {
   promo_ends_at?: string | null;
   // Combos: o energético que vem no produto (base da troca de energético com diferença de preço). Vazio = não aceita troca.
   swap_base_product_id?: string | null;
+  // Combos: o VALOR do energético que vem no combo (quando ele não é um produto do cardápio) e os energéticos que o cliente pode escolher
+  // na troca (lista vazia = qualquer energético de 2L).
+  swap_base_price?: number | null;
+  swap_option_ids?: string[];
   created_at: string;
   updated_at: string;
 };

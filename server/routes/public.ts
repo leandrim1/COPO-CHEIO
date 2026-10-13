@@ -28,7 +28,8 @@ export function registerPublic(r: Router) {
                 effective_promo(p.promo_price, p.promo_starts_at, p.promo_ends_at) as promo_price,
                 p.image_url, p.featured,
                 (p.sold_out or (p.stock is not null and p.stock <= 0)) as sold_out, p.position,
-                p.swap_base_product_id
+                p.swap_base_product_id, p.swap_base_price,
+                array(select o.option_id from product_swap_options o where o.product_id = p.id order by o.option_id) as swap_option_ids
            from products p
            left join categories c on c.id = p.category_id
           where p.active and (p.category_id is null or c.active)

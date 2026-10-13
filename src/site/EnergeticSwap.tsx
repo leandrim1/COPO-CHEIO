@@ -1,7 +1,7 @@
 import { Minus, Plus, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { COMBO_NOTE, canSwap, swapBaseOf, swapDifference, swapOptions } from '../lib/combo';
+import { COMBO_NOTE, canSwap, swapBaseLabel, swapBasePrice, swapDifference, swapOptions } from '../lib/combo';
 import { money } from '../lib/format';
 import { plainCount, swappedCount } from '../lib/ice';
 import { unitPrice, useShop } from './data';
@@ -15,8 +15,8 @@ import { BLUE_BUTTON, ProductImage, SoldOutBadge } from './ui';
 
 const STEP = 'grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30';
 
-function EnergeticRow({ energetic, base, n, available, onSwap }: { energetic: Product; base: Product; n: number; available: number; onSwap: (delta: number) => void }) {
-  const diff = swapDifference(energetic, base);
+function EnergeticRow({ energetic, basePrice, n, available, onSwap }: { energetic: Product; basePrice: number; n: number; available: number; onSwap: (delta: number) => void }) {
+  const diff = swapDifference(energetic, basePrice);
   const name = energetic.name;
   return (
     <li data-energetic={energetic.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-2.5">
@@ -67,13 +67,14 @@ function EnergeticSheet({ combo, onClose }: { combo: Product; onClose: () => voi
   const { products, cart } = useShop();
   const closeRef = useRef<HTMLButtonElement>(null);
   const [announcement, setAnnouncement] = useState('');
-  const base = swapBaseOf(products, combo);
+  const basePrice = swapBasePrice(products, combo);
+  const baseLabel = swapBaseLabel(products, combo);
   const options = useMemo(
     () =>
       swapOptions(products, combo).sort(
-        (a, b) => Number(a.soldOut) - Number(b.soldOut) || (base ? swapDifference(a, base) - swapDifference(b, base) : 0) || unitPrice(a) - unitPrice(b) || a.name.localeCompare(b.name, 'pt-BR'),
+        (a, b) => Number(a.soldOut) - Number(b.soldOut) || (basePrice !== null ? swapDifference(a, basePrice) - swapDifference(b, basePrice) : 0) || unitPrice(a) - unitPrice(b) || a.name.localeCompare(b.name, 'pt-BR'),
       ),
-    [products, combo, base],
+    [products, combo, basePrice],
   );
 
   useEffect(() => {
@@ -95,7 +96,7 @@ function EnergeticSheet({ combo, onClose }: { combo: Product; onClose: () => voi
     };
   }, [onClose]);
 
-  if (!base) return null;
+  if (basePrice === null) return null;
   const plain = plainCount(cart.cart, combo.id);
   const total = cart.countOf(combo.id);
   const swapped = options.reduce((sum, p) => sum + swappedCount(cart.cart, combo.id, p.id), 0);
@@ -126,9 +127,9 @@ function EnergeticSheet({ combo, onClose }: { combo: Product; onClose: () => voi
         </div>
         <div className="px-5 pb-3 text-sm leading-snug sm:px-6">
           <p className="font-semibold text-white" data-swap-combo={combo.id}>
-            Vem no combo: <span className="text-[#8FB1FF]">{base.name}</span>
+            Vem no combo: <span className="text-[#8FB1FF]">{baseLabel}</span>
           </p>
-          <p className="mt-1 text-white/70">Energéticos de 2L: toque em Trocar e pague só a diferença de preço por combo.</p>
+          <p className="mt-1 text-white/70">Toque em Trocar no energético que você quer. Se for mais caro, você paga só a diferença de preço por combo; se for o mesmo valor, o preço se mantém.</p>
           <p className="mt-1 font-semibold text-amber-100">Obs: {COMBO_NOTE}</p>
           {total === 0 && <p className="mt-2 font-bold text-rose-200">Este combo não está mais no seu pedido.</p>}
           {total > 0 && plain === 0 && <p className="mt-2 font-bold text-amber-100">Todos os combos já estão com energético trocado. Diminua um para trocar por outro.</p>}
@@ -138,12 +139,12 @@ function EnergeticSheet({ combo, onClose }: { combo: Product; onClose: () => voi
             <EnergeticRow
               key={energetic.id}
               energetic={energetic}
-              base={base}
+              basePrice={basePrice}
               n={swappedCount(cart.cart, combo.id, energetic.id)}
               available={plain}
               onSwap={(delta) => {
                 cart.swapBy(combo.id, energetic.id, delta);
-                setAnnouncement(delta > 0 ? `Um combo trocado por ${energetic.name}.` : `Um combo voltou ao energético ${base.name}.`);
+                setAnnouncement(delta > 0 ? `Um combo trocado por ${energetic.name}.` : `Um combo voltou ao energético que vem nele.`);
               }}
             />
           ))}

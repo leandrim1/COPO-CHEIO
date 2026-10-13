@@ -1,5 +1,6 @@
-// Troca do energético dos combos (migration 0017): o preço da troca (combo + diferença) é calculado pelo banco e nunca fica abaixo do combo,
-// só energéticos de 2L entram, o estoque do energético novo sai e volta, tudo vale mesmo numa requisição feita direto à API.
+// Troca do energético dos combos (migrations 0017 e 0018): o preço da troca (combo + diferença) é calculado pelo banco e nunca fica abaixo do combo,
+// a diferença é sobre o VALOR do energético que vem no combo (produto do cardápio ou valor digitado no painel), a lista de energéticos da troca é
+// a que o painel escolheu (sem lista, qualquer energético de 2L), o estoque do energético novo sai e volta, tudo vale mesmo numa requisição feita direto à API.
 // usage: bash tests/fresh.sh && node tests/api-test16.mjs
 import { execFileSync } from 'node:child_process';
 import { Client, check, registerVerified, section, summary } from './lib.mjs';
@@ -14,7 +15,7 @@ const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', '
 const combo = await load('src/lib/combo.ts');
 
 // ------------------------------------------------------------------------------------------------
-section('1. Banco de produção antes da mudança: a migration 0017 só acrescenta e já liga cada combo ao energético que vem nele');
+section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só acrescentam e a 0017 já liga cada combo ao energético que vem nele');
 {
   const db = 'legacy17_a';
   execFileSync('psql', [...P, '-q', '-v', 'ON_ERROR_STOP=1', '-c', `drop database if exists ${db} with (force)`, '-c', `create database ${db}`], QUIET);
@@ -42,7 +43,8 @@ section('1. Banco de produção antes da mudança: a migration 0017 só acrescen
   check('antes: o combo é pedido normalmente', oldOrder.order_number >= 1001 && oldOrder.total === 180, oldOrder);
 
   const out = migrate();
-  check('migrate.mjs aplica só a 0017', /aplicada: 0017_energetic_swap/.test(out) && !/aplicada: 00(0|1[0-6])/.test(out), out);
+  check('migrate.mjs aplica só a 0017 e a 0018, nessa ordem', /aplicada: 0017_energetic_swap[\s\S]*aplicada: 0018_swap_options/.test(out) && !/aplicada: 00(0|1[0-6])/.test(out), out);
+  check('0018: nenhum combo ganha valor digitado nem lista (todos continuam aceitando qualquer energético de 2L)', q('select count(*) from products where swap_base_price is not null') === '0' && q('select count(*) from product_swap_options') === '0');
   const base = (id) => q(`select coalesce(swap_base_product_id::text, 'nenhum') from products where id = ${lit(id)}`);
   check('combo que cita "Energético Jack Power 2L" ganha o Jack Power 2L', base(busca) === jack, base(busca));
   check('combo que cita "Energético Fusion 2 Litros" ganha o Fusion (maiúsculas e "2 Litros" não atrapalham)', base(fus) === fusion, base(fus));
@@ -60,6 +62,34 @@ section('1. Banco de produção antes da mudança: a migration 0017 só acrescen
   q(`update products set swap_base_product_id = ${lit(fusion)} where id = ${lit(busca)}`);
   const again = migrate();
   check('rodar de novo não faz nada e não desfaz o que o painel mudou', /Banco já está atualizado/.test(again) && base(busca) === fusion, again);
+  execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
+}
+
+// O banco que está no ar hoje já tem a 0017: a 0018 sozinha não pode mexer em nada do que existe.
+{
+  const db = 'legacy17_b';
+  execFileSync('psql', [...P, '-q', '-v', 'ON_ERROR_STOP=1', '-c', `drop database if exists ${db} with (force)`, '-c', `create database ${db}`], QUIET);
+  const files = ['0001_schema', '0002_functions', '0003_initial_content', '0004_order_tracking', '0005_email_verification', '0006_password_reset_email', '0007_banner_cover', '0008_store_whatsapp', '0009_security_foundations', '0010_promo_window', '0011_orders_integrity', '0012_privacy', '0013_ice_choice', '0014_online_payments', '0015_merchant_account_flow', '0016_commission_2_percent', '0017_energetic_swap'];
+  for (const f of files) execFileSync('psql', [...P, '-d', db, '-q', '-v', 'ON_ERROR_STOP=1', '-f', `${root}db/migrations/${f}.sql`], QUIET);
+  execFileSync('psql', [...P, '-d', db, '-q', '-c', `create table schema_migrations (version text primary key, applied_at timestamptz not null default now()); insert into schema_migrations(version) values ${files.map((f) => `('${f}')`).join(',')}`], QUIET);
+  const q = (sql) => psql(sql, db);
+  q(`insert into categories (name, position) values ('Combos', 0), ('Energéticos', 1)`);
+  const cat = (name) => q(`select id from categories where name = ${lit(name)}`);
+  const mkp = (name, price, category, extra = '') => q(`insert into products (name, price, category_id${extra ? ', swap_base_product_id' : ''}) values (${lit(name)}, ${price}, ${lit(cat(category))}${extra}) returning id`);
+  const jack = mkp('Energético Jack Power 2L', 12, 'Energéticos');
+  const tropical = mkp('Energético Tropical 2L', 14, 'Energéticos');
+  const combo = mkp('COMBO ( 1 Energético Jack Power 2L )', 90, 'Combos', `, ${lit(jack)}`);
+  q(`update store_settings set orders_paused = false, opening_hours = ${lit(JSON.stringify(ALL_DAYS))}::jsonb`);
+  let n17 = 0;
+  const buy = (swap) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente 17', customer_phone: `3499000${String(1000 + ++n17)}`, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1, ...(swap ? { swap_to: tropical } : {}) }] }))}::jsonb)`));
+  const before = buy(true);
+  check('antes da 0018 (banco de hoje): a troca já cobra a diferença pelo produto escolhido (90 + 2 = 92)', before.total === 92, before);
+  const out = execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
+  check('migrate.mjs aplica só a 0018', /aplicada: 0018_swap_options/.test(out) && !/aplicada: 00(0|1[0-7])/.test(out), out);
+  check('o pedido que já existia, o combo e o energético escolhido para ele continuam como estavam', q(`select count(*) from order_items where swap_to_product_id = ${lit(tropical)} and unit_price = 92`) === '1' && q(`select swap_base_product_id from products where id = ${lit(combo)}`) === jack);
+  const after = buy(true);
+  check('depois da 0018: o mesmo pedido de troca dá o mesmo preço (combo sem lista nem valor digitado = como antes)', after.total === 92 && after.items[0].unit_price === 92, after);
+  check('...e o pedido sem troca também (90)', buy(false).total === 90);
   execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
 }
 
@@ -131,6 +161,72 @@ const inactive = await mk('Energético Inativo 2L', 12, catEnergy, { active: fal
 }
 
 // ------------------------------------------------------------------------------------------------
+section('3b. Painel: valor do energético do combo e lista de energéticos da troca (migration 0018)');
+const eqE = await mk('Energético Baly Uva 2L', 15, catEnergy, { stock: 80 });
+const proE = await mk('Energético Premium 2L', 18.5, catEnergy, { stock: 80 });
+const cheapE = await mk('Energético Barato 2L', 9, catEnergy, { stock: 80 });
+const lata = await mk('Energético Lata 473ml', 8, catEnergy, { stock: 80 });
+const outE = await mk('Energético Fora da Lista 2L', 15, catEnergy, { stock: 80 });
+const c4 = await mk('COMBO WHISKY ( 4 gelos, 1 Whisky, 1 Energético Jack Power 2L )', 100, catCombos, { stock: 60 });
+const c5 = await mk('COMBO VODKA ( 4 gelos, 1 Vodka, 1 Energético Fusion 2L )', 70, catCombos, { stock: 60 });
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const sorted = (ids) => [...ids].sort();
+const adminProduct = async (id) => (await owner.get(`/api/admin/products/${id}`)).data.product;
+{
+  check('produto novo nasce sem valor do energético e sem lista de energéticos', c4.swap_base_price === null && Array.isArray(c4.swap_option_ids) && c4.swap_option_ids.length === 0, c4);
+  const price = await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 15 });
+  check('o painel guarda o valor do energético que vem no combo (R$ 15,00) sem precisar de um produto do cardápio', price.status === 200 && Number(price.data.product.swap_base_price) === 15 && price.data.product.swap_base_product_id === null, price.data);
+  for (const bad of [0, -1, 'abc', true, 2_000_000]) {
+    const r = await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: bad });
+    check(`valor do energético inválido (${JSON.stringify(bad)}) é recusado (400)`, r.status === 400, r.data);
+  }
+  check('o valor continua R$ 15,00 depois das recusas', Number((await adminProduct(c4.id)).swap_base_price) === 15);
+  check('sem login não muda o valor nem a lista (401)', (await anon.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 1 })).status === 401 && (await anon.patch(`/api/admin/products/${c4.id}`, { swap_option_ids: [eqE.id] })).status === 401);
+
+  const set = await owner.patch(`/api/admin/products/${c4.id}`, { swap_option_ids: [eqE.id, proE.id, cheapE.id, lata.id] });
+  check('o painel escolhe os energéticos da troca (lista de 4, inclusive um de 473 ml)', set.status === 200 && same(sorted(set.data.product.swap_option_ids), sorted([eqE.id, proE.id, cheapE.id, lata.id])), set.data);
+  const dedupe = await owner.patch(`/api/admin/products/${c5.id}`, { swap_option_ids: [eqE.id, eqE.id, eqE.id.toUpperCase()] });
+  check('ids repetidos (ou em maiúsculas) entram uma vez só', dedupe.status === 200 && same(dedupe.data.product.swap_option_ids, [eqE.id]), dedupe.data);
+  const before = sorted((await adminProduct(c4.id)).swap_option_ids);
+  const rejects = [
+    ['lista que não é lista', 'abc', 'swap_options_invalid'], ['id que não é id', ['abc'], 'swap_options_invalid'], ['número no lugar do id', [5], 'swap_options_invalid'],
+    ['objeto no lugar do id', [{ id: eqE.id }], 'swap_options_invalid'], ['mais de 60 energéticos', Array.from({ length: 61 }, (_v, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`), 'swap_options_invalid'],
+    ['o próprio combo na lista', [eqE.id, c4.id], 'swap_options_self'], ['produto que não existe', [eqE.id, '00000000-0000-4000-8000-000000000000'], 'swap_options_missing'],
+  ];
+  for (const [name, value, code] of rejects) {
+    const r = await owner.patch(`/api/admin/products/${c4.id}`, { swap_option_ids: value });
+    check(`lista recusada: ${name} (400 ${code})`, r.status === 400 && r.data.code === code, r.data);
+  }
+  check('...e a lista de antes continuou igual (tudo ou nada)', same(sorted((await adminProduct(c4.id)).swap_option_ids), before));
+  const rename = await owner.patch(`/api/admin/products/${c4.id}`, { description: 'Whisky com energético' });
+  check('editar outro campo sem mandar a lista não mexe nela', rename.status === 200 && same(sorted(rename.data.product.swap_option_ids), before));
+  const listed = (await owner.get('/api/admin/products')).data.products;
+  check('a lista de produtos do painel traz o valor e a lista de cada combo', same(sorted(listed.find((p) => p.id === c4.id).swap_option_ids), before) && Number(listed.find((p) => p.id === c4.id).swap_base_price) === 15 && Array.isArray(listed.find((p) => p.id === jack.id).swap_option_ids));
+  const pub = (await anon.get('/api/products')).data.products;
+  const pc4 = pub.find((p) => p.id === c4.id);
+  check('o site recebe o valor e a lista de cada produto (/api/products)', Number(pc4.swap_base_price) === 15 && same(sorted(pc4.swap_option_ids), before) && pub.find((p) => p.id === c1.id).swap_base_price === null && same(pub.find((p) => p.id === c1.id).swap_option_ids, []), pc4);
+  const log = (await owner.get('/api/admin/audit?entity=product&limit=60')).data.entries.map((e) => e.summary).join(' | ');
+  check('as mudanças ficam no histórico: valor do energético e energéticos da troca', /valor do energético do combo/.test(log) && /energéticos da troca: 0|energéticos da troca: todos de 2L → 4/.test(log), log);
+  const dup = await owner.post(`/api/admin/products/${c4.id}/duplicate`);
+  const dupFull = await adminProduct(dup.data.product.id);
+  check('duplicar o combo leva o valor e a lista junto', dup.status === 201 && Number(dupFull.swap_base_price) === 15 && same(sorted(dupFull.swap_option_ids), before), dupFull);
+  await owner.del(`/api/admin/products/${dup.data.product.id}`);
+  const temp = await mk('Energético Provisório 2L', 11, catEnergy, { stock: 5 });
+  await owner.patch(`/api/admin/products/${c5.id}`, { swap_option_ids: [eqE.id, temp.id] });
+  const del = await owner.del(`/api/admin/products/${temp.id}`);
+  check('apagar um energético da lista tira ele da lista do combo (sem erro)', del.status === 200 && same((await adminProduct(c5.id)).swap_option_ids, [eqE.id]), del.data);
+  const clear = await owner.patch(`/api/admin/products/${c5.id}`, { swap_option_ids: [], swap_base_price: null });
+  check('lista vazia e valor null limpam (volta a valer qualquer energético de 2L)', clear.status === 200 && clear.data.product.swap_option_ids.length === 0 && clear.data.product.swap_base_price === null, clear.data);
+  const nul = await owner.patch(`/api/admin/products/${c5.id}`, { swap_option_ids: null });
+  check('swap_option_ids null também limpa', nul.status === 200 && nul.data.product.swap_option_ids.length === 0);
+  const created = await owner.post('/api/admin/products', { name: 'COMBO CRIADO COM LISTA', price: 55, category_id: catCombos.id, swap_base_price: 13.5, swap_option_ids: [eqE.id, proE.id], confirm_duplicate: true });
+  check('cadastrar um combo já com valor e lista', created.status === 201 && Number(created.data.product.swap_base_price) === 13.5 && same(sorted(created.data.product.swap_option_ids), sorted([eqE.id, proE.id])), created.data);
+  const badCreate = await owner.post('/api/admin/products', { name: 'COMBO COM LISTA RUIM', price: 55, category_id: catCombos.id, swap_option_ids: ['00000000-0000-4000-8000-000000000000'], confirm_duplicate: true });
+  check('cadastro com energético que não existe: 400 e nada criado', badCreate.status === 400 && !(await owner.get('/api/admin/products')).data.products.some((p) => p.name === 'COMBO COM LISTA RUIM'), badCreate.data);
+  await owner.del(`/api/admin/products/${created.data.product.id}`);
+}
+
+// ------------------------------------------------------------------------------------------------
 let ip = 40;
 const buyer = () => new Client(undefined, `203.0.113.${ip++}`);
 let phone = 0;
@@ -139,7 +235,6 @@ const stockOf = (id) => psql(`select coalesce(stock::text, 'null') from products
 const ordersCount = () => Number(psql('select count(*) from orders'));
 const lines = (number) => psql(`select coalesce(string_agg(i.quantity || ':' || i.unit_price || ':' || i.product_name, ' | ' order by i.unit_price, i.product_name), '') from order_items i join orders o on o.id = i.order_id where o.order_number = ${number}`);
 const snap = () => ({ orders: ordersCount(), c1: stockOf(c1.id), jack: stockOf(jack.id), tropical: stockOf(tropical.id), baly: stockOf(baly.id) });
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 section('4. O preço da troca é o combo + a diferença, calculado pelo banco');
 let made;
@@ -221,6 +316,88 @@ section('6. Recusas: nada é criado e nenhum estoque mexe (nem numa requisição
   // Nomes escritos de outro jeito (campo inventado) são ignorados: o preço continua sendo o do combo, sem troca nenhuma
   const ignored = await buyer().post('/api/orders', order([{ product_id: c1.id, quantity: 1, swap: tropical.id, swapTo: tropical.id, unit_price: 1 }]));
   check('campos inventados (swap, swapTo, unit_price) são ignorados: sem troca, preço do combo', ignored.status === 201 && ignored.data.order.items[0].unit_price === 90 && !/troca/.test(ignored.data.order.items[0].product_name), ignored.data);
+}
+
+// ------------------------------------------------------------------------------------------------
+section('6b. Valor do energético do combo e lista da troca: o preço e as recusas vêm do banco');
+{
+  // c4: o energético do combo (R$ 15,00) não é um produto do cardápio; o painel liberou 4 energéticos
+  const priced = async (swap, qty = 1) => {
+    const r = await buyer().post('/api/orders', order([{ product_id: c4.id, quantity: qty, swap_to: swap.id }]));
+    return { r, item: r.data.order?.items?.[0] };
+  };
+  let t = await priced(eqE);
+  check('mesmo valor do energético do combo (R$ 15 = R$ 15): mantém o preço do combo (R$ 100,00) e diz "sem diferença"', t.r.status === 201 && t.item.unit_price === 100 && /troca do energético por Energético Baly Uva 2L \(sem diferença\)/.test(t.item.product_name), t.r.data);
+  t = await priced(proE, 2);
+  check('mais caro (R$ 18,50 − R$ 15,00): paga a diferença de R$ 3,50 → R$ 103,50 por combo', t.r.status === 201 && t.item.unit_price === 103.5 && t.item.quantity === 2 && t.r.data.order.subtotal === 207 && /\(\+ R\$ 3,50\)/.test(t.item.product_name), t.r.data);
+  t = await priced(cheapE);
+  check('mais barato (R$ 9 < R$ 15): o preço não cai (R$ 100,00)', t.r.status === 201 && t.item.unit_price === 100 && /\(sem diferença\)/.test(t.item.product_name), t.r.data);
+  t = await priced(lata);
+  check('a lista do painel vale mesmo para um energético que não é de 2L (473 ml, R$ 8): R$ 100,00', t.r.status === 201 && t.item.unit_price === 100, t.r.data);
+
+  // Promoções: a do energético novo conta; o valor digitado é o que o painel mandou
+  await owner.patch(`/api/admin/products/${proE.id}`, { promo_price: 16 });
+  t = await priced(proE);
+  check('energético novo em promoção (R$ 16,00): a diferença é R$ 1,00 → R$ 101,00', t.item.unit_price === 101 && /\(\+ R\$ 1,00\)/.test(t.item.product_name), t.r.data);
+  await owner.patch(`/api/admin/products/${proE.id}`, { promo_price: null });
+  await owner.patch(`/api/admin/products/${eqE.id}`, { promo_price: 12 });
+  t = await priced(eqE);
+  check('promoção do energético novo abaixo do valor do combo: continua R$ 100,00 (sem desconto)', t.item.unit_price === 100, t.r.data);
+  await owner.patch(`/api/admin/products/${eqE.id}`, { promo_price: null });
+
+  // O painel muda o valor: o pedido seguinte já usa o novo
+  await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 20 });
+  t = await priced(proE);
+  check('painel muda o valor do energético do combo para R$ 20: o Premium (R$ 18,50) passa a não ter diferença', t.item.unit_price === 100 && /\(sem diferença\)/.test(t.item.product_name), t.r.data);
+  await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 10 });
+  t = await priced(eqE);
+  check('...e para R$ 10: o de R$ 15 passa a custar R$ 5,00 a mais (R$ 105,00)', t.item.unit_price === 105, t.r.data);
+  await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 15 });
+
+  // Paridade das contas do banco com as do site, em vários pares (base, novo, promoção do novo)
+  const pairs = [[15, 15, null], [15, 18.5, null], [15, 9, null], [9.7, 9.9, null], [0.1, 0.3, null], [12.34, 12.35, null], [20, 25, 21.05], [15, 18, 14], [7.99, 8, null]];
+  const bad = [];
+  for (const [basePrice, newPrice, promo] of pairs) {
+    await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: basePrice });
+    await owner.patch(`/api/admin/products/${eqE.id}`, { price: newPrice, promo_price: promo });
+    const got = await priced(eqE);
+    const want = Math.round(10000 + combo.swapDifference({ price: newPrice, promoPrice: promo }, basePrice) * 100) / 100;
+    if (got.item?.unit_price !== want) bad.push({ basePrice, newPrice, promo, banco: got.item?.unit_price, site: want });
+  }
+  check(`as ${pairs.length} contas de diferença (valor do combo × energético novo × promoção) dão o mesmo no banco e no site`, bad.length === 0, bad);
+  await owner.patch(`/api/admin/products/${eqE.id}`, { price: 15, promo_price: null });
+  await owner.patch(`/api/admin/products/${c4.id}`, { swap_base_price: 15 });
+
+  // Recusas
+  const s0 = snap();
+  const refuse = async (name, combo_, swap, pattern) => {
+    const r = await buyer().post('/api/orders', order([{ product_id: combo_.id, quantity: 1, swap_to: swap.id }]));
+    check(name, r.status === 400 && pattern.test(r.data.error ?? ''), r.data);
+  };
+  await refuse('energético de 2L que o painel NÃO liberou para este combo', c4, outE, /um dos energéticos oferecidos/);
+  await refuse('outro energético de 2L que existe, mas não está na lista', c4, tropical, /um dos energéticos oferecidos/);
+  await refuse('um combo na lista de outro combo também não vale', c4, c1, /um dos energéticos oferecidos/);
+  await refuse('combo sem energético definido nem valor, mesmo com lista, não aceita troca', c5, eqE, /não aceita troca/);
+  await owner.patch(`/api/admin/products/${c5.id}`, { swap_option_ids: [tropical.id] });
+  await refuse('lista só com o Tropical, mas sem energético definido: não aceita troca', c5, tropical, /não aceita troca/);
+  // Produto escolhido + valor digitado: o produto manda; a lista pode incluir o próprio energético do combo, mas ele nunca vale como troca
+  await owner.patch(`/api/admin/products/${c5.id}`, { swap_base_product_id: jack.id, swap_base_price: 99, swap_option_ids: [tropical.id, jack.id] });
+  await refuse('o energético que já vem no combo, mesmo estando na lista, não vale', c5, jack, /diferente do que já vem/);
+  await refuse('Baly (2L, mas fora da lista deste combo)', c5, baly, /um dos energéticos oferecidos/);
+  const both = await buyer().post('/api/orders', order([{ product_id: c5.id, quantity: 1, swap_to: tropical.id }]));
+  check('com o produto E o valor preenchidos, vale o preço do produto (Jack R$ 12 → Tropical R$ 14 = + R$ 2,00), não o valor digitado (R$ 99)', both.status === 201 && both.data.order.items[0].unit_price === 72, both.data);
+  check('nada foi criado nas recusas (só o pedido válido acima entrou)', ordersCount() === s0.orders + 1);
+  await owner.patch(`/api/admin/products/${c5.id}`, { swap_base_product_id: null, swap_base_price: null, swap_option_ids: [] });
+
+  // Total conferido com valor digitado + estoque do energético novo
+  const stock0 = Number(stockOf(proE.id));
+  const sure = await buyer().post('/api/orders', order([{ product_id: c4.id, quantity: 1, swap_to: proE.id }], { expected_total: '103.50' }));
+  check('total conferido bate com a troca (R$ 103,50): 201 e o estoque do energético novo desceu 1', sure.status === 201 && Number(stockOf(proE.id)) === stock0 - 1, sure.data);
+  const stale = await buyer().post('/api/orders', order([{ product_id: c4.id, quantity: 1, swap_to: proE.id }], { expected_total: '100.00' }));
+  check('total visto sem a diferença (R$ 100,00): 409 price_changed com o total de agora (R$ 103,50)', stale.status === 409 && stale.data.code === 'price_changed' && stale.data.total === 103.5, stale.data);
+  const id = (await owner.get(`/api/admin/orders/${sure.data.order.order_number}`)).data.order.id;
+  await owner.patch(`/api/admin/orders/${id}`, { status: 'cancelled' });
+  check('cancelar devolve o estoque do energético da troca', Number(stockOf(proE.id)) === stock0);
 }
 
 // ------------------------------------------------------------------------------------------------

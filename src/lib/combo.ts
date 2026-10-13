@@ -1,3 +1,5 @@
+import { money } from './format';
+
 // Aviso dos combos (pedido do dono da loja): quem adiciona um combo é lembrado de que trocar o energético tem diferença de preço.
 // O combo é achado pelo NOME da categoria ("Combos"), sem acento nem diferença de maiúsculas; renomear a categoria para outra coisa desliga o aviso
 // (não quebra nada). O mesmo texto também está na descrição dos combos, cadastrada no painel; aqui ele aparece NA HORA DE ADICIONAR e na linha do pedido.
@@ -21,30 +23,58 @@ export const isEnergetico2L = (product: { name: string; category: string }): boo
   (isEnergeticoCategory(product.category) || /^energeticos?\b/.test(plain(product.name))) && isTwoLiters(product.name);
 
 // ---- Troca do energético (preço) -----------------------------------------------------------------
-// As mesmas contas do banco (create_order, migration 0017): a linha do combo trocado custa o combo + a diferença, e a diferença é
-// "preço do energético novo − preço do que vem no combo", nunca abaixo de zero (se o novo for igual ou mais barato, não há desconto
-// nem devolução). O preço de cada energético é o de agora (promoção em vigor vale). O banco recalcula tudo ao criar o pedido.
+// As mesmas contas do banco (create_order, migrations 0017 e 0018): a linha do combo trocado custa o combo + a diferença, e a diferença é
+// "preço do energético novo − valor do energético que vem no combo", nunca abaixo de zero (se o novo for igual ou mais barato, não há
+// desconto nem devolução: o preço do combo se mantém). O preço de cada energético é o de agora (promoção em vigor vale). O banco recalcula
+// tudo ao criar o pedido.
 type PriceLike = { price: number; promoPrice: number | null };
-export type SwapProduct = PriceLike & { id: string; name: string; category: string; swapBaseId: string | null; soldOut: boolean };
+export type SwapProduct = PriceLike & {
+  id: string;
+  name: string;
+  category: string;
+  soldOut: boolean;
+  // Combos: o produto do cardápio que é o energético que vem nele (o painel escolhe) e/ou o VALOR dele (quando não é um produto do cardápio).
+  swapBaseId: string | null;
+  swapBasePrice: number | null;
+  // Os energéticos que o cliente pode escolher na troca deste combo (lista do painel). Vazia = qualquer energético de 2L.
+  swapOptionIds: string[];
+};
 
 const cents = (p: PriceLike) => Math.round((p.promoPrice ?? p.price) * 100);
 
-export const swapDifference = (to: PriceLike, base: PriceLike): number => Math.max(0, cents(to) - cents(base)) / 100;
+// A diferença por combo, em reais: o novo menos o valor do que vem no combo, nunca abaixo de zero.
+export const swapDifference = (to: PriceLike, basePrice: number): number => Math.max(0, cents(to) - Math.round(basePrice * 100)) / 100;
 
-// O energético que vem no combo (o painel define em cada produto) e os energéticos de 2L pelos quais ele pode ser trocado.
+// O produto do cardápio que é o energético que vem no combo (se o painel escolheu um).
 export const swapBaseOf = <T extends SwapProduct>(products: T[], combo: SwapProduct): T | undefined => (combo.swapBaseId ? products.find((p) => p.id === combo.swapBaseId) : undefined);
 
-export function swapOptions<T extends SwapProduct>(products: T[], combo: SwapProduct): T[] {
+// O valor do energético que vem no combo: o preço de agora do produto escolhido; senão o valor digitado no painel; senão não há base (null)
+// e o combo não aceita troca.
+export function swapBasePrice(products: SwapProduct[], combo: SwapProduct): number | null {
   const base = swapBaseOf(products, combo);
-  return base ? products.filter((p) => p.id !== base.id && isEnergetico2L(p)) : [];
+  if (base) return cents(base) / 100;
+  return combo.swapBasePrice;
+}
+
+// Como chamar o energético que vem no combo na tela: o nome do produto ou, se não é um produto do cardápio, o valor dele.
+export function swapBaseLabel(products: SwapProduct[], combo: SwapProduct): string {
+  const base = swapBaseOf(products, combo);
+  if (base) return base.name;
+  return combo.swapBasePrice === null ? '' : `energético de ${money(combo.swapBasePrice)}`;
+}
+
+// Os energéticos pelos quais o combo pode ser trocado: os que o painel escolheu para ele ou, sem lista, qualquer energético de 2L. Nunca o
+// próprio combo nem o energético que já vem nele.
+export function swapOptions<T extends SwapProduct>(products: T[], combo: SwapProduct): T[] {
+  if (swapBasePrice(products, combo) === null) return [];
+  const explicit = combo.swapOptionIds.length > 0;
+  return products.filter((p) => p.id !== combo.id && p.id !== combo.swapBaseId && (explicit ? combo.swapOptionIds.includes(p.id) : isEnergetico2L(p)));
 }
 
 export const canSwap = <T extends SwapProduct>(products: T[], combo: SwapProduct): boolean => swapOptions(products, combo).length > 0;
 
-// A troca de uma linha do pedido ainda vale? (o combo tem energético definido e o novo ainda existe, é de 2L e é outro produto)
+// A troca de uma linha do pedido ainda vale? (o combo tem energético/valor definido e o novo ainda está entre as opções)
 export function swapStillValid<T extends SwapProduct>(products: T[], comboId: string, toId: string): boolean {
   const combo = products.find((p) => p.id === comboId);
-  const to = products.find((p) => p.id === toId);
-  const base = combo ? swapBaseOf(products, combo) : undefined;
-  return Boolean(combo && to && base && to.id !== base.id && isEnergetico2L(to));
+  return Boolean(combo && swapOptions(products, combo).some((p) => p.id === toId));
 }

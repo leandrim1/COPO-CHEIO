@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
-import { comboNote, swapBaseOf, swapDifference, swapStillValid } from '../lib/combo';
+import { comboNote, swapBasePrice, swapDifference, swapStillValid } from '../lib/combo';
 import { isOpenNow } from '../lib/hours';
 import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, setProductTotal, settleCart, swapUnits } from '../lib/ice';
 import type { Cart, IceChoice } from '../lib/ice';
@@ -23,8 +23,11 @@ export type Product = {
   position: number;
   // A categoria do produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido.
   iceRequired: boolean;
-  // Combos: o energético que vem no produto (o painel define). Sem ele o produto não aceita a troca de energético.
+  // Combos (troca de energético): o produto do cardápio que é o energético que vem no combo e/ou o VALOR dele (o painel define; sem nenhum dos
+  // dois o produto não aceita a troca) e os energéticos que o cliente pode escolher (lista vazia = qualquer energético de 2L).
   swapBaseId: string | null;
+  swapBasePrice: number | null;
+  swapOptionIds: string[];
 };
 
 export const unitPrice = (p: Product) => p.promoPrice ?? p.price;
@@ -145,7 +148,12 @@ function readCache(): ShopData | null {
           isObject(p) && typeof p.id === 'string' && typeof p.name === 'string' && Number.isFinite(Number(p.price)) && typeof p.category === 'string' && typeof p.iceRequired === 'boolean',
       )
       // A cópia salva por uma versão de antes da troca de energético não tem esse campo.
-      .map((p) => ({ ...p, swapBaseId: typeof p.swapBaseId === 'string' ? p.swapBaseId : null }));
+      .map((p) => ({
+        ...p,
+        swapBaseId: typeof p.swapBaseId === 'string' ? p.swapBaseId : null,
+        swapBasePrice: Number.isFinite(Number(p.swapBasePrice)) && p.swapBasePrice !== null ? Number(p.swapBasePrice) : null,
+        swapOptionIds: Array.isArray(p.swapOptionIds) ? p.swapOptionIds.filter((x): x is string => typeof x === 'string') : [],
+      }));
     return { ...EMPTY, ...content, products };
   } catch {
     return null;
@@ -164,6 +172,8 @@ type ProductRowFromDb = {
   sold_out: boolean;
   position: number;
   swap_base_product_id?: string | null;
+  swap_base_price?: number | string | null;
+  swap_option_ids?: string[] | null;
 };
 
 function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[] {
@@ -186,6 +196,8 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         position: row.position,
         iceRequired: category?.ice_choice_required === true,
         swapBaseId: typeof row.swap_base_product_id === 'string' ? row.swap_base_product_id : null,
+        swapBasePrice: row.swap_base_price === null || row.swap_base_price === undefined || !Number.isFinite(Number(row.swap_base_price)) ? null : Number(row.swap_base_price),
+        swapOptionIds: Array.isArray(row.swap_option_ids) ? row.swap_option_ids.filter((x): x is string => typeof x === 'string') : [],
       };
     })
     .sort(
@@ -350,8 +362,8 @@ function useCart(products: Product[], ready: boolean) {
         .sort((a, b) => rank(a.ice, a.swap) - rank(b.ice, b.swap) || (a.swap?.name ?? '').localeCompare(b.swap?.name ?? '', 'pt-BR'))
         .map(({ key, qty, ice, swap }) => {
           // O combo trocado custa o combo + a diferença de preço dos energéticos (o banco recalcula igual ao criar o pedido).
-          const base = swap ? swapBaseOf(products, product) : undefined;
-          const unit = swap && base ? (Math.round(unitPrice(product) * 100) + Math.round(swapDifference(swap, base) * 100)) / 100 : unitPrice(product);
+          const basePrice = swap ? swapBasePrice(products, product) : null;
+          const unit = swap && basePrice !== null ? (Math.round(unitPrice(product) * 100) + Math.round(swapDifference(swap, basePrice) * 100)) / 100 : unitPrice(product);
           return { key, product, qty, ice, swap, unit, needsIce: product.iceRequired && ice === null };
         }),
     );
