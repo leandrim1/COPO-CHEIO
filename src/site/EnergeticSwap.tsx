@@ -1,13 +1,13 @@
 import { Minus, Plus, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { COMBO_NOTE, isEnergeticoCategory } from '../lib/combo';
+import { COMBO_NOTE, isEnergetico2L } from '../lib/combo';
 import { unitPrice, useShop } from './data';
 import type { Product } from './data';
 import { EnergeticSwapContext } from './energeticSwap';
 import { BLUE_BUTTON, ProductImage, ProductPrice, SoldOutBadge } from './ui';
 
-// "QUERO TROCAR O ENERGÉTICO" (combos): lista todos os energéticos do site, cada um com "Adicionar" ao pedido. O energético escolhido entra
+// "QUERO TROCAR O ENERGÉTICO" (combos): lista os energéticos de 2L do site, cada um com "Adicionar" ao pedido. O energético escolhido entra
 // no pedido como item próprio, pelo preço dele; o texto da janela repete o aviso dos combos (pagar a diferença).
 
 function EnergeticRow({ product, qty, setQty, announce }: { product: Product; qty: number; setQty: (id: string, qty: number) => void; announce: (text: string) => void }) {
@@ -102,7 +102,7 @@ function EnergeticSheet({ items, onClose }: { items: Product[]; onClose: () => v
             <X className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
-        <p className="px-5 pb-3 text-sm font-semibold leading-snug text-amber-100 sm:px-6">Escolha o energético que você quer e toque em Adicionar. Obs: {COMBO_NOTE}</p>
+        <p className="px-5 pb-3 text-sm font-semibold leading-snug text-amber-100 sm:px-6">Energéticos de 2L: escolha o que você quer e toque em Adicionar. Obs: {COMBO_NOTE}</p>
         <ul className="flex-1 space-y-3 overflow-y-auto px-5 py-2 sm:px-6">
           {items.map((product) => (
             <EnergeticRow key={product.id} product={product} qty={cart.countOf(product.id)} setQty={cart.setQty} announce={setAnnouncement} />
@@ -128,7 +128,7 @@ export function EnergeticSwapProvider({ children }: { children: ReactNode }) {
   const items = useMemo(
     () =>
       products
-        .filter((p) => isEnergeticoCategory(p.category))
+        .filter((p) => isEnergetico2L(p))
         .sort((a, b) => Number(a.soldOut) - Number(b.soldOut) || unitPrice(a) - unitPrice(b) || a.name.localeCompare(b.name, 'pt-BR')),
     [products],
   );
