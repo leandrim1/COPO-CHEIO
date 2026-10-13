@@ -300,6 +300,12 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await c.click('button[aria-label="Aumentar Heineken Long Neck"] >> nth=0');
   await c.click('button[aria-label="Adicionar Gelo 5kg ao pedido"]');
   await c.waitForTimeout(400);
+  ok((await c.getByRole('button', { name: /Ver pedido/ }).count()) >= 1, 'Bebidas: a barra "Ver pedido" aparece com itens no pedido');
+  await c.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await c.waitForTimeout(400);
+  ok((await c.getByRole('button', { name: /Ver pedido/ }).count()) === 0, 'tela principal: a barra "Ver pedido" NÃO aparece (mesmo com itens no pedido)');
+  await c.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
+  await c.waitForTimeout(400);
   await c.locator('button', { hasText: 'Ver pedido' }).last().click();
   await c.waitForTimeout(500);
   await c.screenshot({ path: `${SP}/e2e-cliente-gaveta.png` });

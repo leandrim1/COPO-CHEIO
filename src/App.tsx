@@ -1912,6 +1912,8 @@ function PublicSite({ pathname }: { pathname: string }) {
     setOrderOpen(false);
   }, [pathname]);
 
+  // A gaveta do pedido existe na tela principal e em Bebidas (os botões "Pedir agora"/"Ver pedido" do topo a abrem), mas a barra flutuante
+  // "Ver pedido" fica só em Bebidas: na tela principal ela cobria o conteúdo e não é onde se monta o pedido.
   const showOrder = page.name === 'home' || page.name === 'bebidas';
 
   return (
@@ -1930,7 +1932,7 @@ function PublicSite({ pathname }: { pathname: string }) {
       )}
       {showOrder && (
         <>
-          <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner={page.name === 'bebidas'} />
+          {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
           <OrderDrawer open={orderOpen} onClose={closeOrder} />
         </>
       )}
