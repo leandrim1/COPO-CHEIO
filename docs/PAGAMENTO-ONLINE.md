@@ -66,7 +66,7 @@ a página consulta o servidor a cada 4 s e mostra "Pagamento confirmado!"; o pai
 - **Comissão: 2%** (`payment_commission_bps() = 200`, desde a migration `0016`; antes era 5%) do **total do pedido** (itens + entrega − descontos), em centavos,
   arredondada ao centavo mais próximo (metade para cima): R$ 100,00 → R$ 2,00; R$ 10,10 → R$ 0,20; R$ 88,25 → R$ 1,77. Cada cobrança guarda a taxa e o valor
   de quando nasceu (`commission_bps`, `commission_cents`): mudar a taxa afeta só as cobranças novas, e exige uma migration nova. A tela *Pagamentos* mostra a taxa
-  vigente lida do banco.
+  vigente lida do banco. Na **tela** do painel o nome é **"Taxa"** (e não "comissão"); no código, no banco e neste documento continua `commission_*` / "comissão".
 - **Só "efetivada" com evidência**: `commission_state = 'confirmed'` exige o valor que a ValidaPay confirmou ter repassado e a cobrança paga
   (restrição `payments_commission_evidence`). A loja só considera o repasse confirmado se o **extrato da conta master** mostrar um **crédito
   ligado a esta cobrança** (mesmo `chargeId`); sem isso a comissão fica "calculada" (e a conciliação posterior, com "Atualizar pagamento",

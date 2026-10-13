@@ -230,7 +230,7 @@ const pay = async (chargeId, eventId) => {
     ok(await until(async () => (await admin.getByText(/recebido \(Pix pago\)/).count()) > 0, 20000), 'o painel avisa do pedido pago ("recebido (Pix pago)")');
     await admin.reload({ waitUntil: 'networkidle' });
     const body = await admin.innerText('body');
-    ok(/Efetivada/.test(body) && /Comissão \(2%\)/.test(body) && /R\$\s*0,50/.test(body), 'o detalhe mostra a comissão de 2% (R$ 0,50) como EFETIVADA');
+    ok(/Efetivada/.test(body) && /Taxa \(2%\)/.test(body) && !/Comissão/.test(body) && /R\$\s*0,50/.test(body), 'o detalhe mostra a taxa de 2% (R$ 0,50) como EFETIVADA');
     ok(await admin.getByRole('button', { name: 'Atualizar pagamento' }).count() === 1, 'o owner tem o botão "Atualizar pagamento"');
     await admin.screenshot({ path: `${SP}/pix-admin-3-pedido-pago.png`, fullPage: true });
 
@@ -238,7 +238,7 @@ const pay = async (chargeId, eventId) => {
     const pagamentos = await admin.innerText('body');
     ok(/Pagamentos online/.test(pagamentos) && /Conectada/.test(pagamentos) && /Aprovada/.test(pagamentos), 'a página Pagamentos mostra a operadora conectada e a conta aprovada');
     ok(await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).getAttribute('aria-checked') === 'true', 'o interruptor do Pix online está ligado');
-    ok(/Comissão \(2% do total do pedido\)/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa comissão calculada e efetivada');
+    ok(/Taxa \(2% do total do pedido\)/.test(pagamentos) && !/Comissão/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa taxa calculada e efetivada (a palavra "comissão" não aparece na tela)');
     ok(await noHScroll(admin), 'a página Pagamentos não tem rolagem horizontal');
     await admin.screenshot({ path: `${SP}/pix-admin-4-pagamentos.png`, fullPage: true });
     await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).click();
@@ -266,7 +266,7 @@ const pay = async (chargeId, eventId) => {
     ok(/Só o dono da loja vê esta página/.test(await staff.innerText('body')), 'abrindo o endereço direto, o atendente vê o aviso (e nenhum dado)');
     await staff.goto(BASE + `/admin/pedidos/${number}`, { waitUntil: 'networkidle' });
     const sb = await staff.innerText('body');
-    ok(/Pagamento online \(Pix\)/.test(sb) && !/Comissão/.test(sb) && !/Tarifas/.test(sb) && (await staff.getByRole('button', { name: 'Atualizar pagamento' }).count()) === 0, 'o atendente vê a situação do pagamento, SEM comissão, tarifas nem botões do owner');
+    ok(/Pagamento online \(Pix\)/.test(sb) && !/Taxa \(\d/.test(sb) && !/Comissão/.test(sb) && !/Tarifas/.test(sb) && (await staff.getByRole('button', { name: 'Atualizar pagamento' }).count()) === 0, 'o atendente vê a situação do pagamento, SEM comissão, tarifas nem botões do owner');
     await sctx.close();
     await ctx.close();
     await actx.close();

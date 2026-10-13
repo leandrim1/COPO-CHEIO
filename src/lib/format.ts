@@ -11,6 +11,10 @@ export function parseMoney(input: string): number | null {
   return Math.round(Number(normalized) * 100) / 100;
 }
 
+// Na tela, o repasse para a conta master se chama "taxa" (no código e no banco continua "comissão"). Os avisos de conferência vêm
+// prontos do banco com a palavra antiga; aqui só trocamos o texto que a pessoa lê.
+export const taxaWording = (text: string | null | undefined) => (text ?? '').replace(/Comissão/g, 'Taxa').replace(/comissão/g, 'taxa');
+
 // Pontos-base → "2%" (200) ou "2,5%" (250), com vírgula decimal.
 export const percentFromBps = (bps: number | null | undefined) => `${((bps ?? 0) / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`;
 

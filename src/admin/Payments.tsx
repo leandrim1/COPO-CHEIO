@@ -1,7 +1,7 @@
 import { Landmark, TriangleAlert, Wallet } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { api, friendlyError } from '../lib/api';
-import { percentFromBps } from '../lib/format';
+import { percentFromBps, taxaWording } from '../lib/format';
 import type { MerchantAccount, PaymentState, PaymentsOverview } from '../lib/types';
 import { LinkAccountModal, NewAccountModal } from './AccountSetup';
 import { useAdmin, useLiveOrders } from './AdminApp';
@@ -124,7 +124,7 @@ export default function PaymentsPage() {
     <>
       <PageHeader
         title="Pagamentos online"
-        description="Pix pelo site: o cliente paga e a operadora de pagamento confirma. Aqui você acompanha as cobranças e a comissão."
+        description="Pix pelo site: o cliente paga e a operadora de pagamento confirma. Aqui você acompanha as cobranças e a taxa."
         actions={
           <Button variant="secondary" loading={busy === 'sweep'} icon={<Landmark className="h-4 w-4" aria-hidden="true" />} onClick={() => void sweep()}>
             Conferir agora
@@ -258,7 +258,7 @@ export default function PaymentsPage() {
             <Stat label="Pedem conferência" value={String(s!.attention)} tone={s!.attention ? 'text-amber-200' : 'text-white'} />
           </div>
 
-          <Card className="mt-4" title={`Comissão (${percentFromBps(data.commission_bps)} do total do pedido)`} description="“Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.">
+          <Card className="mt-4" title={`Taxa (${percentFromBps(data.commission_bps)} do total do pedido)`} description="“Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.">
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Stat label="Calculada" value={cents(s!.commission_calculated_cents)} hint="dos pedidos pagos" />
               <Stat label="Efetivada" value={cents(s!.commission_confirmed_cents)} hint="confirmada pela operadora" tone="text-emerald-200" />
@@ -318,7 +318,7 @@ export default function PaymentsPage() {
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/65">
                       <span className="inline-flex items-center gap-1.5">
-                        Comissão {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
+                        Taxa {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
                       </span>
                       <span>Tarifa {p.fee_cents === null || p.fee_cents === undefined ? '—' : cents(p.fee_cents)}</span>
                       <span>Líquido {p.net_cents === null || p.net_cents === undefined ? '—' : cents(p.net_cents)}</span>
@@ -326,7 +326,7 @@ export default function PaymentsPage() {
                     {p.needs_attention && (
                       <p role="status" className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-2.5 py-2 text-xs text-amber-100 ring-1 ring-amber-400/30">
                         <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                        <span>{p.attention_reason ?? 'Precisa de conferência.'}</span>
+                        <span>{taxaWording(p.attention_reason) || 'Precisa de conferência.'}</span>
                       </p>
                     )}
                     <div className="mt-3">

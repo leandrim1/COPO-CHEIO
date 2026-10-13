@@ -1,7 +1,7 @@
 import { CheckCheck, RefreshCw, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { api, friendlyError } from '../lib/api';
-import { formatDateTime, money, percentFromBps } from '../lib/format';
+import { formatDateTime, money, percentFromBps, taxaWording } from '../lib/format';
 import type { AdminPayment, CommissionState, Order, PaymentState } from '../lib/types';
 import { Badge, Button, Card, useToast } from './ui';
 
@@ -33,7 +33,7 @@ export function PaymentStateBadge({ status }: { status: PaymentState }) {
   return <Badge tone={STATE_TONE[status]}>{PAYMENT_STATE_LABEL[status]}</Badge>;
 }
 
-// A comissão só é "efetivada" quando a operadora confirma o valor repassado; antes disso é só uma conta.
+// A taxa (comissão) só é "efetivada" quando a operadora confirma o valor repassado; antes disso é só uma conta.
 export const COMMISSION_LABEL: Record<CommissionState, string> = {
   calculated: 'Calculada, repasse ainda não confirmado',
   confirmed: 'Efetivada (repasse confirmado pela operadora)',
@@ -117,12 +117,12 @@ export function OnlinePaymentCard({ order, payments, owner, onChanged }: { order
               {p.needs_attention && (
                 <p role="status" className="mt-2 flex items-start gap-2 rounded-lg bg-amber-400/10 px-2.5 py-2 text-xs text-amber-100 ring-1 ring-amber-400/30">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span>{owner ? (p.attention_reason ?? 'Precisa de conferência.') : 'Este pagamento precisa de conferência do dono da loja.'}</span>
+                  <span>{owner ? (taxaWording(p.attention_reason) || 'Precisa de conferência.') : 'Este pagamento precisa de conferência do dono da loja.'}</span>
                 </p>
               )}
               {owner && (
                 <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                  <dt className="text-white/50">Comissão ({percentFromBps(p.commission_bps)})</dt>
+                  <dt className="text-white/50">Taxa ({percentFromBps(p.commission_bps)})</dt>
                   <dd className="text-white/85">
                     {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
                     {p.commission_state === 'confirmed' && <span className="ml-1 text-white/55">({cents(p.commission_confirmed_cents)} repassados)</span>}
