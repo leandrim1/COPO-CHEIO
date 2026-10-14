@@ -196,3 +196,12 @@ export async function usedBudget(category?: Category): Promise<number> {
 export async function oneRow<T = Row>(text: string, params: unknown[] = []): Promise<T | null> {
   return one<T>(text, params);
 }
+
+// Campanha cujas mensagens já terminaram todas (nada mais na fila) passa a "concluída".
+export async function finishCampaigns(): Promise<void> {
+  await query(
+    `update email_campaigns c set status = 'done', finished_at = now()
+      where c.status = 'sending'
+        and not exists (select 1 from email_messages m where m.campaign_id = c.id and m.status in ('queued', 'sending'))`,
+  );
+}

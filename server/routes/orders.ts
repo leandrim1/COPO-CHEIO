@@ -3,6 +3,7 @@ import { audit } from '../audit.js';
 import { batch, one } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
+import { kickQueue } from '../email/service.js';
 import { sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken } from '../tracking.js';
 import { paymentsOfOrder } from './payments.js';
@@ -166,6 +167,8 @@ export function registerOrders(r: Router) {
   r.get('/api/admin/live', 'admin', async (ctx) => {
     // De passagem (o painel aberto é o "agendador" do sistema): encerra o que venceu e confere pagamentos online pendentes.
     await sweep({ lookups: true }).catch(() => undefined);
+    // O painel aberto também é o "agendador" da fila de e-mails: novas tentativas e avisos pendentes saem daqui (no máximo a cada 10 s).
+    kickQueue(ctx.req, { minGapMs: 10_000 });
     const afterParam = ctx.url.searchParams.get('after');
     const after = afterParam !== null && /^\d{1,12}$/.test(afterParam) ? afterParam : null;
     const paidParam = ctx.url.searchParams.get('paid_after');

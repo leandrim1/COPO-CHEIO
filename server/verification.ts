@@ -9,6 +9,7 @@ import { one, query } from './db.js';
 import { databaseUrl } from './env.js';
 import { HttpError } from './http.js';
 import { deliver } from './email/service.js';
+import { getPreferences } from './email/preferences.js';
 import type { DeliverResult } from './email/service.js';
 import { mailConfigured } from './mail.js';
 import { loadBrand } from './mailBrand.js';
@@ -87,6 +88,7 @@ export async function sendVerificationEmail(req: Request, ip: string, customer: 
   }
   try {
     const brand = await loadBrand(req);
+    const prefs = await getPreferences(begin.email.toLowerCase()).catch(() => null);
     const message = verificationMessage(brand, {
       to: begin.email,
       name: begin.name,
@@ -94,6 +96,7 @@ export async function sendVerificationEmail(req: Request, ip: string, customer: 
       link: `${brand.siteUrl}/conta/verificar/${token}`,
       codeMinutes: CODE_MINUTES,
       linkHours: LINK_HOURS,
+      marketingNotice: Boolean(prefs?.marketing_pending_at),
     });
     const result = await deliver({ kind: 'verification', to: begin.email, message, req, customerId: customer.id });
     if (!result.ok) throw deliveryError(result);

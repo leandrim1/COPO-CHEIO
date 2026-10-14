@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { adminFromRequest } from './auth.js';
 import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
+import { kickQueue, rememberRequest } from './email/service.js';
 import { mailConfigured, mailMissing } from './mail.js';
 import { siteUrl } from './mailBrand.js';
 import { onlineReadiness } from './payments/service.js';
@@ -21,6 +22,7 @@ import { registerSeo } from './routes/seo.js';
 import { registerSession } from './routes/session.js';
 import { registerCustomers } from './routes/customers.js';
 import { registerEmailAdmin } from './routes/emailadmin.js';
+import { registerEmailPublic } from './routes/emailpublic.js';
 import { registerMailAdmin } from './routes/mailadmin.js';
 import { registerTeam } from './routes/team.js';
 import { registerTracking } from './routes/tracking.js';
@@ -85,6 +87,7 @@ registerTeam(router);
 registerCustomers(router);
 registerMailAdmin(router);
 registerEmailAdmin(router);
+registerEmailPublic(router);
 registerAudit(router);
 registerPrivacy(router);
 registerSeo(router);
@@ -178,6 +181,7 @@ export async function handle(req: Request): Promise<Response> {
     const access: Access = route.access;
     if (!SAFE_METHODS.has(req.method) && foreignOrigin(req, url)) throw new HttpError(403, 'Origem não permitida.');
 
+    rememberRequest(req);
     const ctx: Ctx = { req, url, params, ip: clientIp(req), admin: null };
     if (access !== 'public') {
       ctx.admin = await adminFromRequest(req);
@@ -186,6 +190,9 @@ export async function handle(req: Request): Promise<Response> {
       if (access === 'owner' && ctx.admin.role !== 'owner') throw new HttpError(403, 'Só o owner pode fazer isso.');
     }
     const response = await route.handler(ctx);
+    // Qualquer mudança que deu certo (pedido, etapa, pagamento) pode ter enfileirado um e-mail: os gatilhos do banco enfileiram sozinhos,
+    // então não é preciso que cada rota se lembre de avisar. Aqui só se manda enviar, sem esperar. (Painel de e-mails e cron cuidam da fila.)
+    if (!SAFE_METHODS.has(req.method) && response.status < 400 && !/^\/api\/(admin\/emails|cron)(\/|$)/.test(path)) kickQueue(req);
     response.headers.set('x-request-id', requestId);
     return response;
   } catch (error) {

@@ -85,6 +85,8 @@ if (sink) {
   process.env.MAIL_FROM = 'Copo Cheio <loja@copocheio.test>';
 } else if (process.env.MAIL_MODE !== 'env') for (const name of ['SMTP_HOST', 'SMTP_PORT', 'SMTP_SECURE', 'SMTP_USER', 'SMTP_PASS', 'MAIL_FROM']) delete process.env[name];
 installDnsMock({ broken: process.env.DNS_MODE === 'broken' });
+// Segredo do cron diário (/api/cron/email): valor só dos testes. Em produção vem das variáveis da Vercel.
+process.env.CRON_SECRET ??= 'segredo-do-cron-so-de-teste-0123456789';
 
 // --- API (a mesma função que a Vercel executa) ---
 await build({

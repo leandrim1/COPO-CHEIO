@@ -7,6 +7,7 @@ import { batch, one, query, updateRow } from '../db.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
 import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
+import { confirmPendingMarketing, setMarketingPending } from '../email/preferences.js';
 import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
 import { mailConfigured } from '../mail.js';
 import { RESET_MINUTES, RESET_RESEND_SECONDS, assertMailBudget, padResponse, resetMailUnavailable, sendPasswordChangedNotice, sendPasswordResetEmail } from '../passwordReset.js';
@@ -129,7 +130,12 @@ export function registerAccount(r: Router) {
     } else if (existing && existing.email_verified_at && existing.active) {
       await sendAlreadyRegisteredNotice(ctx.req, { email: existing.email, name: existing.name });
     }
-    if (pending) await sendVerificationEmail(ctx.req, ctx.ip, pending);
+    if (pending) {
+      // "Quero receber promoções" (caixa desmarcada por padrão): ainda NÃO é consentimento. Quem digitou o e-mail pode não ser o dono dele;
+      // só vira consentimento quando o código ou o link do e-mail de confirmação (que cita a escolha) for usado.
+      await setMarketingPending(parsed.email, body.marketing_opt_in === true).catch(() => undefined);
+      await sendVerificationEmail(ctx.req, ctx.ip, pending);
+    }
     await clearAttempts('verify-email', parsed.email);
     // O cookie vai SEMPRE (inclusive quando o e-mail já tem conta): a resposta não pode revelar se o endereço existe.
     return json({ status: 'pending_verification', email: parsed.email, email_masked: maskEmail(parsed.email), resend_in: RESEND_SECONDS, code_minutes: CODE_MINUTES }, 202, { 'set-cookie': registrationCookie(ctx.req, nonce) });
@@ -149,7 +155,7 @@ export function registerAccount(r: Router) {
     await reserve('verify-email', email, WINDOW, 5, tooMany, 'too_many_attempts');
     const checked = await checkCodeBound(email, code, registrationHash(ctx.req));
     if (checked.result === 'ok') {
-      await Promise.all([refund('verify-ip', ctx.ip), clearAttempts('verify-email', email)]);
+      await Promise.all([refund('verify-ip', ctx.ip), clearAttempts('verify-email', email), confirmPendingMarketing(email).catch(() => false)]);
       // Confirmou de outro navegador que não o do cadastro: a senha do cadastro foi descartada e a pessoa cria uma agora.
       const setPassword = checked.bound === false && checked.customer_id ? await setPasswordLink(checked.customer_id) : null;
       return json({ ok: true, verified: true, ...(setPassword ? { set_password_token: setPassword } : {}) }, 200, { 'set-cookie': registrationCookie(ctx.req, '', 0) });
@@ -168,6 +174,7 @@ export function registerAccount(r: Router) {
       throw new HttpError(400, 'Este link não vale mais: ele expirou, já foi usado ou foi trocado por um código mais novo. Entre na sua conta para receber um novo código.', { code: 'invalid_link' });
     }
     await refund('verify-ip', ctx.ip);
+    await confirmPendingMarketing(verified.email.toLowerCase()).catch(() => false);
     // Abriu o link de outro navegador que não o do cadastro: a senha do cadastro foi descartada e a pessoa cria uma agora.
     const setPassword = verified.bound ? null : await setPasswordLink(verified.customer_id);
     return json({ ok: true, verified: true, email: verified.email, email_masked: maskEmail(verified.email), ...(setPassword ? { set_password_token: setPassword } : {}) }, 200, {
@@ -286,6 +293,8 @@ export function registerAccount(r: Router) {
     if (!row || !(await verifyPassword(password, row.password_hash))) throw new HttpError(400, 'A senha está incorreta.');
     await refund('cust-password', customer.id);
     await query('delete from customers where id = $1', [customer.id]);
+    // LGPD: o endereço também sai dos registros de e-mail (mensagens, preferências, supressão).
+    await query('select email_forget($1)', [customer.email]).catch(() => undefined);
     return json({ ok: true }, 200, { 'set-cookie': customerCookie(ctx.req, '', 0) });
   });
 

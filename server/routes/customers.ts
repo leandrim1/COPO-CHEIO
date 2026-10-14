@@ -96,6 +96,7 @@ export function registerCustomers(r: Router) {
     const id = uuidParam(ctx);
     const removed = await one<{ name: string; email: string }>('delete from customers where id = $1 returning name, email', [id]);
     if (!removed) throw new HttpError(404, 'Cliente não encontrado.');
+    await query('select email_forget($1)', [removed.email]).catch(() => undefined);
     await audit(ctx, { action: 'customer.delete', summary: `Excluiu a conta do cliente ${removed.name} (${removed.email})`, entity: 'customer', entityId: id });
     return json({ ok: true });
   });

@@ -22,7 +22,11 @@ export type Block =
   // aparece na linha do botão, então `plainText` (se existir) substitui texto + endereço repetido.
   | { kind: 'link'; text: string; url: string; plainText?: string }
   // Faixa discreta (segurança, aviso).
-  | { kind: 'notice'; text: string };
+  | { kind: 'notice'; text: string }
+  // Resumo de um pedido: itens (quantidade, nome, total da linha) e as linhas de totais.
+  | { kind: 'order'; number: string; lines: { qty: number; name: string; total: string }[]; rows: { label: string; value: string; strong?: boolean }[] }
+  // Pares "rótulo: valor" (forma de entrega, pagamento...).
+  | { kind: 'facts'; rows: { label: string; value: string }[] };
 
 export type EmailContent = {
   to: string;
@@ -38,6 +42,10 @@ export type EmailContent = {
   reason: string;
   // Faixa de aviso no topo do cartão (usada só nos e-mails de teste).
   banner?: string;
+  // Links pequenos no rodapé (preferências, "cancelar inscrição").
+  footerLinks?: { label: string; url: string }[];
+  // Cabeçalhos extras da mensagem (ex.: List-Unsubscribe e List-Unsubscribe-Post nas promoções).
+  headers?: Record<string, string>;
 };
 
 // ---- Identidade visual ---------------------------------------------------------------------------------
@@ -180,6 +188,37 @@ function notice(text: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="c-soft" bgcolor="${C.soft}" style="background:${C.soft};border-radius:14px;border-left:3px solid ${C.blue};"><tr><td class="c-body" align="left" style="padding:14px 16px;${font(400, 13, 20)}color:${C.body};text-align:left;">${rich(text)}</td></tr></table>`;
 }
 
+function orderBlock(b: Extract<Block, { kind: 'order' }>): string {
+  const lines = b.lines
+    .map(
+      (l) =>
+        `<tr><td class="c-body" valign="top" align="left" style="padding:6px 0;${font(400, 14, 20)}color:${C.body};text-align:left;"><span style="font-weight:700;">${l.qty}×</span> ${esc(l.name)}</td><td class="c-ink" valign="top" align="right" style="padding:6px 0 6px 12px;white-space:nowrap;${font(600, 14, 20)}color:${C.ink};">${esc(l.total)}</td></tr>`,
+    )
+    .join('\n');
+  const rows = b.rows
+    .map(
+      (r) =>
+        `<tr><td class="${r.strong ? 'c-ink' : 'c-muted'}" align="left" style="padding:3px 0;${font(r.strong ? 800 : 400, r.strong ? 16 : 13, r.strong ? 22 : 19)}color:${r.strong ? C.ink : C.muted};text-align:left;">${esc(r.label)}</td><td class="${r.strong ? 'c-ink' : 'c-body'}" align="right" style="padding:3px 0 3px 12px;white-space:nowrap;${font(r.strong ? 800 : 600, r.strong ? 16 : 13, r.strong ? 22 : 19)}color:${r.strong ? C.ink : C.body};">${esc(r.value)}</td></tr>`,
+    )
+    .join('\n');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="c-panel" bgcolor="${C.panel}" style="background:${C.panel};border:1px solid ${C.panelLine};border-radius:20px;">
+<tr><td align="left" class="c-plabel" style="padding:18px 20px 4px;${font(700, 11, 14)}letter-spacing:.16em;color:${C.panelLabel};text-align:left;">${esc(upper(`Pedido #${b.number}`))}</td></tr>
+<tr><td style="padding:2px 20px 6px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${lines}</table></td></tr>
+<tr><td style="padding:0 20px;"><div class="c-line" style="border-top:1px solid ${C.panelLine};height:1px;line-height:1px;font-size:0;">&nbsp;</div></td></tr>
+<tr><td style="padding:8px 20px 18px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${rows}</table></td></tr>
+</table>`;
+}
+
+function factsBlock(b: Extract<Block, { kind: 'facts' }>): string {
+  const rows = b.rows
+    .map(
+      (r) =>
+        `<tr><td class="c-muted" valign="top" align="left" style="padding:4px 12px 4px 0;white-space:nowrap;${font(400, 13, 19)}color:${C.muted};text-align:left;">${esc(r.label)}</td><td class="c-body" valign="top" align="left" style="padding:4px 0;${font(600, 14, 20)}color:${C.body};text-align:left;">${esc(r.value)}</td></tr>`,
+    )
+    .join('\n');
+  return `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;max-width:440px;">${rows}</table>`;
+}
+
 const divider = () =>
   `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td class="c-line" style="border-top:1px solid ${C.line};font-size:0;line-height:0;height:1px;">&nbsp;</td></tr></table><div style="height:22px;line-height:22px;font-size:0;">&nbsp;</div>`;
 
@@ -196,10 +235,14 @@ function renderBlock(block: Block): string {
       return row(divider() + linkBlock(block), '0 40px 26px');
     case 'notice':
       return row(notice(block.text), '0 40px 36px');
+    case 'order':
+      return row(orderBlock(block), '0 40px 24px');
+    case 'facts':
+      return row(factsBlock(block), '0 40px 24px');
   }
 }
 
-function footerHtml(brand: Brand, reason: string): string {
+function footerHtml(brand: Brand, reason: string, footerLinks: { label: string; url: string }[] = []): string {
   const link = (url: string, text: string) => `<a href="${esc(url)}" target="_blank" class="c-accent" style="color:${C.blue};text-decoration:none;font-weight:600;">${text}</a>`;
   // Um contato por linha: funciona em qualquer largura de tela, sem quebrar no meio de um número.
   const lines = [
@@ -214,6 +257,7 @@ function footerHtml(brand: Brand, reason: string): string {
 ${brand.tagline ? `<p class="c-muted" style="margin:3px 0 0;${font(700, 10, 14)}letter-spacing:.2em;color:${C.muted};">${esc(upper(brand.tagline))}</p>` : ''}
 <p style="margin:16px 0 0;${font(400, 13, 24)}">${lines.join('<br>')}</p>
 ${place ? `<p class="c-muted" style="margin:10px 0 0;${font(400, 12, 18)}color:${C.muted};">${placeHtml}</p>` : ''}
+${footerLinks.length ? `<p style="margin:16px 0 0;${font(400, 12, 20)}">${footerLinks.filter((l) => safeUrl(l.url)).map((l) => link(l.url, esc(l.label))).join('<span class="c-muted" style="color:' + C.muted + ';"> &nbsp;·&nbsp; </span>')}</p>` : ''}
 <p class="c-muted" style="margin:18px 0 0;${font(400, 11, 17)}color:${C.muted};">${esc(reason)}<br>© ${brand.year} ${esc(signature(brand))}</p>
 </td></tr>`;
 }
@@ -252,7 +296,7 @@ ${content.eyebrow ? `<p class="c-accent" style="margin:0 0 10px;${font(700, 12, 
 </td></tr>
 ${content.greeting ? row(paragraph(content.greeting, 'normal', { px: 17, line: 26 }), '14px 40px 14px') : ''}
 ${content.blocks.map(renderBlock).join('\n')}
-${footerHtml(brand, content.reason)}
+${footerHtml(brand, content.reason, content.footerLinks)}
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
 </td></tr>
@@ -291,15 +335,29 @@ export function renderText(brand: Brand, content: EmailContent): string {
       case 'notice':
         out.push(plain(block.text), '');
         break;
+      case 'order':
+        out.push(`PEDIDO #${block.number}`);
+        for (const l of block.lines) out.push(`  ${l.qty}x ${l.name} – ${l.total}`);
+        out.push('');
+        for (const r of block.rows) out.push(`  ${r.label}: ${r.value}`);
+        out.push('');
+        break;
+      case 'facts':
+        for (const r of block.rows) out.push(`${r.label}: ${r.value}`);
+        out.push('');
+        break;
     }
   }
   out.push('--', identity);
   for (const c of brand.contacts) out.push(c.url ? `${c.label}: ${c.text} – ${c.url}` : `${c.label}: ${c.text}`);
-  out.push(`Site: ${brand.siteUrl}`, '', content.reason, `© ${brand.year} ${signature(brand)}`);
+  out.push(`Site: ${brand.siteUrl}`, '');
+  for (const l of content.footerLinks ?? []) if (safeUrl(l.url)) out.push(`${l.label}: ${l.url}`);
+  if (content.footerLinks?.length) out.push('');
+  out.push(content.reason, `© ${brand.year} ${signature(brand)}`);
   return out.join('\n');
 }
 
 // Monta o e-mail pronto para o envio (assunto, HTML e texto).
 export function renderEmail(brand: Brand, content: EmailContent): Message {
-  return { to: content.to, subject: content.subject, html: renderHtml(brand, content), text: renderText(brand, content) };
+  return { to: content.to, subject: content.subject, html: renderHtml(brand, content), text: renderText(brand, content), ...(content.headers ? { headers: content.headers } : {}) };
 }

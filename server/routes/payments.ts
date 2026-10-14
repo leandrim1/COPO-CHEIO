@@ -10,6 +10,7 @@ import type { Row } from '../db.js';
 import { requireCustomer } from '../customer.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Ctx, Router } from '../http.js';
+import { kickQueue } from '../email/service.js';
 import { linkAccount, listCandidates, refreshProposal, submitProposal } from '../payments/merchant.js';
 import type { MerchantRow } from '../payments/merchant.js';
 import { getProvider, providerSummary } from '../payments/provider.js';
@@ -53,6 +54,7 @@ async function showPayment(orderId: string): Promise<Response> {
   const view = await customerPaymentView(orderId, { refresh: true });
   // De passagem, encerra o que venceu e cancela o pedido que não foi pago a tempo (sem agendador).
   await sweep({ lookups: false }).catch(() => undefined);
+  kickQueue(undefined, { minGapMs: 15_000 });
   return json(view, 200, HEADERS);
 }
 

@@ -25,6 +25,8 @@ export type VerificationData = {
   linkHours: number;
   // E-mail de teste do painel: mesma aparência, com o aviso de que o código é só um exemplo.
   sample?: boolean;
+  // A pessoa marcou "quero receber promoções" no cadastro: este e-mail diz que confirmar o código também autoriza esses envios.
+  marketingNotice?: boolean;
 };
 
 export function verificationMessage(brand: Brand, o: VerificationData): Message {
@@ -48,6 +50,9 @@ export function verificationMessage(brand: Brand, o: VerificationData): Message 
         plainText: `Se o link acima não abrir, copie o código e digite-o na tela de confirmação do site. O link vale por ${o.linkHours} horas.`,
       },
       { kind: 'notice', text: '**Por segurança**, não compartilhe este código com ninguém. Se você não criou esta conta, ignore este e-mail: nada será ativado.' },
+      ...(o.marketingNotice
+        ? [{ kind: 'notice' as const, text: '**Novidades e promoções:** você marcou que quer receber novidades e promoções da loja por e-mail. Ao confirmar o seu e-mail com o código ou o botão acima, você autoriza esses envios. Dá para cancelar quando quiser, por um link que vai em cada mensagem ou em Minha conta.' }]
+        : []),
     ],
     reason: 'Esta mensagem foi enviada para confirmar um cadastro feito com este endereço de e-mail.',
   });

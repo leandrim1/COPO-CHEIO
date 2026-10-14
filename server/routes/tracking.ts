@@ -2,6 +2,7 @@
 // número do pedido + código. Nada aqui devolve dados de outro pedido, e erro nenhum diz se um pedido existe.
 import { customerFromRequest } from '../customer.js';
 import { batch, one } from '../db.js';
+import { kickQueue } from '../email/service.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Ctx, Router } from '../http.js';
 import { NOT_FOUND, assertNotThrottled, missesStatement, normalizeToken, hashToken, recordMiss, throttled } from '../tracking.js';
@@ -37,6 +38,8 @@ export function registerTracking(r: Router) {
   // Link permanente: /acompanhar-pedido/<código>
   r.get('/api/tracking/:token', 'public', async (ctx) => {
     const { order } = await find(ctx, ctx.params.token, null);
+    // A tela de acompanhamento consulta de tempos em tempos: de passagem, manda enviar o que está na fila (no máximo a cada 15 s).
+    kickQueue(ctx.req, { minGapMs: 15_000 });
     return json({ order, mine: await mineFlag(ctx, (order as { order_number: number }).order_number) }, 200, HEADERS);
   });
 

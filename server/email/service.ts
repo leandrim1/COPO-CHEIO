@@ -206,11 +206,11 @@ export async function deliver(input: DeliverInput): Promise<DeliverResult> {
 
 // ---- Fila ---------------------------------------------------------------------------------------------
 
-export type QueueResult = { processed: number; accepted: number; retried: number; failed: number; blocked: number; deferred: number };
+export type QueueResult = { processed: number; accepted: number; retried: number; failed: number; blocked: number; deferred: number; cancelled: number };
 
 // Processa as mensagens que já podem ser tentadas. `budgetMs`: não pega mensagem nova depois desse tempo (a função da Vercel tem tempo limite).
 export async function processQueue(opts: { req: Request; limit?: number; budgetMs?: number }): Promise<QueueResult> {
-  const out: QueueResult = { processed: 0, accepted: 0, retried: 0, failed: 0, blocked: 0, deferred: 0 };
+  const out: QueueResult = { processed: 0, accepted: 0, retried: 0, failed: 0, blocked: 0, deferred: 0, cancelled: 0 };
   const started = Date.now();
   const budget = opts.budgetMs ?? 6000;
   let remaining = Math.max(1, Math.min(opts.limit ?? 3, 25));
@@ -228,10 +228,11 @@ export async function processQueue(opts: { req: Request; limit?: number; budgetM
       if (Date.now() - started >= budget) break;
     }
   }
+  if (out.processed) await ledger.finishCampaigns().catch(() => undefined);
   return out;
 }
 
-async function attemptClaimed(row: MessageRow, req: Request): Promise<'accepted' | 'retried' | 'failed' | 'blocked' | 'deferred'> {
+async function attemptClaimed(row: MessageRow, req: Request): Promise<'accepted' | 'retried' | 'failed' | 'blocked' | 'deferred' | 'cancelled'> {
   const kind = row.kind;
   if (!isKind(kind)) {
     await ledger.markFailed(row.id, row.attempts, { kind: 'render', retryable: false, hard: false, code: null, detail: 'tipo de e-mail desconhecido', legacy: 'other' });
@@ -257,8 +258,9 @@ async function attemptClaimed(row: MessageRow, req: Request): Promise<'accepted'
   }
   const message = await renderMessage({ kind, to, spec: row.spec }, req);
   if (!message) {
+    // O pedido já passou desta etapa, foi apagado, a campanha foi cancelada...: não há mais o que enviar (não é uma falha).
     await ledger.markCancelled(row.id, 'nada a enviar');
-    return 'failed';
+    return 'cancelled';
   }
   if (!def.sensitive) await ledger.oneRow('update email_messages set subject = $2 where id = $1', [row.id, message.subject.slice(0, 200)]).catch(() => undefined);
   const outcome = await runSend(kind, def, to!, message, { id: row.id, attempt: row.attempts, maxAttempts: row.max_attempts }, true);
@@ -268,15 +270,45 @@ async function attemptClaimed(row: MessageRow, req: Request): Promise<'accepted'
 // ---- Em segundo plano ---------------------------------------------------------------------------------
 
 let lastKick = 0;
+// A última requisição vista por esta instância: o processamento em segundo plano (disparado de dentro do banco, por exemplo quando um
+// pagamento é confirmado) precisa de uma requisição só para saber o endereço do site.
+let lastRequest: Request | null = null;
+export const rememberRequest = (req: Request): void => {
+  lastRequest = req;
+};
+
+// Um só processamento por vez nesta instância (o banco já impede que duas instâncias peguem a mesma mensagem). Se chega um aviso novo
+// enquanto ele roda, `rerun` faz uma rodada a mais no fim: a mensagem pode ter entrado depois de o processamento olhar a fila.
+let running: Promise<void> | null = null;
+let rerun = false;
 
 // Dispara o processamento da fila SEM esperar (o cliente já recebeu a resposta). Na Vercel, `waitUntil` mantém a função viva até
-// terminar; fora dela (teste, computador do desenvolvedor) o trabalho simplesmente segue em paralelo. No máximo uma vez a cada 2 s por instância.
-export function kickQueue(req: Request, opts: { limit?: number; force?: boolean } = {}): void {
-  if (!opts.force && Date.now() - lastKick < 2000) return;
+// terminar; fora dela (teste, computador do desenvolvedor) o trabalho simplesmente segue em paralelo. `minGapMs`: intervalo mínimo
+// entre disparos nesta instância. O padrão (0) vale para quem sabe que acabou de enfileirar algo (pedido, pagamento); as telas que
+// consultam de tempos em tempos passam um intervalo maior, para não pesar.
+export function kickQueue(req?: Request, opts: { limit?: number; minGapMs?: number } = {}): void {
+  const request = req ?? lastRequest;
+  if (!request) return;
+  const gap = opts.minGapMs ?? 0;
+  if (running) {
+    if (gap === 0) rerun = true;
+    return;
+  }
+  if (Date.now() - lastKick < gap) return;
   lastKick = Date.now();
-  const job = processQueue({ req, limit: opts.limit ?? 3, budgetMs: 6000 })
-    .then(() => undefined)
-    .catch((e) => log('fila em segundo plano falhou', { error: String((e as Error).message).slice(0, 120) }));
+  const limit = opts.limit ?? 3;
+  const job = (async () => {
+    for (let round = 0; round < 3; round += 1) {
+      rerun = false;
+      const result = await processQueue({ req: request, limit, budgetMs: 6000 });
+      if (!rerun && result.processed < limit) break;
+    }
+  })()
+    .catch((e) => log('fila em segundo plano falhou', { error: String((e as Error).message).slice(0, 120) }))
+    .finally(() => {
+      running = null;
+    });
+  running = job;
   try {
     waitUntil(job);
   } catch {
