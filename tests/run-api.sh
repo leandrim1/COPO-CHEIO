@@ -24,7 +24,7 @@ if [ -n "$1" ]; then
 else
   bash tests/fresh.sh >/dev/null 2>&1
   for t in api-test api-test2 api-test3; do run "$t"; done
-  for t in api-test4 api-test5 api-test5-modes api-test6 api-test7 api-test8 api-test9 api-test10 api-test11 api-test12 api-test13 api-test14 api-test15 api-test16 api-test17 api-test18 api-test19 api-test20; do
+  for t in api-test4 api-test5 api-test5-modes api-test6 api-test7 api-test8 api-test9 api-test10 api-test11 api-test12 api-test13 api-test14 api-test15 api-test16 api-test17 api-test18 api-test19 api-test20 api-test21; do
     bash tests/fresh.sh >/dev/null 2>&1
     run "$t"
   done
