@@ -95,6 +95,9 @@ export async function lastCode(email) {
   const list = await mailsTo(email);
   return codeFrom(list[list.length - 1]);
 }
+export async function mailStats() {
+  return (await fetch(`${BASE}/__mail/stats`)).json();
+}
 export async function mailMode(failure = null, delayMs = 0) {
   await fetch(`${BASE}/__mail/mode`, { method: 'POST', body: JSON.stringify({ failure, delayMs }) });
 }

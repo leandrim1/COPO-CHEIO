@@ -186,6 +186,9 @@ const server = http.createServer(async (req, res) => {
     const list = sink.messages.filter((m) => !to || m.to.includes(to));
     return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(list));
   }
+  if (url.pathname === '/__mail/stats' && sink) {
+    return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(sink.stats));
+  }
   if (url.pathname === '/__mail/mode' && sink && req.method === 'POST') {
     const chunks = [];
     for await (const c of req) chunks.push(c);

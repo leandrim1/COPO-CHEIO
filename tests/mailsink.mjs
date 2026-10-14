@@ -4,13 +4,17 @@ import { simpleParser } from 'mailparser';
 
 export async function startMailSink(port = 0) {
   const messages = [];
-  const mode = { failure: null, delayMs: 0 }; // failure: 'rcpt' | 'auth' | 'down' | null
+  // failure: 'rcpt' | 'auth' | 'down' | 'temp' (451 em todo destinatário) | 'data' (554 5.7.1 depois do conteúdo) | null
+  const mode = { failure: null, delayMs: 0 };
+  // Quantas vezes o servidor foi realmente procurado (para provar que uma mensagem bloqueada nem chega a tentar o envio).
+  const stats = { connect: 0, rcpt: 0, data: 0 };
   const server = new SMTPServer({
     secure: false,
     authOptional: false,
     allowInsecureAuth: true,
     disabledCommands: ['STARTTLS'],
     onConnect(session, cb) {
+      stats.connect += 1;
       if (mode.failure === 'down') return cb(new Error('421 servico indisponivel'));
       cb();
     },
@@ -19,17 +23,35 @@ export async function startMailSink(port = 0) {
       cb(null, { user: auth.username });
     },
     onRcptTo(address, session, cb) {
+      stats.rcpt += 1;
       if (mode.failure === 'rcpt' || /^(naoexiste|nobox)/.test(address.address)) {
         const err = new Error('550 5.1.1 caixa postal inexistente');
         err.responseCode = 550;
         return cb(err);
       }
+      // Recusas com os códigos que servidores reais usam (para provar a classificação: temporário, caixa cheia, política).
+      if (mode.failure === 'temp' || /^soft-/.test(address.address)) {
+        const err = new Error('451 4.7.1 greylisted, tente mais tarde');
+        err.responseCode = 451;
+        return cb(err);
+      }
+      if (/^full-/.test(address.address)) {
+        const err = new Error('552 5.2.2 caixa cheia');
+        err.responseCode = 552;
+        return cb(err);
+      }
       cb();
     },
     onData(stream, session, cb) {
+      stats.data += 1;
       simpleParser(stream)
         .then(async (m) => {
           if (mode.delayMs) await new Promise((r) => setTimeout(r, mode.delayMs));
+          if (mode.failure === 'data' || (m.to?.value ?? []).some((a) => /^policy-/.test(a.address))) {
+            const err = new Error('554 5.7.1 mensagem recusada pela política do servidor');
+            err.responseCode = 554;
+            throw err;
+          }
           messages.push({
             to: (m.to?.value ?? []).map((a) => a.address.toLowerCase()),
             from: m.from?.text,
@@ -48,5 +70,5 @@ export async function startMailSink(port = 0) {
     server.on('error', reject);
     server.listen(port, '127.0.0.1', resolve);
   });
-  return { server, messages, mode, port: server.server.address().port };
+  return { server, messages, mode, stats, port: server.server.address().port };
 }
