@@ -260,7 +260,11 @@ export default function PaymentsPage() {
             <Stat label="Pedem conferência" value={String(s!.attention)} tone={s!.attention ? 'text-amber-200' : 'text-white'} />
           </div>
 
-          <Card className="mt-4" title={`Taxa (${percentFromBps(data.commission_bps)} do total do pedido)`} description="“Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.">
+          <Card
+            className="mt-4"
+            title={`Taxa do Pix (${percentFromBps(data.commission_bps)} do total do pedido)`}
+            description={`Taxa de serviço do Pix repassada à conta principal: ${percentFromBps(data.pix_fee.customer_bps)} pagos pelo cliente (já somados ao total) e ${percentFromBps(data.pix_fee.store_bps)} descontados do estabelecimento. Pedidos antigos mantêm a taxa de quando foram feitos. “Efetivada” só conta o que a operadora confirmou ter repassado. O resto é a conta feita pela loja.`}
+          >
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               <Stat label="Calculada" value={cents(s!.commission_calculated_cents)} hint="dos pedidos pagos" />
               <Stat label="Efetivada" value={cents(s!.commission_confirmed_cents)} hint="confirmada pela operadora" tone="text-emerald-200" />
@@ -325,7 +329,9 @@ export default function PaymentsPage() {
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5">
-                          Taxa {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
+                          Taxa {cents(p.commission_cents)}
+                          {(p.customer_fee_cents ?? 0) > 0 && <span className="text-white/45"> (cliente {cents(p.customer_fee_cents ?? 0)} + estabelecimento {cents(Math.max(0, (p.commission_cents ?? 0) - (p.customer_fee_cents ?? 0)))})</span>}{' '}
+                          <CommissionBadge state={p.commission_state ?? 'calculated'} />
                         </span>
                       )}
                       <span>Tarifa {p.fee_cents === null || p.fee_cents === undefined ? '—' : cents(p.fee_cents)}</span>

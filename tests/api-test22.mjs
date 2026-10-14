@@ -621,24 +621,28 @@ section('16. Cabeçalhos de segurança: só a tela do cartão (/pagar) tem as pe
 }
 
 // ------------------------------------------------------------------------------------------------
-section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix (subconta + split de 2%) × cartão (subconta, sem split, subtotal + taxa)');
+section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix (subconta + split de 5%: 2,5% do cliente + 2,5% do estabelecimento) × cartão (subconta, sem split, subtotal + taxa do cartão)');
 {
   const merchantBefore = psql("select status || '|' || provider_account_id from merchant_accounts");
   const on = await owner.patch('/api/admin/payments/pix_online', { enabled: true });
   check('o Pix online liga (mesma subconta) e o cartão online continua ligado', on.status === 200 && (await new Client().get('/api/site')).data.payments.map((p) => p.code).includes('card_online'), on.data);
+  const sitePayments = (await new Client().get('/api/site')).data.payments;
+  const sitePix = sitePayments.find((x) => x.code === 'pix_online');
+  const siteCard = sitePayments.find((x) => x.code === 'card_online');
+  check('/api/site: o Pix informa a taxa de serviço de 2,5% (e nenhuma taxa de cartão); o cartão informa a taxa do cartão (e nenhuma taxa de serviço)', sitePix?.service_fee?.bps === 250 && !sitePix.card_fee && !!siteCard?.card_fee && !siteCard.service_fee, [sitePix, siteCard]);
   await clearCalls();
   const baseCharges = fake.state.cardChargeCount;
 
-  // --- Pix: valor original, split habilitado, subconta ---
-  const pixOrder = await placeOrder([{ product_id: p25.id, quantity: 1 }], { payment_method: 'pix_online', expected_total: 25 });
-  check('pedido de Pix online: valor ORIGINAL do pedido (R$ 25,00), sem taxa de cartão', pixOrder.r.status === 201 && pixOrder.order.total === 25 && pixOrder.order.payment_fee === 0, pixOrder.r.data);
+  // --- Pix: pedido + taxa de serviço de 2,5% do cliente, split de 5% para a master, subconta ---
+  const pixOrder = await placeOrder([{ product_id: p25.id, quantity: 1 }], { payment_method: 'pix_online', expected_total: 25.63 });
+  check('pedido de Pix online: R$ 25,00 + taxa de serviço do Pix de 2,5% (R$ 0,63) = R$ 25,63, e NÃO a taxa do cartão', pixOrder.r.status === 201 && pixOrder.order.total === 25.63 && pixOrder.order.payment_fee === 0.63 && orderRow(pixOrder.number).payment_fee_bps === 250 && orderRow(pixOrder.number).payment_fee_fixed === null, pixOrder.r.data);
   const pixPay = await pixOrder.c.post(`/api/tracking/${pixOrder.token}/payment`, { method: 'pix' });
   const pixCalls = callsTo('POST', '/v1/charges/pix');
   check('o Pix é gerado pelo fluxo do Pix: 201 e UMA chamada a POST /v1/charges/pix', pixPay.status === 201 && pixPay.data.payment.method === 'pix' && pixCalls.length === 1, [pixPay.status, pixCalls.length]);
-  check('Pix: amount 25 (o do pedido), na SUBCONTA (X-Sub-Account), com a divisão fixa de 2% para a master', pixCalls[0].body.amount === 25 && pixCalls[0].subAccount === '4960589' && JSON.stringify(pixCalls[0].body.split) === JSON.stringify([{ type: 'fixed', amount: 0.5 }]) && pixCalls[0].body.paymentMethod === 'pix', pixCalls[0]);
+  check('Pix: amount 25,63 (o total do pedido), na SUBCONTA (X-Sub-Account), com a divisão fixa de 5% (R$ 1,25) para a master', pixCalls[0].body.amount === 25.63 && pixCalls[0].subAccount === '4960589' && JSON.stringify(pixCalls[0].body.split) === JSON.stringify([{ type: 'fixed', amount: 1.25 }]) && pixCalls[0].body.paymentMethod === 'pix', pixCalls[0]);
   check('...e nada da cobrança do cartão foi chamado para esse pedido', cardCalls().length === 0 && fake.state.cardChargeCount === baseCharges);
   const pixRow = payRow(pixOrder.number);
-  check('no banco: pagamento "pix", comissão de R$ 0,50 calculada, sem taxa de cartão e ligado à subconta', pixRow.method === 'pix' && pixRow.commission_cents === 50 && pixRow.customer_fee_cents === 0 && pixRow.merchant_account_id !== null && pixRow.amount_cents === 2500, pixRow);
+  check('no banco: pagamento "pix", taxa de 5% (R$ 1,25) calculada, R$ 0,63 pagos pelo cliente, e ligado à subconta', pixRow.method === 'pix' && pixRow.commission_cents === 125 && pixRow.commission_bps === 500 && pixRow.customer_fee_cents === 63 && pixRow.merchant_account_id !== null && pixRow.amount_cents === 2563, pixRow);
 
   // --- Cartão: subtotal + taxa, mesma subconta, sem split ---
   await clearCalls();
@@ -664,7 +668,7 @@ section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix (subconta + split
   const pixCharge = pixRow.provider_charge_id;
   await fake.control('pay', { chargeId: pixCharge });
   const whPix = await hook(paymentSuccess(charge(pixCharge)), { id: 'wh-fluxos-pix' });
-  check('o aviso do PIX (o mesmo endpoint de sempre) confirma só o pedido de Pix, com a comissão calculada', whPix.status === 200 && payRow(pixOrder.number).status === 'paid' && orderRow(pixOrder.number).order_status === 'new' && payRow(pixOrder.number).commission_cents === 50 && payRow(cardOrder.number).status === 'paid', [whPix.status, payRow(pixOrder.number).status]);
+  check('o aviso do PIX (o mesmo endpoint de sempre) confirma só o pedido de Pix, com a comissão calculada', whPix.status === 200 && payRow(pixOrder.number).status === 'paid' && orderRow(pixOrder.number).order_status === 'new' && payRow(pixOrder.number).commission_cents === 125 && payRow(cardOrder.number).status === 'paid', [whPix.status, payRow(pixOrder.number).status]);
   const before = events();
   const whCard = await hook(paymentSuccessCard(charge(cardRow.provider_charge_id)), { id: 'wh-fluxos-cartao' });
   check('o aviso do CARTÃO é aceito, sem mexer no pedido de Pix (nenhuma transição repetida)', whCard.status === 200 && events() === before + 1 && history(pixOrder.number) === '->awaiting_payment | awaiting_payment>new' && history(cardOrder.number) === '->awaiting_payment | awaiting_payment>new', [history(pixOrder.number), history(cardOrder.number)]);

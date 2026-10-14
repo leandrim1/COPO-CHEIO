@@ -662,7 +662,7 @@ export function OrderDetailPage({ number }: { number: string }) {
               </div>
               {Number(order.payment_fee) > 0 && (
                 <div className="flex justify-between text-white/60">
-                  <dt>Taxa do cartão (paga pelo cliente)</dt>
+                  <dt>{order.payment_method === 'pix_online' ? 'Taxa de serviço do Pix (paga pelo cliente)' : 'Taxa do cartão (paga pelo cliente)'}</dt>
                   <dd className="tabular-nums">{money(Number(order.payment_fee))}</dd>
                 </div>
               )}
@@ -832,7 +832,7 @@ export function OrderDetailPage({ number }: { number: string }) {
         )}
         {Number(order.payment_fee) > 0 && (
           <p className="flex justify-between">
-            <span>Taxa do cartão</span>
+            <span>{order.payment_method === 'pix_online' ? 'Taxa de serviço do Pix' : 'Taxa do cartão'}</span>
             <span>{money(Number(order.payment_fee))}</span>
           </p>
         )}

@@ -206,7 +206,7 @@ section('5. Pagamento online (Pix): só "pagamento confirmado" (um e-mail, não 
   const refreshed = await owner.post(`/api/admin/payments/${psql(`select p.id from payments p join orders o on o.id = p.order_id where o.order_number = ${A.number}`)}/refresh`);
   check('a operadora confirma e o painel atualiza o pagamento', refreshed.status === 200 && orderRow(A.number).payment_status === 'paid', [refreshed.status, orderRow(A.number).payment_status]);
   const pay = (await arrive(email, 1, /Pagamento do pedido/))[0];
-  check('"pagamento confirmado": um e-mail só, com o valor', Boolean(pay) && /confirmado/i.test(pay.subject) && /R\$\s*17,00/.test(plain(pay)) && (await mailsTo(email)).length === 1, (await mailsTo(email)).map((m) => m.subject));
+  check('"pagamento confirmado": um e-mail só, com o valor, a taxa de serviço do Pix (R$ 0,43) e o total (R$ 17,43)', Boolean(pay) && /confirmado/i.test(pay.subject) && /R\$\s*17,00/.test(plain(pay)) && /Taxa de serviço do Pix/.test(plain(pay)) && /R\$\s*0,43/.test(plain(pay)) && /R\$\s*17,43/.test(plain(pay)) && (await mailsTo(email)).length === 1, (await mailsTo(email)).map((m) => m.subject));
   check('...e NÃO sai "pedido recebido" junto', msgs(A.number, 'order_received').length === 0 && msgs(A.number, 'payment_confirmed').length === 1, msgs(A.number).map((m) => m.kind));
   // Ver o mesmo pagamento de novo (atualização repetida) não repete o aviso.
   await owner.post(`/api/admin/payments/${psql(`select p.id from payments p join orders o on o.id = p.order_id where o.order_number = ${A.number}`)}/refresh`);
@@ -222,10 +222,10 @@ section('5. Pagamento online (Pix): só "pagamento confirmado" (um e-mail, não 
   await sim('webhook', { id: 'evt-18-part', type: 'charge.refunded', chargeId: charge });
   await process_();
   check('estorno parcial: o pedido continua "pago" e nenhum e-mail de reembolso sai', orderRow(A.number).payment_status === 'paid' && msgs(A.number, 'payment_refunded').length === 0);
-  await sim(`charge/${charge}`, { status: 'refunded', refundedCents: 1700 });
+  await sim(`charge/${charge}`, { status: 'refunded', refundedCents: 1743 });
   await sim('webhook', { id: 'evt-18-total', type: 'charge.refunded', chargeId: charge });
   const refund = (await arrive(email, 1, /Reembolso/))[0];
-  check('estorno total: e-mail "reembolso", sem prometer prazo', Boolean(refund) && /reembolso/i.test(refund.subject) && /R\$\s*17,00/.test(plain(refund)) && !/em até \d+ dias/i.test(refund.text), refund?.subject);
+  check('estorno total: e-mail "reembolso", sem prometer prazo', Boolean(refund) && /reembolso/i.test(refund.subject) && /R\$\s*17,43/.test(plain(refund)) && !/em até \d+ dias/i.test(refund.text), refund?.subject);
 
   // Pedido que não foi pago a tempo e foi cancelado: texto "nada foi cobrado".
   const email2 = fresh('pixexp');

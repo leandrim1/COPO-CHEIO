@@ -92,7 +92,7 @@ export function CardFeeCard({ overview, onChanged }: { overview: PaymentsOvervie
     <Card
       className="mt-4"
       title="Cartão de crédito online"
-      description="O cliente paga no cartão pelo site e a taxa de processamento do cartão é somada ao total, mostrada antes de ele confirmar. A cobrança do cartão é feita na subconta do estabelecimento, separada do Pix: sem divisão (split). O Pix e os pagamentos na entrega não têm essa taxa."
+      description="O cliente paga no cartão pelo site e a taxa de processamento do cartão é somada ao total, mostrada antes de ele confirmar. A cobrança do cartão é feita na subconta do estabelecimento, separada do Pix: sem divisão (split). O Pix tem a sua própria taxa de serviço (abaixo, em “Taxa do Pix”) e os pagamentos na entrega não têm taxa."
     >
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[14rem_1fr]">
         <dt className="font-semibold text-white/60">Cartão online no site</dt>

@@ -122,6 +122,18 @@ const pay = async (chargeId, eventId) => {
     ok(/Pague agora, pelo site/.test(await page.innerText('body')), `${label}: a opção explica que se paga agora, pelo site`);
     await page.locator('label').filter({ hasText: /Pix online/ }).first().click();
     ok(/Você paga na próxima tela/.test(await page.innerText('body')), `${label}: ao escolher, avisa que o pedido só vai para a loja depois do pagamento`);
+    await page.getByText('Retirar na loja', { exact: true }).click();
+    await page.waitForTimeout(900);
+    const pixNotice = await page.locator('[data-pix-notice]').innerText();
+    ok(/Taxa de serviço \(2,5%\): R\$\s*0,63\. Ela já está no total de R\$\s*25,63/.test(pixNotice), `${label}: o aviso do Pix mostra a taxa de serviço do cliente (2,5% de R$ 25,00 = R$ 0,63) já dentro do total de R$ 25,63`, pixNotice);
+    ok(/Essa taxa só existe no Pix online/.test(pixNotice), `${label}: o aviso diz que a taxa é só do Pix online`);
+    const pixSummary = await page.locator('[data-fee-line]').innerText();
+    ok(/Taxa de serviço/.test(pixSummary) && /0,63/.test(pixSummary) && !/cartão/i.test(pixSummary), `${label}: o resumo tem a linha "Taxa de serviço" de R$ 0,63 (e não "taxa do cartão")`, pixSummary);
+    ok(/Você pagará R\$\s*25,63 no Pix/.test(await page.locator('[data-pix-total-note]').innerText()), `${label}: abaixo do botão: "Você pagará R$ 25,63 no Pix"`);
+    ok((await page.getByRole('button', { name: /^Finalizar e pagar com Pix · R\$\s*25,63/ }).count()) === 1, `${label}: o botão traz o total com a taxa (R$ 25,63)`);
+    await page.locator('label').filter({ hasText: /Dinheiro/ }).first().click();
+    ok((await page.locator('[data-fee-line]').count()) === 0 && (await page.locator('[data-pix-notice]').count()) === 0, `${label}: trocando para Dinheiro a taxa some do resumo e do aviso`);
+    await page.locator('label').filter({ hasText: /Pix online/ }).first().click();
     ok(await page.getByRole('button', { name: /^Finalizar e pagar com Pix · R\$/ }).count() === 1, `${label}: o botão vira "Finalizar e pagar com Pix"`);
     ok(await noHScroll(page), `${label}: checkout sem rolagem horizontal`);
     await page.screenshot({ path: `${SP}/pix-${vp.width}-1-checkout.png`, fullPage: true });
@@ -135,10 +147,10 @@ const pay = async (chargeId, eventId) => {
     // A página do pedido mostra o Pix
     ok(await until(async () => /Falta o pagamento/.test(await page.getByRole('heading', { level: 1 }).innerText())), `${label}: a página do pedido diz "Falta o pagamento"`);
     ok(await page.locator('[data-pix-qr] svg').first().waitFor({ timeout: 8000 }).then(() => true, () => false), `${label}: o QR Code aparece`);
-    ok((await page.getByRole('img', { name: /QR Code do Pix de R\$ 25,00/ }).count()) === 1, `${label}: o QR Code tem descrição para leitor de tela (com o valor)`);
+    ok((await page.getByRole('img', { name: /QR Code do Pix de R\$ 25,63/ }).count()) === 1, `${label}: o QR Code tem descrição para leitor de tela (com o valor)`);
     const area = page.getByLabel('Pix copia e cola');
     const payload = await area.inputValue();
-    ok(/^SIMULADO-NAO-PAGAVEL\|sim_ch_\d+\|2500$/.test(payload), `${label}: o "copia e cola" aparece (somente leitura) e é o da cobrança de R$ 25,00`, payload);
+    ok(/^SIMULADO-NAO-PAGAVEL\|sim_ch_\d+\|2563$/.test(payload), `${label}: o "copia e cola" aparece (somente leitura) e é o da cobrança de R$ 25,63`, payload);
     ok((await area.getAttribute('readonly')) !== null, `${label}: o campo do "copia e cola" é só leitura`);
     const number = Number((await page.innerText('body')).match(/pedido #(\d+)/i)?.[1]);
     ok(number >= 1001, `${label}: o número do pedido aparece (#${number})`);
@@ -158,7 +170,7 @@ const pay = async (chargeId, eventId) => {
     await page.getByRole('button', { name: /Já paguei, conferir agora/ }).click();
     ok(await until(async () => /Ainda não recebemos o pagamento/.test(await page.innerText('body'))), `${label}: "Já paguei" só confere: diz que ainda não recebeu`);
     const ch = await chargeOf(number);
-    ok(!!ch && ch.amountCents === 2500 && ch.commissionCents === 50, `${label}: a operadora recebeu R$ 25,00 com comissão de R$ 0,50 (2%)`, ch && { a: ch.amountCents, c: ch.commissionCents });
+    ok(!!ch && ch.amountCents === 2563 && ch.commissionCents === 125, `${label}: a operadora recebeu R$ 25,63 com a taxa de 5% de R$ 1,25 para a conta master`, ch && { a: ch.amountCents, c: ch.commissionCents });
     ok(psql(`select order_status || '/' || payment_status from orders where order_number = ${number}`) === 'awaiting_payment/pending', `${label}: o pedido continua aguardando pagamento`);
 
     // O cliente paga e a operadora avisa: a tela confirma sozinha, sem recarregar
@@ -193,7 +205,7 @@ const pay = async (chargeId, eventId) => {
     ok(await page.locator('[data-pix-qr] svg').first().waitFor({ timeout: 10000 }).then(() => true, () => false), 'um novo QR Code aparece');
     const second = (await sim('state')).charges.filter((c) => c.orderNumber === number);
     ok(second.length === 2 && psql(`select count(*) from payments p join orders o on o.id = p.order_id where o.order_number = ${number}`) === '2', 'clique duplo gerou UMA nova cobrança (2 no total, nunca 3)', second.length);
-    ok((await page.getByLabel('Pix copia e cola').inputValue()) !== `SIMULADO-NAO-PAGAVEL|${first.id}|2500`, 'o "copia e cola" novo é diferente do vencido');
+    ok((await page.getByLabel('Pix copia e cola').inputValue()) !== `SIMULADO-NAO-PAGAVEL|${first.id}|2563`, 'o "copia e cola" novo é diferente do vencido');
     await ctx.close();
   }
 
@@ -230,7 +242,7 @@ const pay = async (chargeId, eventId) => {
     ok(await until(async () => (await admin.getByText(/recebido \(Pix pago\)/).count()) > 0, 20000), 'o painel avisa do pedido pago ("recebido (Pix pago)")');
     await admin.reload({ waitUntil: 'networkidle' });
     const body = await admin.innerText('body');
-    ok(/Efetivada/.test(body) && /Taxa \(2%\)/.test(body) && !/Comissão/.test(body) && /R\$\s*0,50/.test(body), 'o detalhe mostra a taxa de 2% (R$ 0,50) como EFETIVADA');
+    ok(/Efetivada/.test(body) && /Taxa \(5%\)/.test(body) && !/Comissão/.test(body) && /R\$\s*1,25/.test(body) && /cliente R\$\s*0,63/.test(body) && /estabelecimento R\$\s*0,62/.test(body), 'o detalhe mostra a taxa de 5% (R$ 1,25) como EFETIVADA, e quem paga: cliente R$ 0,63 e estabelecimento R$ 0,62');
     ok(await admin.getByRole('button', { name: 'Atualizar pagamento' }).count() === 1, 'o owner tem o botão "Atualizar pagamento"');
     await admin.screenshot({ path: `${SP}/pix-admin-3-pedido-pago.png`, fullPage: true });
 
@@ -238,7 +250,7 @@ const pay = async (chargeId, eventId) => {
     const pagamentos = await admin.innerText('body');
     ok(/Pagamentos online/.test(pagamentos) && /Conectada/.test(pagamentos) && /Aprovada/.test(pagamentos), 'a página Pagamentos mostra a operadora conectada e a conta aprovada');
     ok(await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).getAttribute('aria-checked') === 'true', 'o interruptor do Pix online está ligado');
-    ok(/Taxa \(2% do total do pedido\)/.test(pagamentos) && !/Comissão/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa taxa calculada e efetivada (a palavra "comissão" não aparece na tela)');
+    ok(/Taxa do Pix \(5% do total do pedido\)/.test(pagamentos) && !/Comissão/.test(pagamentos) && /Efetivada/.test(pagamentos), 'o resumo separa taxa calculada e efetivada (a palavra "comissão" não aparece na tela)');
     ok(await noHScroll(admin), 'a página Pagamentos não tem rolagem horizontal');
     await admin.screenshot({ path: `${SP}/pix-admin-4-pagamentos.png`, fullPage: true });
     await admin.getByRole('switch', { name: 'Oferecer Pix online no checkout' }).click();

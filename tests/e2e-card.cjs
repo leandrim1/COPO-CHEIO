@@ -458,7 +458,7 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     await sctx.close();
   }
 
-  // ---- 12. Os dois fluxos no mesmo site: Pix (split na subconta) e cartão (conta principal, sem split) ----------------------------------------
+  // ---- 12. Os dois fluxos no mesmo site: Pix (split na subconta) e cartão (subconta, sem split) ----------------------------------------
   console.log('# 12. Pix com split e cartão sem split, de ponta a ponta, no mesmo site');
   {
     const on = await api('PATCH', '/api/admin/payments/pix_online', { enabled: true });
@@ -472,19 +472,19 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     await page.locator('label').filter({ hasText: /Pix online/ }).first().click();
     await page.waitForTimeout(150);
     const pixSummary = await text(summary(page));
-    ok(!/Taxa do cartão/.test(pixSummary) && /Total R\$ 100,00/.test(pixSummary), 'Pix online: valor original do pedido (R$ 100,00), sem taxa de cartão', pixSummary);
+    ok(!/Taxa do cartão/.test(pixSummary) && /Taxa de serviço R\$ 2,50/.test(pixSummary) && /Total R\$ 102,50/.test(pixSummary), 'Pix online: R$ 100,00 + taxa de serviço de 2,5% (R$ 2,50) = R$ 102,50, e nada de taxa de cartão', pixSummary);
     await page.getByRole('button', { name: /^Finalizar e pagar com Pix/ }).click();
     await page.waitForURL('**/pedido/**', { timeout: 15000 });
     ok(await page.locator('[data-pix-qr] svg').first().waitFor({ timeout: 10000 }).then(() => true, () => false), 'a tela do Pix mostra o QR Code (fluxo do Pix)');
     const pixCall = fake.state.calls.find((c) => c.method === 'POST' && c.path === '/v1/charges/pix');
-    ok(!!pixCall && pixCall.body.amount === 100 && pixCall.subAccount === '4960589' && JSON.stringify(pixCall.body.split) === JSON.stringify([{ type: 'fixed', amount: 2 }]), 'Pix: R$ 100,00 na SUBCONTA, com a divisão de 2% para a master', pixCall && { a: pixCall.body.amount, s: pixCall.subAccount, sp: pixCall.body.split });
+    ok(!!pixCall && pixCall.body.amount === 102.5 && pixCall.subAccount === '4960589' && JSON.stringify(pixCall.body.split) === JSON.stringify([{ type: 'fixed', amount: 5 }]), 'Pix: R$ 102,50 na SUBCONTA, com a divisão de 5% (R$ 5,00) para a master: a subconta fica com R$ 97,50', pixCall && { a: pixCall.body.amount, s: pixCall.subAccount, sp: pixCall.body.split });
     ok(fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges').length === 0, '...e nenhuma cobrança de cartão foi chamada para o Pix');
     const pixOrderNumber = Number((await page.innerText('body')).match(/pedido #(\d+)/i)?.[1]);
     const pixCharge = psql(`select p.provider_charge_id from payments p join orders o on o.id = p.order_id where o.order_number = ${pixOrderNumber}`);
     await fake.control('pay', { chargeId: pixCharge });
     const whPix = await postWebhook(BASE, paymentSuccess(fake.state.charges.get(pixCharge)), { id: 'wh-e2e-fluxos-pix' });
     ok(whPix.status === 200 && (await until(async () => /Pagamento confirmado!/.test(await text(page)), 20000)), 'o aviso do Pix confirma o pagamento e a tela muda sozinha para "Pagamento confirmado!"');
-    ok(psql(`select p.method || '/' || p.commission_cents || '/' || p.customer_fee_cents from payments p join orders o on o.id = p.order_id where o.order_number = ${pixOrderNumber}`) === 'pix/200/0', 'no banco: pagamento Pix, comissão de R$ 2,00, sem taxa de cartão');
+    ok(psql(`select p.method || '/' || p.commission_cents || '/' || p.customer_fee_cents from payments p join orders o on o.id = p.order_id where o.order_number = ${pixOrderNumber}`) === 'pix/500/250', 'no banco: pagamento Pix, taxa de R$ 5,00 para a master (R$ 2,50 pagos pelo cliente + R$ 2,50 pelo estabelecimento)');
     await ctx.close();
 
     await fake.control('calls/clear', {});

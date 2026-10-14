@@ -1,6 +1,6 @@
 # Cartão de crédito online com a taxa repassada ao cliente (Copo Cheio + ValidaPay)
 
-> **Regra de ouro: Pix e cartão são DOIS FLUXOS SEPARADOS.** O **Pix** continua exatamente como era: valor original do pedido, cobrança na subconta do estabelecimento e **split** de 2% para a conta master.
+> **Regra de ouro: Pix e cartão são DOIS FLUXOS SEPARADOS.** O **Pix** segue na subconta do estabelecimento com **split** para a conta master: a **taxa de serviço de 5%** (2,5% paga pelo cliente, somada ao total, e 2,5% paga pelo estabelecimento) vai inteira para a master (veja [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md)); o cartão não tem essa taxa.
 > O **cartão** é uma cobrança à parte, na **subconta do estabelecimento** (a mesma do Pix), **sem split**, com o **subtotal + taxa de processamento** calculados no backend.
 > A forma de pagamento escolhida no pedido decide o fluxo no servidor, e o banco recusa que um pedido use o fluxo do outro (seção 3).
 >
@@ -17,7 +17,7 @@
 
 1. No checkout aparece a forma **"Cartão online"** (só se o dono a ligou). Ela é **diferente** do "Cartão" que já existia, que continua sendo pago na maquininha, na entrega/retirada.
 2. O resumo do pedido mostra **Subtotal · Entrega · Taxa do cartão · Total**. Os valores mudam **na hora** quando o cliente troca a quantidade, tira ou põe itens, escolhe
-   entrega ou retirada, ou muda a forma de pagamento. No **Pix** e nas formas pagas na entrega **não há taxa**.
+   entrega ou retirada, ou muda a forma de pagamento. Nas formas pagas na entrega **não há taxa**; o **Pix online** tem a sua própria **taxa de serviço** (linha "Taxa de serviço"), que nunca é a taxa do cartão.
 3. Antes de confirmar, o cliente lê um aviso: o valor da taxa, o total que já a inclui e a frase "Você será cobrado(a) R$ X no cartão de crédito, à vista, com a taxa do cartão de R$ Y incluída".
    O botão também mostra o total com a taxa. O **e-mail é obrigatório** nesta forma (a ValidaPay exige o e-mail do pagador).
 4. Ao finalizar, o pedido é criado **aguardando pagamento** (estoque reservado, a loja ainda não o vê como novo) e o navegador abre a tela **`/pagar/<código do pedido>`**: número do
@@ -65,14 +65,14 @@ O total gravado em `orders.total` = subtotal + entrega − desconto + taxa (rest
 
 ## 3. Pix e cartão: dois fluxos separados
 
-| | **Pix** (já existia; não foi alterado) | **Cartão de crédito** (novo) |
+| | **Pix** (fluxo existente; só a taxa de serviço é nova) | **Cartão de crédito** (novo) |
 | --- | --- | --- |
-| Valor cobrado | o **valor original** do pedido | **subtotal + taxa de processamento** (calculada no banco, em centavos) |
+| Valor cobrado | o pedido (itens + entrega) **+ a taxa de serviço de 2,5% do cliente** (R$ 100,00 → R$ 102,50) | **subtotal + taxa de processamento** (calculada no banco, em centavos) |
 | Rota da ValidaPay | `POST /v1/charges/pix` | `POST /v1/charges` (`paymentMethod: "creditcard"`) |
 | Conta | **subconta** do estabelecimento (cabeçalho `X-Sub-Account`) | **a mesma subconta** do estabelecimento (cabeçalho `X-Sub-Account`) |
-| Divisão (split) | **sim**: valor fixo de 2% para a master, como sempre | **não** (a documentação não traz split para o cartão) |
+| Divisão (split) | **sim**: valor fixo de **5%** do pedido para a master (R$ 100,00 → R$ 5,00; a subconta fica com R$ 97,50) | **não** (a documentação não traz split para o cartão) |
 | Depende da subconta aprovada | sim | sim (sem ela o cartão não liga) |
-| Registro no banco | `payments.method = 'pix'`, comissão calculada, subconta ligada | `payments.method = 'card'`, comissão "não se aplica", subconta ligada, taxa do cliente separada |
+| Registro no banco | `payments.method = 'pix'`, comissão de 5% calculada (`commission_cents`), taxa do cliente (`customer_fee_cents`), subconta ligada | `payments.method = 'card'`, comissão "não se aplica", subconta ligada, taxa do cliente separada |
 | Recebimento | o do Pix | **D+1** conforme a habilitação da **subconta** na ValidaPay (**não** vem da API e **não** é configurado pela loja: confira no painel/contrato) |
 
 Quem decide o fluxo é o **método de pagamento gravado no pedido** (`pix_online` ou `card_online`), nunca o navegador:
@@ -157,7 +157,7 @@ Pré-requisitos: a **subconta** de sandbox do estabelecimento já vinculada e ap
 | Percentual e tarifa do cartão, **prazo D+1** | **Não aparecem na documentação da API** (são do contrato/plano da conta). A loja não calcula nem mostra prazos; as taxas são configuradas pelo owner e precisam ser conferidas. |
 | `passFeesToCustomer` | Segundo a documentação, só repassa a taxa do **parcelamento**. A loja envia `false`; a taxa do cartão é somada ao `amount`. |
 | Parcelamento | **Não implementado** (só à vista). Só deve ser feito depois de confirmar as tarifas por parcela. |
-| Divisão (split) no cartão | **Não existe na documentação** (só no Pix). O cartão online não tem a comissão de 2%. |
+| Divisão (split) no cartão | **Não existe na documentação** (só no Pix). O cartão online não tem a taxa de serviço de 5% do Pix. |
 | Conta do cartão | **Subconta do estabelecimento (`X-Sub-Account`), sem split** (decisão do dono). **Não confirmado** na documentação: se `POST /v1/charges` aceita `X-Sub-Account`; se o `publicId` da subconta gera token válido para ela; se a subconta tem o cartão habilitado e o prazo D+1. Se a ValidaPay recusar, é uma mudança pequena e localizada em `validapay.ts` (e a decisão volta ao dono). |
 | 3DS | **Desligado** (opcional na documentação; pede telefone e endereço). Sem 3DS, o risco de chargeback por fraude fica com a conta (aviso da própria documentação). |
 | `metadata` na cobrança do cartão | A ValidaPay **não grava** nesta rota; a ligação com o pedido é o `externalId`/`chargeId`. Se a resposta da criação se perder e o cliente **nunca** tentar de novo, o aviso `payment.success` não tem como achar o pedido: a tentativa fica sinalizada ("sem resposta", em 5 min) para o dono conferir na ValidaPay. |
@@ -178,7 +178,7 @@ Os **12 cenários obrigatórios** e onde cada um é provado:
 | --- | --- | --- |
 | 1 | R$ 10 no cartão (R$ 10,96) | `api-test22` §2 · `cardfee.test.mjs` · `e2e-card` §3 |
 | 2 | R$ 100 no cartão (R$ 106,07; cobrado e gravado iguais) | `api-test22` §2 e §4 · `e2e-card` §3–§4 |
-| 3 | R$ 100 no Pix, sem taxa | `api-test22` §2 e §14 · `e2e-card` §3 (trocar para Pix tira a taxa) |
+| 3 | R$ 100 no Pix (taxa de serviço de 2,5%: R$ 102,50; master R$ 5,00; subconta R$ 97,50) | `api-test22` §17 · `api-test14` §1c e §15 · `e2e-card` §3 e §12 · `e2e-pix` (trocar para Pix tira a taxa do cartão e põe a do Pix) |
 | 4 | Mudança de quantidade (recalculada no servidor) | `api-test22` §5 · `e2e-card` §3 (resumo ao vivo) |
 | 5 | Desconto (promoção do produto; a loja não tem cupom) | `api-test22` §6 |
 | 6 | Recusa/falha (5 cartões de teste, token vencido, credencial, OAuth) | `api-test22` §7 · `e2e-card` §5 |
@@ -191,15 +191,15 @@ Os **12 cenários obrigatórios** e onde cada um é provado:
 
 ## 11. Resultados
 
-Última execução completa (build, tipos, unitários, 23 suítes de API e 13 arquivos de navegador, **depois** da separação Pix × cartão e da cobrança do cartão na subconta), tudo contra bancos de teste locais, o servidor ValidaPay **falso** e o SDK com as chamadas
+Última execução completa (build, tipos, unitários, 23 suítes de API e 13 arquivos de navegador, **depois** da separação Pix × cartão, da cobrança do cartão na subconta e da taxa de serviço do Pix de 5%), tudo contra bancos de teste locais, o servidor ValidaPay **falso** e o SDK com as chamadas
 interceptadas; **nenhum serviço real** foi acionado:
 
 | Camada | Resultado |
 | --- | --- |
 | `npm run build` e `tsc -b` | sem erros |
-| Unitários (`npm run test:unit`) | **213 de 213** (inclui `cardfee` 9, `cardinput` 4 e os 9 novos do adaptador: cartão, renovação do token e a separação Pix × cartão) |
-| `api-test22` (cartão: os 12 cenários, segurança, cabeçalhos **e os dois fluxos lado a lado**, seção 17) | **186 verificações, 0 falhas** |
-| Demais suítes de API (`api-test` a `api-test21`) | todas **OK** (incluindo a migração de dados antigos de `api-test14`, 200 verificações, e o "pedir de novo" de combos de `api-test16`, 133) |
+| Unitários (`npm run test:unit`) | **219 de 219** (inclui `cardfee` 14, com os 5 da taxa de serviço do Pix; `cardinput` 4; os 9 do adaptador: cartão, renovação do token e a separação Pix × cartão; e o do rótulo da taxa nos e-mails) |
+| `api-test22` (cartão: os 12 cenários, segurança, cabeçalhos **e os dois fluxos lado a lado**, seção 17) | **187 verificações, 0 falhas** |
+| Demais suítes de API (`api-test` a `api-test21`) | todas **OK** (incluindo `api-test14`, 217 verificações, com a migração de dados antigos e os pedidos de Pix de antes da 0020 que mantêm os 2%, e o "pedir de novo" de combos de `api-test16`, 133) |
 | `e2e-card` (navegador, celular e computador; inclui, na seção 12, **Pix com split e cartão sem split de ponta a ponta no mesmo site**) | **157 verificações, 0 falhas**, sem erro de console nem violação de CSP |
 | Demais arquivos de navegador (`e2e`, `e2e-track`, `e2e-pix`, `e2e-account`…) | todos **OK** |
 
@@ -210,7 +210,7 @@ interceptadas; **nenhum serviço real** foi acionado:
 - O Pix (`payment_begin`) aceitava qualquer pedido "online", inclusive o de cartão: agora só pedido de Pix online gera Pix.
 - A restrição `orders_payment_fee_total` deixava zerar a taxa de um pedido de cartão mantendo o total: agora o total tem de ser exatamente a soma das partes.
 - O adaptador não renovava um token OAuth recusado com 401: agora pede outro e repete uma única vez.
-- Cartão e Pix passaram a ser fluxos separados: o cartão é cobrado na **subconta** do estabelecimento (`X-Sub-Account`) **sem split**, e o Pix mantém o split de 2% (`api-test14`, `api-test15`, `e2e-pix` e `e2e-account` passam sem alteração de comportamento).
+- Cartão e Pix passaram a ser fluxos separados: o cartão é cobrado na **subconta** do estabelecimento (`X-Sub-Account`) **sem split**, e o Pix mantém o split, agora de 5% (taxa de serviço: 2,5% do cliente + 2,5% do estabelecimento; `api-test14`, `api-test15`, `api-test18`, `e2e-pix` e `e2e-card` foram atualizados para os novos valores).
 
 **O que estes números NÃO provam:** que a ValidaPay de verdade se comporta como o servidor falso, que 5,37% + R$ 0,37 é o contrato, que a CSP deixa o antifraude da ValidaPay funcionar, nem que a cobrança do cartão aceita `X-Sub-Account`.
 Tudo isso depende do teste no sandbox (seção 6) e de credenciais que este ambiente não tem.

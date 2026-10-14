@@ -103,3 +103,68 @@ test('percentual e tarifa digitados: vírgula ou ponto, até duas casas, dentro 
   assert.equal(server.parseMoneyToCents('10,01'), null);
   assert.equal(server.parseMoneyToCents('abc'), null);
 });
+
+// ---- Taxa de serviço do Pix (2,5% do cliente + 2,5% do estabelecimento = 5% para a conta master) ------------------------------------------
+// A conta é feita no banco (service_fee_cents); a cópia do navegador só mostra o total antes de o cliente confirmar. Aqui: exemplos à mão e
+// as duas cópias iguais entre si e iguais a uma conta de referência.
+
+test('Pix: exemplos conferidos à mão (R$ 100 → cliente R$ 102,50, master R$ 5,00, subconta R$ 97,50)', () => {
+  const base = 10000;
+  const customer = server.serviceFeeCents(base, 250);
+  const commission = server.serviceFeeCents(base, 500);
+  assert.equal(customer, 250);
+  assert.equal(base + customer, 10250);
+  assert.equal(commission, 500);
+  assert.equal(base + customer - commission, 9750, 'a subconta recebe o valor do pedido menos a parte do estabelecimento');
+  // R$ 25,00: 0,625 → 0,63 (metade para cima); 5% = 1,25
+  assert.equal(server.serviceFeeCents(2500, 250), 63);
+  assert.equal(server.serviceFeeCents(2500, 500), 125);
+  assert.equal(2500 + 63 - 125, 2438);
+  // R$ 10,10 e R$ 17,65 (os valores de teste do projeto)
+  assert.equal(server.serviceFeeCents(1010, 250), 25);
+  assert.equal(server.serviceFeeCents(1010, 500), 51);
+  assert.equal(server.serviceFeeCents(1765, 250), 44);
+  assert.equal(server.serviceFeeCents(1765, 500), 88);
+});
+
+test('Pix: a taxa de 5% é arredondada UMA vez (não é a soma de duas metades arredondadas)', () => {
+  let different = 0;
+  for (let base = 1; base <= 100000; base++) {
+    const once = server.serviceFeeCents(base, 500);
+    const twice = server.serviceFeeCents(base, 250) * 2;
+    assert.ok(Math.abs(once - twice) <= 1, `base ${base}`);
+    if (once !== twice) different++;
+  }
+  assert.ok(different > 0, 'existem valores em que arredondar duas vezes daria 1 centavo a mais: por isso a comissão é calculada uma vez só');
+});
+
+test('Pix: a parte do estabelecimento (5% − taxa do cliente) nunca é negativa e a soma fecha em centavos', () => {
+  for (let base = 1; base <= 200000; base += 3) {
+    const customer = server.serviceFeeCents(base, 250);
+    const commission = server.serviceFeeCents(base, 500);
+    const store = commission - customer;
+    assert.ok(store >= 0 && store <= customer + 1, `base ${base}: cliente ${customer}, estabelecimento ${store}`);
+    assert.equal(customer + store, commission, 'cliente + estabelecimento = o que vai para a master');
+    const charged = base + customer;
+    assert.ok(charged - commission === base - store, `a subconta recebe o pedido menos a parte do estabelecimento (base ${base})`);
+  }
+});
+
+test('Pix: o navegador e o servidor dão o mesmo resultado, igual à conta de referência (inteiros, metade para cima)', () => {
+  for (const bps of [0, 1, 250, 300, 500, 999, 1000]) {
+    for (let base = 1; base <= 300000; base += 31) {
+      const reference = Number((BigInt(base) * BigInt(bps) + 5000n) / 10000n);
+      assert.equal(server.serviceFeeCents(base, bps), reference, `servidor ${base} ${bps}`);
+      assert.equal(browser.serviceFeeCents(base, bps), reference, `navegador ${base} ${bps}`);
+    }
+  }
+  assert.equal(server.MAX_SERVICE_BPS, 1000);
+  assert.equal(browser.MAX_SERVICE_BPS, 1000);
+});
+
+test('Pix: entradas inválidas são recusadas (nunca viram NaN nem taxa estranha)', () => {
+  for (const base of [-1, 1.5, NaN, Infinity, 2 ** 60]) assert.throws(() => server.serviceFeeCents(base, 250), RangeError, String(base));
+  for (const bps of [-1, 1001, 2.5, NaN]) assert.throws(() => server.serviceFeeCents(1000, bps), RangeError, String(bps));
+  assert.equal(server.serviceFeeCents(0, 250), 0);
+  assert.equal(server.serviceFeeCents(1000, 0), 0);
+});

@@ -48,3 +48,13 @@ export function parseMoneyToCents(value: unknown): number | null {
   const cents = Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0') || 0);
   return cents <= MAX_FIXED_CENTS ? cents : null;
 }
+
+// ---- Pix online: taxa de serviço (o cliente paga 2,5%; o estabelecimento outros 2,5%; os 5% vão para a master) ------------------------------------------
+// Parte de um valor em pontos-base (250 = 2,5%), em centavos inteiros; metade do centavo arredonda para cima. É a MESMA conta de service_fee_cents() no banco.
+export const MAX_SERVICE_BPS = 1000;
+
+export function serviceFeeCents(baseCents: number, bps: number): number {
+  if (!Number.isSafeInteger(baseCents) || baseCents < 0) throw new RangeError('base inválida');
+  if (!isCount(bps, MAX_SERVICE_BPS)) throw new RangeError('percentual inválido');
+  return Number((BigInt(baseCents) * BigInt(bps) + 5000n) / 10000n);
+}

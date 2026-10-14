@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------------------------
--- 20/20 · Cartão de crédito online (ValidaPay) com a taxa de processamento paga pelo cliente.
+-- 20/20 · Cartão de crédito online (ValidaPay) com a taxa de processamento paga pelo cliente, e taxa de serviço do Pix online (2,5% + 2,5% = 5% para a master).
 --
 -- O que esta migration FAZ
 -- • payment_methods ganha 'card_online', que nasce DESLIGADO (o "Cartão" que já existe continua sendo pago na entrega/retirada, sem mudar nada).
@@ -15,6 +15,13 @@
 -- • payment_begin_card / payment_card_mark_charge / payment_card_stale: a tentativa de cobrança do cartão SEM duplicar. Uma tentativa em
 --   andamento nunca dá lugar a outra enquanto não tiver resultado: refazer usa a MESMA tentativa (o mesmo identificador na operadora),
 --   que por isso não cobra duas vezes.
+--
+-- • TAXA DE SERVIÇO DO PIX ONLINE (só no Pix; o cartão fica de fora): o cliente paga 2,5% sobre itens + entrega, o estabelecimento (subconta) paga 2,5% e
+--   os 5% vão para a conta master por divisão (split). Substitui a comissão de 2% nos pedidos NOVOS de Pix online: pix_customer_fee_bps e pix_store_fee_bps
+--   ficam em payment_fee_settings; service_fee_cents() faz a conta em centavos (metade para cima); create_order soma a taxa do cliente ao total e a grava no
+--   pedido (payment_fee / payment_fee_bps); payment_begin calcula a divisão: master = 5% do valor do pedido (arredondado UMA vez), a subconta recebe o
+--   valor do pedido menos a parte dela (2,5%, absorvendo o arredondamento). Pedidos de Pix online que já existiam (sem taxa de serviço) mantêm a
+--   comissão com que nasceram.
 --
 -- O que NÃO faz
 -- • Não fala com nenhuma operadora, não liga o cartão online e não altera nenhum pedido, preço, estoque ou cobrança que já existe.
@@ -54,6 +61,10 @@ create table payment_fee_settings (
   -- Percentual em pontos-base (537 = 5,37%) e tarifa fixa por transação em centavos (37 = R$ 0,37). Limites de bom senso: até 25% e R$ 10,00.
   card_fee_bps integer not null default 537 check (card_fee_bps between 0 and 2500),
   card_fee_fixed_cents integer not null default 37 check (card_fee_fixed_cents between 0 and 1000),
+  -- Pix online: quanto o CLIENTE paga (taxa de serviço) e quanto o ESTABELECIMENTO (subconta) paga, ambos em pontos-base sobre itens + entrega. Os dois
+  -- somados (5%) vão para a conta master. Não dependem de conferência com a operadora (são regra do dono do sistema).
+  pix_customer_fee_bps integer not null default 250 check (pix_customer_fee_bps between 0 and 1000),
+  pix_store_fee_bps integer not null default 250 check (pix_store_fee_bps between 0 and 1000),
   -- O dono conferiu estes valores com o contrato/painel da operadora. Sem isso o cartão online não liga e nenhum pedido de cartão online nasce.
   confirmed_at timestamptz,
   confirmed_by uuid references admins (id) on delete set null,
@@ -101,6 +112,17 @@ as $$
 $$;
 -- statement-breakpoint
 
+-- Parte de um valor em pontos-base (250 = 2,5%), em centavos inteiros; metade do centavo arredonda para cima. R$ 100,00 a 250 → R$ 2,50.
+create or replace function service_fee_cents(p_base_cents integer, p_bps integer)
+returns integer
+language sql
+immutable
+strict
+as $$
+  select ((p_base_cents::bigint * p_bps + 5000) / 10000)::integer;
+$$;
+-- statement-breakpoint
+
 -- ---------------------------------------------------------------------------------------------
 -- O pedido guarda a taxa cobrada do cliente e os valores com que ela foi calculada
 -- ---------------------------------------------------------------------------------------------
@@ -111,11 +133,11 @@ alter table orders
   add column payment_fee_fixed numeric(10, 2) check (payment_fee_fixed is null or payment_fee_fixed >= 0);
 -- statement-breakpoint
 
--- Pedido de cartão online: o total é SEMPRE a soma das partes (itens + entrega − desconto + taxa), inclusive com taxa zero. Qualquer outro pedido (os
--- antigos também) não tem taxa. Os pedidos antigos já cumprem isto (a coluna é nova e vale 0), então nada existente é reavaliado.
+-- Pedido de cartão online ou de Pix online: o total é SEMPRE a soma das partes (itens + entrega − desconto + taxa), inclusive com taxa zero (os pedidos de
+-- Pix online antigos já cumprem isto: taxa 0). Qualquer outro pedido não tem taxa. Nada existente é reavaliado de forma diferente.
 alter table orders
   add constraint orders_payment_fee_total check (
-    case when payment_method = 'card_online' then total = subtotal + delivery_fee - discount + payment_fee else payment_fee = 0 end
+    case when payment_method in ('card_online', 'pix_online') then total = subtotal + delivery_fee - discount + payment_fee else payment_fee = 0 end
   );
 -- statement-breakpoint
 
@@ -556,6 +578,13 @@ begin
     v_fee_fixed := v_fs.card_fee_fixed_cents / 100.0;
     v_card_fee := card_fee_cents(round(v_total * 100)::integer, v_fs.card_fee_bps, v_fs.card_fee_fixed_cents) / 100.0;
     v_total := v_total + v_card_fee;
+  elsif v_payment = 'pix_online' then
+    -- Pix online: taxa de serviço do cliente (2,5% de itens + entrega). A parte do estabelecimento (outros 2,5%) não entra no total: sai do valor que a
+    -- subconta recebe (ver payment_begin). Também só o banco calcula; o navegador só confere o total (expected_total).
+    select * into v_fs from payment_fee_settings where id = 1;
+    v_fee_bps := v_fs.pix_customer_fee_bps;
+    v_card_fee := service_fee_cents(round(v_total * 100)::integer, v_fs.pix_customer_fee_bps) / 100.0;
+    v_total := v_total + v_card_fee;
   end if;
 
   -- O valor mudou entre a tela do cliente e o envio (preço, promoção, taxa): nada é criado (o estoque reservado acima volta
@@ -812,6 +841,10 @@ declare
   v_new payments;
   v_attempts integer;
   v_amount integer;
+  v_customer_fee integer;
+  v_store_bps integer;
+  v_comm_bps integer;
+  v_comm_cents integer;
 begin
   if p_method is distinct from 'pix' then
     raise exception 'Forma de pagamento inválida.' using errcode = 'P0001';
@@ -868,9 +901,20 @@ begin
     raise exception 'Este pedido não tem valor a pagar.' using errcode = 'P0001';
   end if;
 
-  insert into payments (order_id, attempt, provider, method, merchant_account_id, amount_cents, commission_bps, commission_cents)
-  values (p_order, v_attempts + 1, p_provider, p_method, v_merchant.id, v_amount, payment_commission_bps(),
-          payment_commission_cents(v_amount, payment_commission_bps()))
+  -- A divisão para a master. Pedido NOVO de Pix online (com taxa de serviço): a master recebe 5% do valor do pedido (2,5% pago pelo cliente + 2,5% do
+  -- estabelecimento), arredondado UMA vez; a base é o valor cobrado menos a taxa do cliente. Pedido antigo (sem taxa de serviço): a comissão com que nasceu.
+  v_customer_fee := round(v_order.payment_fee * 100)::integer;
+  if v_order.payment_fee_bps is not null then
+    select pix_store_fee_bps into v_store_bps from payment_fee_settings where id = 1;
+    v_comm_bps := v_order.payment_fee_bps + v_store_bps;
+    v_comm_cents := service_fee_cents(v_amount - v_customer_fee, v_comm_bps);
+  else
+    v_comm_bps := payment_commission_bps();
+    v_comm_cents := payment_commission_cents(v_amount, v_comm_bps);
+  end if;
+
+  insert into payments (order_id, attempt, provider, method, merchant_account_id, amount_cents, commission_bps, commission_cents, customer_fee_cents)
+  values (p_order, v_attempts + 1, p_provider, p_method, v_merchant.id, v_amount, v_comm_bps, v_comm_cents, v_customer_fee)
   returning * into v_new;
 
   return jsonb_build_object(

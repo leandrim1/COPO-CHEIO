@@ -88,6 +88,7 @@ async function renderOrder(kind: OrderKind, to: string, spec: Record<string, unk
     deliveryFee: Number(o.delivery_fee),
     discount: Number(o.discount),
     paymentFee: Number(o.payment_fee),
+    paymentFeeLabel: o.payment_method === 'pix_online' ? 'Taxa de serviço do Pix' : 'Taxa de processamento do cartão',
     total: Number(o.total),
     delivery: o.delivery_type,
     neighborhood: o.neighborhood,

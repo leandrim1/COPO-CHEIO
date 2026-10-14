@@ -276,3 +276,16 @@ test('exemplos do painel (botão "Enviar exemplos para mim"): "[Teste]" no assun
   // O exemplo de nova senha aponta para uma página fixa, nunca para um endereço com chave que funcione.
   assert.doesNotMatch(reset(true).html, /\/conta\/redefinir\/[A-Za-z0-9_-]{8,}/);
 });
+
+test('taxa paga pelo cliente no e-mail do pedido: "Taxa de serviço do Pix" no Pix, "Taxa de processamento do cartão" no cartão, e nada quando não há taxa', () => {
+  const pix = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 25, paymentFee: 0.63, paymentFeeLabel: 'Taxa de serviço do Pix', total: 25.63 }));
+  assert.match(pix.html, /Taxa de serviço do Pix/);
+  assert.match(pix.html, /R\$ 0,63/);
+  assert.match(pix.html, /R\$ 25,63/);
+  assert.doesNotMatch(pix.html, /Taxa de processamento do cartão/);
+  assert.match(pix.text, /Taxa de serviço do Pix/);
+  const card = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Cartão online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 100, paymentFee: 6.07, total: 106.07 }));
+  assert.match(card.html, /Taxa de processamento do cartão/);
+  const none = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 21, total: 21 }));
+  assert.doesNotMatch(none.html, /Taxa de serviço|Taxa de processamento/);
+});

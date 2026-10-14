@@ -233,8 +233,10 @@ produto e envie a foto.
   - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e só
     vira **novo** quando a ValidaPay confirma (aviso **assinado** + consulta da cobrança), na mesma transação do banco. Sem pagamento
     a tempo, o Pix é **cancelado na ValidaPay** e o pedido, cancelado (o estoque volta uma vez só).
-  - **Comissão de 2%** do total do pedido, calculada no banco em centavos (`payment_commission_cents`) e enviada como divisão fixa para a conta
-    master (a cobrança nasce na **subconta** do estabelecimento); só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança.
+  - **Taxa de serviço do Pix de 5%** (2,5% paga pelo cliente, somada ao total, e 2,5% paga pelo estabelecimento), calculada no banco em centavos sobre itens + entrega e
+    enviada inteira como divisão fixa para a conta master (a cobrança nasce na **subconta** do estabelecimento): R$ 100,00 → o cliente paga R$ 102,50, a master recebe
+    R$ 5,00 e a subconta fica com R$ 97,50. Só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança. Pedidos de Pix feitos antes da migration
+    `0020` mantêm o total e a comissão de 2% de quando nasceram.
   - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
     pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
   - **Cartão de crédito online** (`card_online`, nasce **desligado**; também **nunca testado na ValidaPay de verdade**): o cliente paga pelo site e a **taxa do cartão é
@@ -242,13 +244,13 @@ produto e envie a foto.
     mostra subtotal, entrega, **taxa do cartão** e total em tempo real, o cartão é trocado por um token **direto no navegador** (a loja nunca vê número nem CVV), a
     cobrança usa o total gravado no pedido e uma chave de idempotência, e só a **consulta à ValidaPay** libera o pedido. A taxa (valores de referência 5,37% + R$ 0,37)
     é configurada pelo owner e **precisa ser conferida com o contrato da ValidaPay** antes de ligar. **Fluxo separado do Pix**: o cartão é cobrado na **subconta**
-    do estabelecimento, sem split; o Pix segue com a subconta e o split de 2%, como sempre. Guia completo, procedimento de teste no sandbox, ativação em
+    do estabelecimento, sem split; o Pix segue com a subconta e o split da taxa de serviço (5%), como sempre. Guia completo, procedimento de teste no sandbox, ativação em
     produção e limitações: [`docs/CARTAO-ONLINE.md`](docs/CARTAO-ONLINE.md).
   - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
     autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
     só entra com a confirmação oficial. Os dados pessoais vão direto para a ValidaPay e não ficam guardados aqui.
-  - **Cartão online não existe, por decisão do dono da loja**: o cartão continua sendo pago **na entrega/retirada** (maquininha), como sempre. A documentação da
-    ValidaPay também não mostra divisão (split) da comissão para cartão; se um dia houver cartão online, é uma mudança à parte (veja o documento acima).
+  - O cartão da **maquininha** continua sendo pago **na entrega/retirada**, como sempre. A documentação da ValidaPay não mostra divisão (split) para cartão, por isso
+    o cartão online (acima) não tem a taxa de serviço do Pix.
 - **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
@@ -705,6 +707,9 @@ A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
 operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
 [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
+A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desligado) e a **taxa de serviço do Pix** (2,5% do cliente + 2,5% do estabelecimento = 5% para a conta master; `service_fee_cents`,
+`payment_fee_settings.pix_*`, colunas `payment_fee*` em `orders` e `customer_fee_cents` em `payments`). Pedidos de Pix feitos antes dela mantêm o total e a comissão de 2% de quando nasceram
+([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
 As migrations 0009 a 0019 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue

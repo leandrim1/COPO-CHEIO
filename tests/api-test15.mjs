@@ -127,22 +127,22 @@ const charge = (id) => fake.state.charges.get(id);
 const payOnProvider = (id, extra = {}) => fake.control('pay', { chargeId: id, ...extra });
 
 // ------------------------------------------------------------------------------------------------
-section('4. Criar o Pix: valores em reais, divisão fixa de 2% para a master, subconta do estabelecimento, metadata');
+section('4. Criar o Pix: valores em reais, divisão fixa de 5% (taxa de serviço) para a master, subconta do estabelecimento, metadata');
 const A = await placeOrder([{ product_id: p25.id, quantity: 1 }]);
 await clearCalls();
 const aPay = await pay(A.c, A.token);
 const A1 = payRow(A.number);
 {
-  check('o Pix é criado (201) e a tela recebe o "copia e cola" da operadora', aPay.status === 201 && aPay.data.payment.status === 'pending' && aPay.data.payment.amount === 25 && /^00020101/.test(aPay.data.payment.pix.payload), aPay.data);
+  check('o Pix é criado (201) e a tela recebe o "copia e cola" da operadora', aPay.status === 201 && aPay.data.payment.status === 'pending' && aPay.data.payment.amount === 25.63 && /^00020101/.test(aPay.data.payment.pix.payload), aPay.data);
   const [tokenCall] = callsTo('POST', '/auth/token');
   const create = callsTo('POST', '/v1/charges/pix');
   check('um token novo, do escopo charges/write, só com credenciais da loja (nunca no corpo do Pix)', tokenCall?.body.scope === 'charges/write' && tokenCall.contentType.includes('x-www-form-urlencoded') && tokenCall.body.has_secret === true && create.length === 1 && create[0].scope === 'charges/write', [tokenCall, create.length]);
   const body = create[0].body;
-  check('o valor vai em REAIS (25), nunca em centavos', body.amount === 25 && body.paymentMethod === 'pix', body);
-  check('a comissão de 2% vai como divisão de valor FIXO (R$ 0,50), sem accountNumber (= conta master)', JSON.stringify(body.split) === JSON.stringify([{ type: 'fixed', amount: 0.5 }]), body.split);
+  check('o valor vai em REAIS (25,63 = R$ 25,00 + taxa de serviço do cliente de R$ 0,63), nunca em centavos', body.amount === 25.63 && body.paymentMethod === 'pix', body);
+  check('a taxa de serviço de 5% (R$ 1,25 sobre R$ 25,00) vai como divisão de valor FIXO, sem accountNumber (= conta master)', JSON.stringify(body.split) === JSON.stringify([{ type: 'fixed', amount: 1.25 }]), body.split);
   check('a cobrança nasce na SUBCONTA do estabelecimento (cabeçalho X-Sub-Account)', create[0].subAccount === '4960589', create[0].subAccount);
   check('o pagamento se liga ao pedido pelo metadata (paymentId da loja + número do pedido); externalId não é enviado (a rota Pix não tem idempotência)', body.metadata.paymentId === A1.id && body.metadata.orderNumber === A.number && !('externalId' in body), body);
-  check('no banco: operadora do ambiente, código da cobrança, comissão calculada (ainda não efetivada) e validade de 15 minutos', A1.provider === 'validapay-sandbox' && /^cha_/.test(A1.provider_charge_id) && A1.commission_cents === 50 && A1.commission_state === 'calculated' && A1.amount_cents === 2500 && Math.abs(new Date(A1.expires_at) - Date.now() - 15 * 60_000) < 20_000, A1);
+  check('no banco: operadora do ambiente, código da cobrança, comissão calculada (ainda não efetivada) e validade de 15 minutos', A1.provider === 'validapay-sandbox' && /^cha_/.test(A1.provider_charge_id) && A1.commission_cents === 125 && A1.commission_state === 'calculated' && A1.amount_cents === 2563 && Math.abs(new Date(A1.expires_at) - Date.now() - 15 * 60_000) < 20_000, A1);
   const dup = await pay(A.c, A.token);
   check('clique repetido: a MESMA cobrança, sem criar outra na operadora', dup.status === 200 && dup.data.payment.id === aPay.data.payment.id && callsTo('POST', '/v1/charges/pix').length === 1, dup.data);
   check('o servidor devolve ao cliente só o que ele precisa (nada de comissão, taxas ou código da operadora)', !/commission|fee|cha_|4960589|validapay/i.test(JSON.stringify({ ...dup.data, payment: { ...dup.data.payment, pix: null } })), dup.data);
@@ -152,8 +152,8 @@ const A1 = payRow(A.number);
   const C = await placeOrder([{ product_id: p1765.id, quantity: 1 }]);
   await pay(C.c, C.token);
   const bodies = callsTo('POST', '/v1/charges/pix').map((c) => c.body);
-  check('R$ 10,10 → comissão R$ 0,20 e R$ 17,65 → R$ 0,35 (centavos arredondados UMA vez, no banco)', bodies[1].amount === 10.1 && bodies[1].split[0].amount === 0.2 && bodies[2].amount === 17.65 && bodies[2].split[0].amount === 0.35, [bodies[1], bodies[2]]);
-  check('o banco guardou a mesma conta', payRow(B.number).commission_cents === 20 && payRow(C.number).commission_cents === 35);
+  check('R$ 10,10 → cobra R$ 10,35 com divisão de R$ 0,51 e R$ 17,65 → cobra R$ 18,09 com divisão de R$ 0,88 (5% arredondado UMA vez, no banco)', bodies[1].amount === 10.35 && bodies[1].split[0].amount === 0.51 && bodies[2].amount === 18.09 && bodies[2].split[0].amount === 0.88, [bodies[1], bodies[2]]);
+  check('o banco guardou a mesma conta', payRow(B.number).commission_cents === 51 && payRow(C.number).commission_cents === 88);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -165,7 +165,7 @@ section('5. Confirmação: só aviso VERIFICADO + consulta à operadora; nunca o
   const bad = [
     ['assinatura de outro segredo', await hook(null, { rawBody: body, signature: signWebhook(body, { secret: 'outro-segredo' }) })],
     ['assinatura de 6 minutos atrás', await hook(null, { rawBody: body, t: Date.now() - 6 * 60_000 })],
-    ['corpo adulterado', await hook(null, { rawBody: body.replace('"amount":25', '"amount":1'), signature: signWebhook(body) })],
+    ['corpo adulterado', await hook(null, { rawBody: body.replace('"amount":25.63', '"amount":1'), signature: signWebhook(body) })],
     ['sem assinatura', await hook(null, { rawBody: body, signature: 'nada' })],
   ];
   for (const [name, r] of bad) check(`aviso ${name}: 401, nada gravado`, r.status === 401, r);
@@ -175,7 +175,7 @@ section('5. Confirmação: só aviso VERIFICADO + consulta à operadora; nunca o
   const early = await hook(paymentSuccess(charge(id)), { id: 'wh-cedo' });
   check('aviso verificado de "pago" com a cobrança ainda em aberto na operadora: NÃO libera o pedido', early.status === 200 && orderRow(A.number).order_status === 'awaiting_payment' && payRow(A.number).status === 'pending', [early, payRow(A.number).status]);
 
-  await payOnProvider(id, { paidAmount: 25, fee: 0.99 });
+  await payOnProvider(id, { paidAmount: 25.63, fee: 0.99 });
   await clearCalls();
   const ok1 = await hook(paymentSuccess(charge(id)), { id: 'wh-pago-1' });
   const lookups = calls().filter((c) => c.method === 'GET');
@@ -183,7 +183,7 @@ section('5. Confirmação: só aviso VERIFICADO + consulta à operadora; nunca o
   const consultaComCabecalho = lookups.filter((c) => c.path.startsWith('/v1/charges/')).every((c) => c.subAccount === '4960589');
   check('a consulta da cobrança leva o cabeçalho da subconta', consultaComCabecalho, lookups);
   const paid = payRow(A.number);
-  check('pago: o pedido vira "novo" na mesma transação, com taxa e líquido da operadora', paid.status === 'paid' && orderRow(A.number).order_status === 'new' && orderRow(A.number).payment_status === 'paid' && paid.fee_cents === 99 && paid.net_cents === 2401 && history(A.number) === '->awaiting_payment | awaiting_payment>new', [paid, history(A.number)]);
+  check('pago: o pedido vira "novo" na mesma transação, com taxa e líquido da operadora', paid.status === 'paid' && orderRow(A.number).order_status === 'new' && orderRow(A.number).payment_status === 'paid' && paid.fee_cents === 99 && paid.net_cents === 2464 && history(A.number) === '->awaiting_payment | awaiting_payment>new', [paid, history(A.number)]);
   check('a comissão continua só "calculada": a master ainda não mostra o crédito no extrato', paid.commission_state === 'calculated' && paid.commission_confirmed_cents === null, paid);
   const eventsAfter = events();
   const dupe = await hook(paymentSuccess(charge(id)), { id: 'wh-pago-1', attempt: 2 });
@@ -192,13 +192,13 @@ section('5. Confirmação: só aviso VERIFICADO + consulta à operadora; nunca o
   check('o aviso da master para a mesma cobrança (outro identificador) não duplica pedido nem repasse', dupe2.status === 200 && history(A.number) === '->awaiting_payment | awaiting_payment>new' && Number(psql('select count(*) from payments')) === 3);
 
   // Conciliação: a master recebeu o crédito da comissão, ligado a ESTA cobrança.
-  await fake.control('credit', { chargeId: 'cha_outra_cobranca', amount: 0.5 });
+  await fake.control('credit', { chargeId: 'cha_outra_cobranca', amount: 1.25 });
   const r1 = await owner.post(`/api/admin/payments/${paid.id}/refresh`);
   check('crédito de OUTRA cobrança não confirma a comissão', r1.status === 200 && payRow(A.number).commission_state === 'calculated', payRow(A.number));
-  await fake.control('credit', { chargeId: id, amount: 0.5 });
+  await fake.control('credit', { chargeId: id, amount: 1.25 });
   const r2 = await owner.post(`/api/admin/payments/${paid.id}/refresh`);
   const confirmed = payRow(A.number);
-  check('com o crédito da master ligado à cobrança, "Atualizar pagamento" efetiva a comissão (R$ 0,50)', r2.status === 200 && confirmed.commission_state === 'confirmed' && confirmed.commission_confirmed_cents === 50 && confirmed.needs_attention === false, confirmed);
+  check('com o crédito da master ligado à cobrança, "Atualizar pagamento" efetiva a taxa (R$ 1,25)', r2.status === 200 && confirmed.commission_state === 'confirmed' && confirmed.commission_confirmed_cents === 125 && confirmed.needs_attention === false, confirmed);
 
   const noCharge = await hook(paymentSuccess({ id: 'cha_desconhecida_1', amount: 9, metadata: null }), { id: 'wh-desconhecido' });
   check('aviso de cobrança que a loja não conhece: 200, só registrado', noCharge.status === 200 && psql(`select outcome from payment_events where dedupe_key = 'wh-desconhecido'`) === 'unknown_charge');
@@ -219,25 +219,25 @@ section('6. Valor pago diferente do cobrado, comissão diferente da calculada e 
   await payOnProvider(id, { paidAmount: 20 });
   await hook(paymentSuccess(charge(id), { amount: 20 }), { id: 'wh-valor-errado' });
   const row = payRow(D.number);
-  check('pagou R$ 20 de R$ 25: o pedido NÃO é liberado e a cobrança fica sinalizada', orderRow(D.number).order_status === 'awaiting_payment' && row.needs_attention === true && /diferente do valor da cobrança/.test(row.attention_reason) && row.status === 'pending', row);
+  check('pagou R$ 20 de R$ 25,63: o pedido NÃO é liberado e a cobrança fica sinalizada', orderRow(D.number).order_status === 'awaiting_payment' && row.needs_attention === true && /diferente do valor da cobrança/.test(row.attention_reason) && row.status === 'pending', row);
 
   const E = await placeOrder([{ product_id: p25.id, quantity: 1 }]);
   await pay(E.c, E.token);
   const eid = payRow(E.number).provider_charge_id;
   await payOnProvider(eid);
-  await fake.control('credit', { chargeId: eid, amount: 0.4 });
+  await fake.control('credit', { chargeId: eid, amount: 1 });
   await hook(paymentSuccess(charge(eid)), { id: 'wh-comissao-menor' });
   const e = payRow(E.number);
-  check('a master recebeu R$ 0,40 em vez de R$ 0,50: o pedido é liberado, a comissão fica sinalizada com o valor que a operadora mostra', orderRow(E.number).order_status === 'new' && e.commission_state === 'confirmed' && e.commission_confirmed_cents === 40 && e.needs_attention === true && /Comissão efetivada \(40 centavos\) diferente da calculada \(50\)/.test(e.attention_reason), e);
+  check('a master recebeu R$ 1,00 em vez de R$ 1,25: o pedido é liberado, a comissão fica sinalizada com o valor que a operadora mostra', orderRow(E.number).order_status === 'new' && e.commission_state === 'confirmed' && e.commission_confirmed_cents === 100 && e.needs_attention === true && /Comissão efetivada \(100 centavos\) diferente da calculada \(125\)/.test(e.attention_reason), e);
 
   await fake.control('set-status', { chargeId: eid, status: 'DISPUTE' });
   const refresh = await owner.post(`/api/admin/payments/${e.id}/refresh`);
   const disputed = payRow(E.number);
   check('disputa (DISPUTE): continua "pago", mas sinalizada para o dono conferir na ValidaPay', refresh.status === 200 && disputed.status === 'paid' && disputed.needs_attention === true && /disputa/.test(disputed.attention_reason), disputed);
   await fake.control('set-status', { chargeId: eid, status: 'REFUNDED' });
-  await fake.state.refunds.push({ refundId: 'ref_1', chargeId: eid, status: 'CONFIRMED', success: true, amount: 25 });
+  await fake.state.refunds.push({ refundId: 'ref_1', chargeId: eid, status: 'CONFIRMED', success: true, amount: 25.63 });
   await owner.post(`/api/admin/payments/${e.id}/refresh`);
-  check('devolução total confirmada pela operadora: a cobrança vira "estornada" e o pedido fica com pagamento "reembolsado"', payRow(E.number).status === 'refunded' && payRow(E.number).refunded_cents === 2500 && orderRow(E.number).payment_status === 'refunded', payRow(E.number));
+  check('devolução total confirmada pela operadora: a cobrança vira "estornada" e o pedido fica com pagamento "reembolsado"', payRow(E.number).status === 'refunded' && payRow(E.number).refunded_cents === 2563 && orderRow(E.number).payment_status === 'refunded', payRow(E.number));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -306,8 +306,8 @@ section('8. Falhas ao criar o Pix e a cobrança "órfã" (criada lá, resposta p
   // Cobrança órfã: criada na operadora, mas a resposta nunca chegou à loja. O cliente nunca viu esse QR Code; se alguém o pagar, o aviso traz
   // o metadata.paymentId e a loja o reconhece pela referência.
   const failed = payRow(J.number, 3);
-  const orphan = await fake.control('charge', { amount: 25, sub: '4960589', metadata: { paymentId: failed.id, orderNumber: J.number } });
-  await payOnProvider(orphan.id, { paidAmount: 25 });
+  const orphan = await fake.control('charge', { amount: 25.63, sub: '4960589', metadata: { paymentId: failed.id, orderNumber: J.number } });
+  await payOnProvider(orphan.id, { paidAmount: 25.63 });
   const hookResult = await hook(paymentSuccess(orphan), { id: 'wh-orfa' });
   const after = payRow(J.number, 3);
   check('aviso de uma cobrança que a loja não guardou: achada pela referência (metadata.paymentId), código guardado, pago e pedido liberado', hookResult.status === 200 && after.provider_charge_id === orphan.id && after.status === 'paid' && orderRow(J.number).order_status === 'new', [hookResult, after]);
@@ -322,7 +322,7 @@ section('9. A consulta da subconta funciona com ou sem o cabeçalho X-Sub-Accoun
     await pay(K.c, K.token);
     const kid = payRow(K.number).provider_charge_id;
     await payOnProvider(kid);
-    await fake.control('credit', { chargeId: kid, amount: 0.5 });
+    await fake.control('credit', { chargeId: kid, amount: 1.25 });
     const r = await hook(paymentSuccess(charge(kid)), { id: `wh-sub-${mode}` });
     check(`consulta da cobrança com a operadora no modo "${mode}": paga e comissão efetivada`, r.status === 200 && payRow(K.number).status === 'paid' && payRow(K.number).commission_state === 'confirmed', payRow(K.number));
   }

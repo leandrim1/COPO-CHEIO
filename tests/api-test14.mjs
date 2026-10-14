@@ -6,7 +6,7 @@
 //
 // usage: bash tests/fresh.sh && node tests/api-test14.mjs
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { BASE, Client, check, registerVerified, section, summary } from './lib.mjs';
 
 const QUIET = { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] };
@@ -124,7 +124,70 @@ section('1b. Migration 0016 (comissão de 5% → 2%): só vale para cobranças n
   const kept = JSON.parse(q(`select to_jsonb(p) from payments p where id = ${lit(old.id)}::uuid`));
   check('a cobrança de antes NÃO é reescrita: segue com 500 pontos-base e comissão 125', kept.commission_bps === 500 && kept.commission_cents === 125 && kept.status === old.status, kept);
   const fresh = begin(2);
-  check('a cobrança nova usa 2%: R$ 25,00 → comissão 50 (200 pontos-base)', fresh.commission_bps === 200 && fresh.commission_cents === 50 && fresh.amount_cents === 2500, fresh);
+  check('a cobrança nova (já na regra de taxa de serviço da 0020) usa 5%: R$ 25,00 → cliente paga R$ 25,63, comissão 125 (500 pontos-base)', fresh.commission_bps === 500 && fresh.commission_cents === 125 && fresh.amount_cents === 2563 && fresh.customer_fee_cents === 63, fresh);
+  check('rodar de novo não faz nada', /Banco já está atualizado/.test(migrate()));
+  execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
+}
+
+// ------------------------------------------------------------------------------------------------
+section('1c. Migration 0020 (taxa de serviço do Pix: 2,5% cliente + 2,5% estabelecimento = 5%): pedidos de antes mantêm total e comissão de 2%');
+{
+  const db = 'legacy20_a';
+  execFileSync('psql', [...P, '-q', '-v', 'ON_ERROR_STOP=1', '-c', `drop database if exists ${db} with (force)`, '-c', `create database ${db}`], QUIET);
+  const files = readdirSync(`${root}db/migrations`).filter((f) => f.endsWith('.sql')).map((f) => f.replace(/\.sql$/, '')).sort().filter((f) => f < '0020');
+  for (const f of files) execFileSync('psql', [...P, '-d', db, '-q', '-v', 'ON_ERROR_STOP=1', '-f', `${root}db/migrations/${f}.sql`], QUIET);
+  execFileSync('psql', [...P, '-d', db, '-q', '-c', `create table schema_migrations (version text primary key, applied_at timestamptz not null default now()); insert into schema_migrations(version) values ${files.map((f) => `('${f}')`).join(',')}`], QUIET);
+  const migrate = () => execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
+  const q = (sql) => psql(sql, db);
+  q(`update store_settings set orders_paused = false, opening_hours = ${lit(JSON.stringify(ALL_DAYS))}::jsonb`);
+  const prod = q(`insert into products (name, price, stock) values ('Produto 0020', 25, 50) returning id`);
+  q(`insert into merchant_accounts (provider, kind, status, proposal_id) values ('simulador', 'pj', 'pending', 'prop-20')`);
+  q(`update merchant_accounts set status = 'approved', provider_account_id = 'sub-20' where proposal_id = 'prop-20'`);
+  q(`update payment_methods set enabled = true where code = 'pix_online'`);
+  const place = (n) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Vinte', customer_phone: `3499222${String(1000 + n)}`, delivery_type: 'pickup', payment_method: 'pix_online', items: [{ product_id: prod, quantity: 1 }] }))}::jsonb)`));
+  const begin = (order) => JSON.parse(q(`select payment_begin((select id from orders where order_number = ${order.order_number}), 'pix', 'simulador')`)).payment;
+  const orderOf = (order) => JSON.parse(q(`select to_jsonb(o) from orders o where order_number = ${order.order_number}`));
+
+  check('antes da 0020 não existe taxa de serviço do Pix', q(`select count(*) from information_schema.columns where table_name = 'orders' and column_name = 'payment_fee'`) === '0');
+  const orderWithPayment = place(1);
+  const payAntes = begin(orderWithPayment);
+  const orderWithoutPayment = place(2);
+  check('pedido de antes: total R$ 25,00 e comissão de 2% (50)', payAntes.amount_cents === 2500 && payAntes.commission_bps === 200 && payAntes.commission_cents === 50, payAntes);
+
+  const out = migrate();
+  check('migrate.mjs aplica só a 0020', /aplicada: 0020_card_online/.test(out) && !/aplicada: 00(0|1)/.test(out), out);
+  const kept = JSON.parse(q(`select to_jsonb(p) from payments p where id = ${lit(payAntes.id)}::uuid`));
+  check('a cobrança de antes NÃO é reescrita: 2500, 200 pontos-base, comissão 50, sem taxa do cliente', kept.amount_cents === 2500 && kept.commission_bps === 200 && kept.commission_cents === 50 && kept.customer_fee_cents === 0 && kept.status === payAntes.status, kept);
+  const o1 = orderOf(orderWithPayment);
+  const o2 = orderOf(orderWithoutPayment);
+  check('os pedidos de antes seguem com o mesmo total (25,00), sem taxa de serviço e sem percentual gravado', Number(o1.total) === 25 && Number(o1.payment_fee) === 0 && o1.payment_fee_bps === null && Number(o2.total) === 25 && Number(o2.payment_fee) === 0 && o2.payment_fee_bps === null, [o1, o2]);
+  const late = begin(orderWithoutPayment);
+  check('pedido feito antes, cobrança aberta depois da 0020: continua com o total de antes e a comissão de 2%', late.amount_cents === 2500 && late.commission_bps === 200 && late.commission_cents === 50 && late.customer_fee_cents === 0, late);
+
+  const fresh = place(3);
+  const freshOrder = orderOf(fresh);
+  check('pedido novo: o total já traz a taxa do cliente (R$ 25,00 + R$ 0,63) e grava o percentual de 2,5%', Number(freshOrder.total) === 25.63 && Number(freshOrder.payment_fee) === 0.63 && freshOrder.payment_fee_bps === 250, freshOrder);
+  const freshPay = begin(fresh);
+  check('cobrança nova: 2563, comissão de 5% = 125 (500 pontos-base), cliente 63 e estabelecimento 62', freshPay.amount_cents === 2563 && freshPay.commission_bps === 500 && freshPay.commission_cents === 125 && freshPay.customer_fee_cents === 63 && freshPay.commission_cents - freshPay.customer_fee_cents === 62, freshPay);
+  check('a subconta fica com o valor cobrado menos a comissão: 2563 − 125 = 2438', freshPay.amount_cents - freshPay.commission_cents === 2438);
+
+  q(`update payment_fee_settings set pix_customer_fee_bps = 300, pix_store_fee_bps = 200 where id = 1`);
+  const changed = place(4);
+  check('mudar o percentual do cliente vale só para pedidos NOVOS (3% de 25,00 = 0,75)', Number(orderOf(changed).total) === 25.75 && orderOf(changed).payment_fee_bps === 300 && Number(orderOf(fresh).total) === 25.63, orderOf(changed));
+  const changedPay = begin(changed);
+  check('...e a comissão passa a somar os dois percentuais (3% + 2% = 5% = 125)', changedPay.commission_bps === 500 && changedPay.commission_cents === 125 && changedPay.customer_fee_cents === 75, changedPay);
+  q(`update payment_fee_settings set pix_customer_fee_bps = 0, pix_store_fee_bps = 0 where id = 1`);
+  const zero = place(5);
+  check('com os dois percentuais em zero não há taxa nem comissão: total 25,00', Number(orderOf(zero).total) === 25 && Number(orderOf(zero).payment_fee) === 0, orderOf(zero));
+  const zeroPay = begin(zero);
+  check('...e a cobrança sai sem comissão (a divisão fixa nunca é de R$ 0,00)', zeroPay.amount_cents === 2500 && zeroPay.commission_cents === 0 && zeroPay.customer_fee_cents === 0, zeroPay);
+  let rejected = false;
+  try {
+    q(`update payment_fee_settings set pix_customer_fee_bps = 1001 where id = 1`);
+  } catch {
+    rejected = true;
+  }
+  check('o banco recusa percentual do Pix acima de 10%', rejected);
   check('rodar de novo não faz nada', /Banco já está atualizado/.test(migrate()));
   execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
 }
@@ -220,7 +283,7 @@ const dash0 = (await owner.get('/api/admin/dashboard')).data;
 const A = await placeOrder([{ product_id: p25.id, quantity: 2 }], { total: '1.00', commission_cents: 1, amount_cents: 100, subtotal: '1.00' });
 {
   check('o pedido nasce "aguardando pagamento", pagamento pendente, meio Pix online', A.order.order_status === 'awaiting_payment' && A.order.payment_status === 'pending' && A.order.payment_method === 'pix_online', A.order);
-  check('o total é o do banco (2 × R$ 25,00), não o que o navegador mandou', A.order.total === 50 && A.order.subtotal === 50, A.order);
+  check('o total é o do banco (2 × R$ 25,00 + taxa de serviço do Pix de R$ 1,25), não o que o navegador mandou', A.order.total === 51.25 && A.order.subtotal === 50 && A.order.payment_fee === 1.25, A.order);
   check('o estoque já ficou reservado', stockOf(p25.id) === 198);
   check('o histórico começa em "aguardando pagamento"', history(A.number) === '->awaiting_payment@Cliente (site)');
   const list = (await owner.get('/api/admin/orders?status=new')).data;
@@ -245,12 +308,12 @@ let chargeA;
   check('gera o Pix (201): aguardando, com "copia e cola"', r.status === 201 && r.data.payment.status === 'pending' && /^SIMULADO-NAO-PAGAVEL/.test(r.data.payment.pix?.payload ?? ''), r.data);
   const row = payRow(A.number);
   chargeA = row.provider_charge_id;
-  check('valor da cobrança = total do pedido em centavos (R$ 50,00 = 5000)', row.amount_cents === 5000 && r.data.payment.amount === 50, row);
-  check('comissão calculada no banco: 2% = 100 centavos (R$ 1,00), snapshot de 200 pontos-base', row.commission_cents === 100 && row.commission_bps === 200 && row.commission_state === 'calculated' && row.commission_confirmed_cents === null, row);
+  check('valor da cobrança = total do pedido em centavos (R$ 50,00 + R$ 1,25 de taxa = 5125)', row.amount_cents === 5125 && r.data.payment.amount === 51.25, row);
+  check('comissão calculada no banco: 5% de R$ 50,00 = 250 centavos (R$ 2,50), snapshot de 500 pontos-base; o cliente paga 125 e o estabelecimento 125', row.commission_cents === 250 && row.commission_bps === 500 && row.customer_fee_cents === 125 && row.commission_state === 'calculated' && row.commission_confirmed_cents === null, row);
   check('a subconta do estabelecimento é a vinculada à cobrança', psql(`select a.provider_account_id from merchant_accounts a join payments p on p.merchant_account_id = a.id where p.id = ${lit(row.id)}`) === 'sim-sub-123');
   const st = await sim.state();
   const charge = st.charges.find((c) => c.id === chargeA);
-  check('a operadora recebeu a cobrança com o valor, a comissão e a subconta certos', charge && charge.amountCents === 5000 && charge.commissionCents === 100 && charge.merchant === 'sim-sub-123' && st.calls.create === 1, charge);
+  check('a operadora recebeu a cobrança com o valor, a comissão e a subconta certos', charge && charge.amountCents === 5125 && charge.commissionCents === 250 && charge.merchant === 'sim-sub-123' && st.calls.create === 1, charge);
   check('a referência enviada à operadora é o id da tentativa (chave de idempotência)', charge.reference === row.id);
 
   const second = await pay(A.c, A.token);
@@ -303,7 +366,7 @@ section('6. Confirmação só por canal confiável (aviso verificado + consulta 
   check('o pedido continua aguardando depois dessas tentativas', orderRow(A.number).order_status === 'awaiting_payment' && payRow(A.number).status === 'pending');
 
   // O aviso diz "pago", mas a operadora (consulta) diz que a cobrança ainda está aguardando: não confirma.
-  const claim = await sim.hook({ id: 'evt-A1', type: 'charge.paid', chargeId: chargeA, snapshot: { providerChargeId: chargeA, status: 'paid', amountCents: 5000 } });
+  const claim = await sim.hook({ id: 'evt-A1', type: 'charge.paid', chargeId: chargeA, snapshot: { providerChargeId: chargeA, status: 'paid', amountCents: 5125 } });
   check('aviso assinado dizendo "pago" mas a consulta à operadora diz "aguardando": NÃO confirma', claim.status === 200 && payRow(A.number).status === 'pending' && orderRow(A.number).order_status === 'awaiting_payment', [claim, payRow(A.number).status]);
   check('o aviso fica registrado como já tratado (sem efeito)', psql(`select outcome from payment_events where dedupe_key = 'evt-A1'`) === 'stale');
 
@@ -318,13 +381,13 @@ section('6. Confirmação só por canal confiável (aviso verificado + consulta 
   const p = payRow(A.number);
   check('o pedido é liberado para a loja: "novo" e pagamento "pago"', o.order_status === 'new' && o.payment_status === 'paid', o);
   check('o histórico registra: aguardando → novo, por "Pagamento online"', history(A.number) === '->awaiting_payment@Cliente (site) | awaiting_payment>new@Pagamento online', history(A.number));
-  check('cobrança paga, com tarifa e líquido informados pela operadora', p.status === 'paid' && p.fee_cents === 99 && p.net_cents === 4901 && p.paid_at && p.paid_seq > 0, p);
-  check('comissão EFETIVADA só agora, com o valor confirmado pela operadora (100)', p.commission_state === 'confirmed' && p.commission_confirmed_cents === 100 && p.commission_cents === 100, p);
+  check('cobrança paga, com tarifa e líquido informados pela operadora', p.status === 'paid' && p.fee_cents === 99 && p.net_cents === 5026 && p.paid_at && p.paid_seq > 0, p);
+  check('comissão EFETIVADA só agora, com o valor confirmado pela operadora (250)', p.commission_state === 'confirmed' && p.commission_confirmed_cents === 250 && p.commission_cents === 250, p);
   check('nada precisa de conferência', p.needs_attention === false);
   const live2 = (await owner.get(`/api/admin/live?after=${live0.latest}&paid_after=${live0.paid_cursor}`)).data;
   check('o painel avisa do pedido pago (paid_orders) com o novo ponto de partida', live2.paid_orders.length === 1 && live2.paid_orders[0].order_number === A.number && live2.paid_cursor > live0.paid_cursor, live2);
   const dash = (await owner.get('/api/admin/dashboard')).data;
-  check('agora conta como "novo" e como venda no painel', dash.cards.pending === dashBeforePay.pending + 1 && Math.abs(dash.cards.revenue_today - (dashBeforePay.revenue_today + 50)) < 0.005 && dash.cards.awaiting_payment === dashBeforePay.awaiting_payment - 1, [dashBeforePay, dash.cards]);
+  check('agora conta como "novo" e como venda no painel', dash.cards.pending === dashBeforePay.pending + 1 && Math.abs(dash.cards.revenue_today - (dashBeforePay.revenue_today + 51.25)) < 0.005 && dash.cards.awaiting_payment === dashBeforePay.awaiting_payment - 1, [dashBeforePay, dash.cards]);
   const v = await view(A.c, A.token);
   check('o cliente vê pago, sem Pix, pedido "novo"', v.data.payment.status === 'paid' && v.data.payment.pix === null && v.data.order_status === 'new', v.data);
   check('o pedido que o cliente acompanha traz o resumo do pagamento', (await A.c.get(`/api/tracking/${A.token}`)).data.order.payment?.status === 'paid');
@@ -335,12 +398,12 @@ section('6. Confirmação só por canal confiável (aviso verificado + consulta 
   const dup = await paidHook('evt-A2', chargeA);
   check('MESMO aviso de novo: 200, sem efeito algum', dup.status === 200 && history(A.number).split(' | ').length === 2 && events('evt-A2') === 1 && payRow(A.number).paid_seq === p.paid_seq);
   const twin = await paidHook('evt-A2-master', chargeA);
-  check('aviso da conta master para a MESMA cobrança (outro id): nenhum efeito repetido', twin.status === 200 && history(A.number).split(' | ').length === 2 && payRow(A.number).commission_confirmed_cents === 100 && payRow(A.number).paid_seq === p.paid_seq);
+  check('aviso da conta master para a MESMA cobrança (outro id): nenhum efeito repetido', twin.status === 200 && history(A.number).split(' | ').length === 2 && payRow(A.number).commission_confirmed_cents === 250 && payRow(A.number).paid_seq === p.paid_seq);
   await sim.mode({ split: 'failed' });
   await refresh(p.id);
   await sim.mode({ split: 'applied' });
-  check('consulta posterior dizendo "repasse falhou" NÃO desfaz a evidência já confirmada da comissão', payRow(A.number).commission_state === 'confirmed' && payRow(A.number).commission_confirmed_cents === 100 && payRow(A.number).needs_attention === false, payRow(A.number));
-  const late = await sim.hook({ id: 'evt-A3', type: 'charge.created', chargeId: chargeA, snapshot: { providerChargeId: chargeA, status: 'pending', amountCents: 5000 } });
+  check('consulta posterior dizendo "repasse falhou" NÃO desfaz a evidência já confirmada da comissão', payRow(A.number).commission_state === 'confirmed' && payRow(A.number).commission_confirmed_cents === 250 && payRow(A.number).needs_attention === false, payRow(A.number));
+  const late = await sim.hook({ id: 'evt-A3', type: 'charge.created', chargeId: chargeA, snapshot: { providerChargeId: chargeA, status: 'pending', amountCents: 5125 } });
   check('aviso ATRASADO ("criada/aguardando") depois do pago: não regride', late.status === 200 && payRow(A.number).status === 'paid' && orderRow(A.number).order_status === 'new');
   const unknown = await sim.hook({ id: 'evt-X1', type: 'charge.paid', chargeId: 'sim_ch_999999' });
   check('aviso de cobrança que não é nossa: 200 (a operadora não reenvia) e registrado como desconhecido', unknown.status === 200 && psql(`select outcome from payment_events where dedupe_key = 'evt-X1'`) === 'unknown_charge');
@@ -377,15 +440,15 @@ section('8. Falha no repasse da comissão, saldo insuficiente e conciliação');
   await paidHook('evt-C1', id);
   const p = payRow(C.number);
   check('o pagamento é confirmado e o pedido liberado, mesmo com o repasse falhando', p.status === 'paid' && orderRow(C.number).order_status === 'new');
-  check('R$ 10,10: comissão calculada = 20 centavos (0,202 arredonda para baixo)', p.amount_cents === 1010 && p.commission_cents === 20, p);
+  check('R$ 10,10: cliente paga R$ 10,35 e a comissão de 5% calculada = 51 centavos (0,505 arredonda para cima)', p.amount_cents === 1035 && p.commission_cents === 51 && p.customer_fee_cents === 25, p);
   check('a comissão NÃO fica como efetivada: estado "failed", sem valor confirmado, sinalizada', p.commission_state === 'failed' && p.commission_confirmed_cents === null && p.needs_attention && /saldo líquido insuficiente/.test(p.attention_reason), p);
   const list = (await owner.get('/api/admin/payments?attention=1')).data;
-  check('o owner vê a pendência na lista (e o resumo separa comissão calculada, confirmada e com falha)', list.payments.some((x) => x.id === p.id) && list.summary.commission_failed_cents >= 20 && list.summary.attention >= 1, list.summary);
+  check('o owner vê a pendência na lista (e o resumo separa comissão calculada, confirmada e com falha)', list.payments.some((x) => x.id === p.id) && list.summary.commission_failed_cents >= 51 && list.summary.attention >= 1, list.summary);
   // Operadora conciliou depois
   await sim.mode({ split: 'applied' });
   await refresh(p.id);
   const after = payRow(C.number);
-  check('conciliação posterior: a comissão passa a efetivada, com o valor confirmado (20)', after.commission_state === 'confirmed' && after.commission_confirmed_cents === 20, after);
+  check('conciliação posterior: a comissão passa a efetivada, com o valor confirmado (51)', after.commission_state === 'confirmed' && after.commission_confirmed_cents === 51, after);
   const ack = await owner.post(`/api/admin/payments/${p.id}/ack`);
   check('o owner marca como conferido (a pendência sai da lista, o motivo continua guardado)', ack.status === 200 && payRow(C.number).needs_attention === false && /saldo/.test(payRow(C.number).attention_reason) && !(await owner.get('/api/admin/payments?attention=1')).data.payments.some((x) => x.id === p.id));
   check('...e conferir de novo o que já está conferido: 404', (await owner.post(`/api/admin/payments/${p.id}/ack`)).status === 404);
@@ -450,8 +513,8 @@ section('9. Operadora fora do ar na hora do aviso: nada se perde, nada se repete
   check('sem consulta e aviso sem dados da cobrança: ignorado, nada muda', noSnap.status === 200 && orderRow(F.number).order_status === 'awaiting_payment' && psql(`select outcome from payment_events where dedupe_key = 'evt-F0'`) === 'ignored');
   const wrongAmount = await sim.hook({ id: 'evt-F1', type: 'charge.paid', chargeId: fid, snapshot: { providerChargeId: fid, status: 'paid', amountCents: 1 } });
   check('sem consulta, aviso verificado com valor errado: não libera, sinaliza', wrongAmount.status === 200 && orderRow(F.number).order_status === 'awaiting_payment' && payRow(F.number).needs_attention === true);
-  const fine = await sim.hook({ id: 'evt-F2', type: 'charge.paid', chargeId: fid, snapshot: { providerChargeId: fid, status: 'paid', amountCents: 2500, feeCents: 50, netCents: 2450, split: { state: 'applied', commissionCents: 50 } } });
-  check('sem consulta, aviso verificado com os dados certos: confirma e registra o repasse', fine.status === 200 && orderRow(F.number).order_status === 'new' && payRow(F.number).commission_state === 'confirmed' && payRow(F.number).commission_confirmed_cents === 50 && payRow(F.number).fee_cents === 50);
+  const fine = await sim.hook({ id: 'evt-F2', type: 'charge.paid', chargeId: fid, snapshot: { providerChargeId: fid, status: 'paid', amountCents: 2563, feeCents: 50, netCents: 2513, split: { state: 'applied', commissionCents: 125 } } });
+  check('sem consulta, aviso verificado com os dados certos: confirma e registra o repasse', fine.status === 200 && orderRow(F.number).order_status === 'new' && payRow(F.number).commission_state === 'confirmed' && payRow(F.number).commission_confirmed_cents === 125 && payRow(F.number).fee_cents === 50);
   const nope = await refresh(payRow(F.number).id);
   check('"Atualizar pagamento" sem consulta disponível: 409 claro', nope.status === 409 && nope.data.code === 'lookup_unavailable', nope.data);
   await sim.mode({ canLookup: true });
@@ -516,7 +579,7 @@ section('11. Concorrência: cliques, avisos e consultas ao mesmo tempo');
   const id = chargeId(K.number);
   await sim.charge(id, { status: 'paid' });
   const hooks = await Promise.all(Array.from({ length: 8 }, () => paidHook('evt-K1', id)));
-  check('o MESMO aviso entregue 8 vezes ao mesmo tempo: todos 200 e UM só efeito', hooks.every((h) => h.status === 200) && history(K.number).split(' | ').length === 2 && events('evt-K1') === 1 && payRow(K.number).commission_confirmed_cents === 50, [hooks.map((h) => h.status), history(K.number), events('evt-K1'), payRow(K.number).commission_confirmed_cents]);
+  check('o MESMO aviso entregue 8 vezes ao mesmo tempo: todos 200 e UM só efeito', hooks.every((h) => h.status === 200) && history(K.number).split(' | ').length === 2 && events('evt-K1') === 1 && payRow(K.number).commission_confirmed_cents === 125, [hooks.map((h) => h.status), history(K.number), events('evt-K1'), payRow(K.number).commission_confirmed_cents]);
   const L = await placeOrder([{ product_id: p25.id, quantity: 1 }]);
   await pay(L.c, L.token);
   const lid = chargeId(L.number);
@@ -528,7 +591,7 @@ section('11. Concorrência: cliques, avisos e consultas ao mesmo tempo');
     sweepNow(),
   ]);
   check('6 avisos diferentes + conferência do dono + tela do cliente ao mesmo tempo: um só pagamento, uma só liberação', mixed.slice(0, 6).every((h) => h.status === 200) && history(L.number).split(' | ').length === 2 && Number(psql(`select count(*) from payments p join orders o on o.id = p.order_id where o.order_number = ${L.number} and p.status = 'paid'`)) === 1);
-  check('...com a comissão contada uma única vez (a cobrança tem uma linha só)', payRow(L.number).commission_confirmed_cents === 50 && payCount(L.number) === 1);
+  check('...com a comissão contada uma única vez (a cobrança tem uma linha só)', payRow(L.number).commission_confirmed_cents === 125 && payCount(L.number) === 1);
 
   // Cancelar o pedido (painel) e gerar o Pix ao mesmo tempo: o estado final precisa ser coerente.
   const M = await placeOrder([{ product_id: p25.id, quantity: 3 }]);
@@ -608,8 +671,8 @@ section('12. Vencimento, nova tentativa, cancelamento por falta de pagamento e p
 
   // Tentativa "criando" sem resposta há mais de 2 min
   const R = await placeOrder([{ product_id: p25.id, quantity: 1 }]);
-  psql(`insert into payments (order_id, attempt, provider, method, merchant_account_id, amount_cents, commission_bps, commission_cents, created_at)
-        select id, 1, 'simulador', 'pix', (select id from merchant_accounts limit 1), 2500, 200, 50, now() - interval '3 minutes' from orders where order_number = ${R.number}`);
+  psql(`insert into payments (order_id, attempt, provider, method, merchant_account_id, amount_cents, commission_bps, commission_cents, customer_fee_cents, created_at)
+        select id, 1, 'simulador', 'pix', (select id from merchant_accounts limit 1), 2563, 500, 125, 63, now() - interval '3 minutes' from orders where order_number = ${R.number}`);
   await sweepNow();
   check('tentativa "criando" sem resposta há 3 min: encerrada e sinalizada', payRow(R.number).status === 'failed' && payRow(R.number).needs_attention === true);
 }
@@ -627,11 +690,11 @@ section('13. Estorno');
   const part = await sim.hook({ id: 'evt-S2', type: 'charge.refunded', chargeId: id });
   const p1 = payRow(S.number);
   check('estorno PARCIAL: a cobrança segue paga, registra o valor devolvido e fica sinalizada (conferir a comissão)', part.status === 200 && p1.status === 'paid' && p1.refunded_cents === 2000 && p1.needs_attention && orderRow(S.number).payment_status === 'paid', p1);
-  await sim.charge(id, { status: 'refunded', refundedCents: 5000 });
+  await sim.charge(id, { status: 'refunded', refundedCents: 5125 });
   await sim.hook({ id: 'evt-S3', type: 'charge.refunded', chargeId: id });
   const p2 = payRow(S.number);
-  check('estorno TOTAL: cobrança "refunded" e pedido com pagamento "estornado"', p2.status === 'refunded' && p2.refunded_cents === 5000 && orderRow(S.number).payment_status === 'refunded', [p2.status, orderRow(S.number).payment_status]);
-  check('o pedido estornado deixa de contar como venda no painel', Math.abs((await owner.get('/api/admin/dashboard')).data.cards.revenue_today - (dashPaid - 50)) < 0.005);
+  check('estorno TOTAL: cobrança "refunded" e pedido com pagamento "estornado"', p2.status === 'refunded' && p2.refunded_cents === 5125 && orderRow(S.number).payment_status === 'refunded', [p2.status, orderRow(S.number).payment_status]);
+  check('o pedido estornado deixa de contar como venda no painel', Math.abs((await owner.get('/api/admin/dashboard')).data.cards.revenue_today - (dashPaid - 51.25)) < 0.005);
   const back = await sim.hook({ id: 'evt-S4', type: 'charge.paid', chargeId: id });
   check('um "pago" atrasado depois do estorno não desfaz o estorno', back.status === 200 && payRow(S.number).status === 'refunded');
 }
@@ -644,7 +707,7 @@ section('14. Painel: quem vê o quê');
   const pid = payRow(T.number).id;
   const asOwner = (await owner.get(`/api/admin/orders/${T.number}`)).data;
   const asStaff = (await staff.get(`/api/admin/orders/${T.number}`)).data;
-  check('o dono vê a cobrança do pedido com comissão, tarifas e código na operadora', asOwner.payments.length === 1 && asOwner.payments[0].commission_cents === 50 && 'provider_charge_id' in asOwner.payments[0] && 'fee_cents' in asOwner.payments[0], asOwner.payments);
+  check('o dono vê a cobrança do pedido com comissão, tarifas e código na operadora', asOwner.payments.length === 1 && asOwner.payments[0].commission_cents === 125 && 'provider_charge_id' in asOwner.payments[0] && 'fee_cents' in asOwner.payments[0], asOwner.payments);
   check('o atendente vê a situação do pagamento, SEM comissão, tarifas nem código da operadora', asStaff.payments.length === 1 && asStaff.payments[0].status === 'pending' && !('commission_cents' in asStaff.payments[0]) && !('fee_cents' in asStaff.payments[0]) && !('provider_charge_id' in asStaff.payments[0]) && !/commission|sim_ch/.test(JSON.stringify(asStaff.payments)), asStaff.payments);
   check('...e o Pix "copia e cola" nunca sai nas telas do painel', !JSON.stringify(asOwner).includes('SIMULADO-NAO-PAGAVEL') && !JSON.stringify((await owner.get('/api/admin/payments')).data).includes('SIMULADO-NAO-PAGAVEL'));
   for (const [name, call] of [
@@ -680,7 +743,7 @@ section('14. Painel: quem vê o quê');
 }
 
 // ------------------------------------------------------------------------------------------------
-section('15. Comissão de 2%: a conta certa, sempre em centavos');
+section('15. Comissão: a conta certa, sempre em centavos (2% nos pedidos antigos; taxa de serviço de 5% nos novos)');
 {
   const table = [
     [10000, 200], [1010, 20], [1, 0], [9, 0], [24, 0], [25, 1], [49, 1], [50, 1], [74, 1], [75, 2], [4999, 100], [5050, 101], [2500, 50], [1765, 35], [8825, 177], [123456, 2469], [2147483647, 42949673],
@@ -696,18 +759,36 @@ section('15. Comissão de 2%: a conta certa, sempre em centavos');
   });
   check('400 valores aleatórios batem com a conta de referência (arredonda a metade para cima) e nunca passam do valor', bad.length === 0, bad.slice(0, 3));
   check('a taxa é 2% (200 pontos-base) e vem do banco', psql('select payment_commission_bps()') === '200');
+  // Taxa de serviço do Pix (0020): service_fee_cents(base, bps) = floor((base × bps + 5000) ÷ 10000), a mesma conta de serviceFeeCents() do site.
+  const svcTable = [[0, 250, 0], [1, 250, 0], [10000, 250, 250], [10000, 500, 500], [2500, 250, 63], [2500, 500, 125], [1010, 250, 25], [1010, 500, 51], [1765, 250, 44], [1765, 500, 88], [6510, 250, 163], [6510, 500, 326], [10000, 0, 0]];
+  const svcGot = psql(`select string_agg(a || ':' || b || ':' || service_fee_cents(a, b), ',' order by ord) from unnest(array[${svcTable.map((t) => t[0]).join(',')}], array[${svcTable.map((t) => t[1]).join(',')}]) with ordinality as t(a, b, ord)`);
+  check('taxa de serviço do Pix: valores conhecidos (R$ 100 → 2,50 e 5,00; R$ 25 → 0,63 e 1,25; R$ 10,10 → 0,25 e 0,51; R$ 17,65 → 0,44 e 0,88; R$ 65,10 → 1,63 e 3,26)', svcGot === svcTable.map(([a, b, c]) => `${a}:${b}:${c}`).join(','), svcGot);
+  const svcBad = [];
+  for (const bps of [1, 250, 300, 500, 1000]) {
+    const sample = Array.from({ length: 300 }, () => Math.floor(Math.random() * 5_000_000));
+    for (const entry of psql(`select string_agg(a || ':' || service_fee_cents(a, ${bps}), ',') from unnest(array[${sample.join(',')}]) a`).split(',')) {
+      const [a, c] = entry.split(':').map(Number);
+      if (BigInt(c) !== (BigInt(a) * BigInt(bps) + 5000n) / 10000n) svcBad.push([a, bps, c]);
+    }
+  }
+  check('1.500 valores aleatórios (5 percentuais): service_fee_cents bate com a conta de referência em inteiros (metade para cima)', svcBad.length === 0, svcBad.slice(0, 3));
   const V = await placeOrder([{ product_id: p1010.id, quantity: 1 }]);
   await pay(V.c, V.token);
-  check('pedido de R$ 10,10: cobrança de 1010 centavos e comissão 20', payRow(V.number).amount_cents === 1010 && payRow(V.number).commission_cents === 20);
+  check('pedido de R$ 10,10: cobrança de 1035 centavos (taxa do cliente 25) e comissão 51 (5% de 1010 = 50,5 arredonda para cima)', payRow(V.number).amount_cents === 1035 && payRow(V.number).customer_fee_cents === 25 && payRow(V.number).commission_cents === 51);
   const W = await placeOrder([{ product_id: p1765.id, quantity: 1 }]);
   await pay(W.c, W.token);
-  check('pedido de R$ 17,65: cobrança de 1765 centavos e comissão 35 (35,3 arredonda para baixo)', payRow(W.number).amount_cents === 1765 && payRow(W.number).commission_cents === 35);
+  check('pedido de R$ 17,65: cobrança de 1809 centavos (taxa do cliente 44) e comissão 88 (88,25 arredonda para baixo)', payRow(W.number).amount_cents === 1809 && payRow(W.number).customer_fee_cents === 44 && payRow(W.number).commission_cents === 88);
   const X = await placeOrder([{ product_id: p25.id, quantity: 2 }, { product_id: p1010.id, quantity: 1 }], { delivery_type: 'delivery', address: 'Rua A', address_number: '10', neighborhood: 'Centro' });
   await pay(X.c, X.token);
-  check('com taxa de entrega (R$ 5,00): a base é o total do pedido inteiro, R$ 65,10 → comissão 130 (130,2 arredonda para baixo)', X.order.total === 65.1 && payRow(X.number).amount_cents === 6510 && payRow(X.number).commission_cents === 130, payRow(X.number));
+  check('com taxa de entrega (R$ 5,00): a base é itens + entrega, R$ 65,10 → cliente paga R$ 66,73 (taxa 163) e a comissão é 326', X.order.total === 66.73 && payRow(X.number).amount_cents === 6673 && payRow(X.number).customer_fee_cents === 163 && payRow(X.number).commission_cents === 326, payRow(X.number));
   check('total errado vindo do navegador (expected_total) continua barrando o pedido (409)', (await buyer().post('/api/orders', { customer_name: 'X Y', customer_phone: nextPhone(), delivery_type: 'pickup', payment_method: 'pix_online', expected_total: '1.00', items: [{ product_id: p25.id, quantity: 1 }] })).status === 409);
-  const cents = Number(psql(`select count(*) from payments where commission_cents > amount_cents or commission_bps <> 200 or amount_cents <> round((select o.total from orders o where o.id = order_id) * 100)`));
-  check('em TODAS as cobranças criadas: valor = total do pedido e comissão = 2% (200 pontos-base)', cents === 0, cents);
+  const cents = Number(psql(`select count(*) from payments p join orders o on o.id = p.order_id
+                              where p.commission_cents > p.amount_cents
+                                 or p.amount_cents <> round(o.total * 100)
+                                 or p.commission_bps <> 500
+                                 or p.customer_fee_cents <> round(o.payment_fee * 100)
+                                 or p.commission_cents <> service_fee_cents(p.amount_cents - p.customer_fee_cents, 500)`));
+  check('em TODAS as cobranças criadas: valor = total do pedido, taxa do cliente = a do pedido e comissão = 5% da base (500 pontos-base)', cents === 0, cents);
 }
 
 // ------------------------------------------------------------------------------------------------

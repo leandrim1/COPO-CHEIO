@@ -261,8 +261,12 @@ agendador, então com o site parado ela só roda quando houver movimento.
 7. Depois das migrations 0014 a 0018: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
    variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
 8. Se ligou o Pix online: faça **um pedido de teste no sandbox** da ValidaPay e confira pedido, comissão e histórico antes de usar credenciais de produção.
-9. Depois da migration 0020 (cartão de crédito online): o checkout **não** deve mostrar "Cartão online" (nasce desligado) e os pedidos antigos seguem iguais. Para
-   ligar: siga [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md) (a taxa do cartão precisa ser **conferida com o contrato da ValidaPay** e o teste no **sandbox** feito antes de qualquer cartão real).
+9. Depois da migration 0020 (cartão de crédito online **e taxa de serviço do Pix**): o checkout **não** deve mostrar "Cartão online" (nasce desligado) e os pedidos antigos seguem
+   iguais. Para ligar o cartão: siga [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md) (a taxa do cartão precisa ser **conferida com o contrato da ValidaPay** e o teste no **sandbox** feito antes de qualquer cartão real).
+   **Atenção ao Pix online, se já estiver ligado:** a 0020 passa a cobrar do cliente a **taxa de serviço de 2,5%** (e descontar mais 2,5% do estabelecimento, 5% no total para a conta master) em
+   TODO pedido de Pix feito a partir dela; pedidos de Pix feitos antes continuam com o total e a comissão de 2% de quando nasceram. Se não quiser a taxa, zere os percentuais em
+   `payment_fee_settings` (`pix_customer_fee_bps` e `pix_store_fee_bps`, com SQL no Neon; ainda não há tela para isso): com os dois em zero os pedidos NOVOS voltam a cobrar só o valor do pedido, sem
+   divisão. O Pix online nasce desligado: se ainda não foi ligado em produção, nenhum pedido é afetado.
 
 ## 9. O que este guia não cobre
 

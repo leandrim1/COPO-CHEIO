@@ -191,6 +191,8 @@ export type PaymentOption = {
   enabled?: boolean;
   // Só no cartão online: percentual (pontos-base, 537 = 5,37%) e tarifa fixa (centavos) para o resumo na tela. Quem cobra de verdade é o servidor.
   card_fee?: { bps: number; fixed_cents: number } | null;
+  // Só no Pix online: a taxa de serviço que o cliente paga (pontos-base, 250 = 2,5% sobre itens + entrega), para o resumo na tela.
+  service_fee?: { bps: number } | null;
 };
 
 export type AdminAccount = {
@@ -252,7 +254,7 @@ export type PublicOrder = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
-  // Taxa de processamento do cartão repassada ao cliente (0 nas outras formas de pagamento); já está dentro do total.
+  // Taxa paga pelo cliente no pagamento pelo site (processamento do cartão ou taxa de serviço do Pix; 0 nas outras formas); já está dentro do total.
   payment_fee: number;
   total: number;
   created_at: string;
@@ -364,8 +366,9 @@ export type PaymentsOverview = {
     commission_failed_cents: number;
     fee_cents: number;
   };
-  // Taxa atual da comissão, em pontos-base (200 = 2%); vem do banco.
+  // Divisão atual para a master no Pix online, em pontos-base (500 = 5%: 2,5% pago pelo cliente + 2,5% pelo estabelecimento); vem do banco.
   commission_bps: number;
+  pix_fee: { customer_bps: number; store_bps: number };
   merchant: MerchantAccount | null;
   provider: {
     configured: boolean;

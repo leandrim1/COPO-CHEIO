@@ -208,8 +208,9 @@ export function registerPayments(r: Router) {
         [getProvider()?.name ?? ''],
       ],
       ["select code, label, enabled from payment_methods where code = 'pix_online'"],
-      // A taxa atual da comissão vem do banco (a única fonte); cada cobrança guarda a taxa de quando foi criada.
-      ['select payment_commission_bps() as bps'],
+      // A divisão atual para a master (taxa de serviço do cliente + parte do estabelecimento, 2,5% + 2,5%) vem do banco (a única fonte); cada cobrança
+      // guarda a divisão de quando foi criada.
+      ['select pix_customer_fee_bps, pix_store_fee_bps, pix_customer_fee_bps + pix_store_fee_bps as bps from payment_fee_settings where id = 1'],
       ["select code, label, enabled from payment_methods where code = 'card_online'"],
       ['select card_fee_bps, card_fee_fixed_cents, confirmed_at, confirmed_by_name, updated_at from payment_fee_settings where id = 1'],
     ]);
@@ -219,6 +220,7 @@ export function registerPayments(r: Router) {
       has_more: rows.length > limit,
       summary: summary[0],
       commission_bps: Number(rate[0]?.bps ?? 0),
+      pix_fee: { customer_bps: Number(rate[0]?.pix_customer_fee_bps ?? 0), store_bps: Number(rate[0]?.pix_store_fee_bps ?? 0) },
       merchant: account,
       provider: providerSummary(),
       account_fee_cents: getProvider()?.merchant?.accountCreationFeeCents ?? null,

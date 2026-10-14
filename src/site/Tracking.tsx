@@ -511,7 +511,7 @@ export function OrderView({
               </div>
               {order.payment_fee > 0 && (
                 <div className="flex justify-between text-white/65">
-                  <dt>Taxa do cartão</dt>
+                  <dt>{order.payment_method === 'pix_online' ? 'Taxa de serviço do Pix' : 'Taxa do cartão'}</dt>
                   <dd className="tabular-nums">{money(order.payment_fee)}</dd>
                 </div>
               )}

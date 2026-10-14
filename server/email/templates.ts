@@ -22,8 +22,9 @@ export type OrderMail = {
   subtotal: number;
   deliveryFee: number;
   discount: number;
-  // Taxa de processamento do cartão online paga pelo cliente (0 nas outras formas de pagamento).
+  // Taxa paga pelo cliente no pagamento pelo site (0 nas outras formas): "taxa de processamento do cartão" no cartão online e "taxa de serviço" no Pix online.
   paymentFee?: number;
+  paymentFeeLabel?: string;
   total: number;
   delivery: 'delivery' | 'pickup';
   neighborhood: string | null;
@@ -44,7 +45,7 @@ function summary(o: OrderMail): Block[] {
   const rows = [{ label: 'Subtotal', value: brl(o.subtotal) }];
   if (o.deliveryFee > 0) rows.push({ label: 'Taxa de entrega', value: brl(o.deliveryFee) });
   if (o.discount > 0) rows.push({ label: 'Desconto', value: `− ${brl(o.discount)}` });
-  if ((o.paymentFee ?? 0) > 0) rows.push({ label: 'Taxa de processamento do cartão', value: brl(o.paymentFee ?? 0) });
+  if ((o.paymentFee ?? 0) > 0) rows.push({ label: o.paymentFeeLabel ?? 'Taxa de processamento do cartão', value: brl(o.paymentFee ?? 0) });
   const strong = { label: 'Total', value: brl(o.total), strong: true as const };
   return [{ kind: 'order', number: String(o.number), lines: o.lines.map((l) => ({ qty: l.qty, name: l.name, total: brl(l.total) })), rows: [...rows, strong] }];
 }

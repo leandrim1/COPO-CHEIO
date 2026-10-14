@@ -104,6 +104,9 @@ export function OnlinePaymentCard({
 }) {
   const last = payments[payments.length - 1];
   const card = order.payment_method === 'card_online';
+  // Pedidos de Pix feitos depois da taxa de serviço trazem o valor dela; os de antes (taxa 0) continuam sem o quadro.
+  const pixFee = order.payment_method === 'pix_online' && Number(order.payment_fee) > 0;
+  const feeLabel = card ? 'Taxa do cartão (paga pelo cliente)' : 'Taxa de serviço do Pix (paga pelo cliente)';
   return (
     <Card title={card ? 'Pagamento online (cartão de crédito)' : 'Pagamento online (Pix)'}>
       <p className="text-sm text-white/75">
@@ -112,8 +115,8 @@ export function OnlinePaymentCard({
           : 'O cliente paga pelo site e a operadora de pagamento confirma. '}O status não pode ser alterado à mão: use “Atualizar pagamento” para
         consultar a operadora.
       </p>
-      {card && (
-        <dl data-card-breakdown className="mt-3 space-y-1 rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 text-xs">
+      {(card || pixFee) && (
+        <dl data-card-breakdown={card ? 'card' : 'pix'} className="mt-3 space-y-1 rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 text-xs">
           <div className="flex justify-between text-white/65">
             <dt>Subtotal</dt>
             <dd className="tabular-nums">{money(Number(order.subtotal))}</dd>
@@ -130,17 +133,18 @@ export function OnlinePaymentCard({
           )}
           <div className="flex justify-between text-white/85">
             <dt>
-              Taxa do cartão (paga pelo cliente)
+              {feeLabel}
               {owner && order.payment_fee_bps !== null && order.payment_fee_bps !== undefined && (
                 <span className="ml-1 text-white/50">
-                  · {percentFromBps(order.payment_fee_bps)} + {money(Number(order.payment_fee_fixed ?? 0))} usados no cálculo
+                  · {percentFromBps(order.payment_fee_bps)}
+                  {card ? ` + ${money(Number(order.payment_fee_fixed ?? 0))}` : ''} usados no cálculo
                 </span>
               )}
             </dt>
             <dd className="tabular-nums">{money(Number(order.payment_fee))}</dd>
           </div>
           <div className="flex justify-between border-t border-white/[0.08] pt-1 font-bold text-white">
-            <dt>Total cobrado no cartão</dt>
+            <dt>{card ? 'Total cobrado no cartão' : 'Total cobrado no Pix'}</dt>
             <dd className="tabular-nums">{money(Number(order.total))}</dd>
           </div>
         </dl>
@@ -187,6 +191,14 @@ export function OnlinePaymentCard({
                         {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
                         {p.commission_state === 'confirmed' && <span className="ml-1 text-white/55">({cents(p.commission_confirmed_cents)} repassados)</span>}
                       </dd>
+                      {(p.customer_fee_cents ?? 0) > 0 && (
+                        <>
+                          <dt className="text-white/50">Quem paga a taxa</dt>
+                          <dd className="text-white/85" data-pix-fee-split>
+                            cliente {cents(p.customer_fee_cents ?? 0)} · estabelecimento {cents(Math.max(0, (p.commission_cents ?? 0) - (p.customer_fee_cents ?? 0)))}
+                          </dd>
+                        </>
+                      )}
                     </>
                   )}
                   <dt className="text-white/50">{p.method === 'card' ? 'Tarifa da operadora' : 'Tarifas'}</dt>

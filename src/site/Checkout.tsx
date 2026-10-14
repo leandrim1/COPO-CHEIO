@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { useId } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
-import { cardFeeCents } from '../lib/cardFee';
+import { cardFeeCents, serviceFeeCents } from '../lib/cardFee';
 import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
 import { ICE_REQUIRED_MESSAGE } from '../lib/ice';
@@ -182,6 +182,9 @@ export function CheckoutPage() {
   const cardRates =
     cardRate && Number.isSafeInteger(cardRate.bps) && Number.isSafeInteger(cardRate.fixed_cents) && cardRate.bps >= 0 && cardRate.fixed_cents >= 0 ? { bps: cardRate.bps, fixedCents: cardRate.fixed_cents } : null;
   const paymentOptions: PaymentMethod[] = payments.filter((p) => p.code !== 'card_online' || cardRates !== null).map((p) => p.code);
+  // Pix online: taxa de serviço do cliente (percentual sobre itens + entrega), também só para o resumo; o servidor calcula e confere de novo.
+  const pixRate = payments.find((p) => p.code === 'pix_online')?.service_fee;
+  const pixBps = pixRate && Number.isSafeInteger(pixRate.bps) && pixRate.bps >= 0 && pixRate.bps <= 1000 ? pixRate.bps : null;
   const pixKey = payments.find((p) => p.code === 'pix')?.details ?? null;
   const delivery = deliveryOptions.includes(form.delivery) ? form.delivery : deliveryOptions[0];
   const payment = paymentOptions.includes(form.payment) ? form.payment : paymentOptions[0];
@@ -192,7 +195,10 @@ export function CheckoutPage() {
   const totalCents = lines.reduce((sum, line) => sum + Math.round(line.unit * 100) * line.qty, 0) + Math.round((fee ?? 0) * 100);
   // A taxa do cartão incide sobre tudo o que vai no cartão (itens + entrega), em centavos inteiros, como no servidor. Entrega ainda sem valor
   // (bairro não escolhido): a taxa fica para depois, e o envio já é bloqueado até escolher o bairro.
-  const cardFee = payment === 'card_online' && cardRates && fee !== null && totalCents > 0 ? cardFeeCents(totalCents, cardRates) : 0;
+  const hasFee = payment === 'card_online' || (payment === 'pix_online' && pixBps !== null);
+  const feeLabel = payment === 'pix_online' ? 'Taxa de serviço' : 'Taxa do cartão';
+  const cardFee =
+    fee === null || totalCents <= 0 ? 0 : payment === 'card_online' && cardRates ? cardFeeCents(totalCents, cardRates) : payment === 'pix_online' && pixBps !== null ? serviceFeeCents(totalCents, pixBps) : 0;
   const payTotalCents = totalCents + cardFee;
   const payTotal = payTotalCents / 100;
   const belowMinimum = delivery === 'delivery' && store.min_order > 0 && subtotal < store.min_order;
@@ -352,7 +358,7 @@ export function CheckoutPage() {
           .filter((line) => byLine.has(keyOf(line.product.id, line.ice, line.swap?.id)) && Math.abs((byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0) - line.unit) >= 0.005)
           .map((line) => `${line.product.name}${line.swap ? ` (com ${line.swap.name})` : ''}: ${money(line.unit)} → ${money(byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0)}`);
         if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
-        if (payment === 'card_online' && body.payment_fee !== undefined && Math.abs(Number(body.payment_fee) - cardFee / 100) >= 0.005) changes.push(`Taxa do cartão: ${money(cardFee / 100)} → ${money(Number(body.payment_fee))}`);
+        if (hasFee && body.payment_fee !== undefined && Math.abs(Number(body.payment_fee) - cardFee / 100) >= 0.005) changes.push(`${feeLabel}: ${money(cardFee / 100)} → ${money(Number(body.payment_fee))}`);
         setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
         void refresh(true);
         return;
@@ -562,10 +568,27 @@ export function CheckoutPage() {
               ))}
             </div>
             {payment === 'pix_online' && (
-              <p className="mt-4 flex items-start gap-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
-                <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
-                <span>Você paga na próxima tela, com QR Code ou Pix copia e cola. O pedido só é enviado para a loja depois que o pagamento for confirmado.</span>
-              </p>
+              <div data-pix-notice className="mt-4 space-y-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
+                <p className="flex items-start gap-2.5">
+                  <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
+                  <span>Você paga na próxima tela, com QR Code ou Pix copia e cola. O pedido só é enviado para a loja depois que o pagamento for confirmado.</span>
+                </p>
+                {pixBps !== null && (
+                  <p className="flex items-start gap-2.5 font-semibold text-white">
+                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
+                    <span>
+                      {fee === null ? (
+                        `No Pix online é cobrada uma taxa de serviço de ${(pixBps / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%. Escolha o bairro para ver o valor.`
+                      ) : (
+                        <>
+                          Taxa de serviço ({(pixBps / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%): {money(cardFee / 100)}. Ela já está no total de {money(payTotal)}.
+                        </>
+                      )}
+                    </span>
+                  </p>
+                )}
+                {pixBps !== null && paymentOptions.some((p) => p !== 'pix_online') && <p className="pl-6 text-white/70">Essa taxa só existe no Pix online: nas outras formas de pagamento ela não é cobrada.</p>}
+              </div>
             )}
             {payment === 'card_online' && (
               <div data-card-notice className="mt-4 space-y-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
@@ -626,9 +649,9 @@ export function CheckoutPage() {
                   {delivery === 'pickup' ? 'Grátis' : fee === null ? 'Escolha o bairro' : fee > 0 ? money(fee) : 'Grátis'}
                 </dd>
               </div>
-              {payment === 'card_online' && (
-                <div data-card-fee className="flex justify-between text-white/70">
-                  <dt>Taxa do cartão</dt>
+              {hasFee && (
+                <div data-card-fee data-fee-line className="flex justify-between text-white/70">
+                  <dt>{feeLabel}</dt>
                   <dd className="tabular-nums">{fee === null ? 'Escolha o bairro' : money(cardFee / 100)}</dd>
                 </div>
               )}
@@ -705,6 +728,11 @@ export function CheckoutPage() {
               {payment === 'card_online' && fee !== null && (
                 <p data-card-total-note className="text-center text-xs font-semibold text-white/80">
                   Você será cobrado(a) {money(payTotal)} no cartão de crédito, à vista, com a taxa do cartão de {money(cardFee / 100)} incluída.
+                </p>
+              )}
+              {payment === 'pix_online' && pixBps !== null && fee !== null && (
+                <p data-pix-total-note className="text-center text-xs font-semibold text-white/80">
+                  Você pagará {money(payTotal)} no Pix, com a taxa de serviço de {money(cardFee / 100)} incluída.
                 </p>
               )}
               <p className="text-center text-xs text-white/60">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>

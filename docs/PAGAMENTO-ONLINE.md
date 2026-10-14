@@ -22,7 +22,7 @@
 ## O que NÃO existe
 
 - **3DS** no cartão online (`@validapay/3ds`) e **parcelamento**: o cartão online é só à vista e sem 3DS (veja [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md)). A
-  documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão, então não há comissão de 2% no cartão online.
+  documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão, então não há a taxa de serviço do Pix (5%) no cartão online.
 - **Estorno/devolução pela API**: o sistema **registra** a devolução que a ValidaPay informar (consulta de `GET /v1/wallet/refunds` e avisos
   `refund.*`); devolver o dinheiro continua manual, pelo painel da ValidaPay (o adaptador nunca pede o escopo `wallet/write`).
 - **Teste no sandbox ou na produção da ValidaPay**: nunca foi feito. Tudo que depende de como a ValidaPay realmente se comporta está listado em
@@ -65,10 +65,22 @@ a página consulta o servidor a cada 4 s e mostra "Pagamento confirmado!"; o pai
 
 - **Valor e comissão nascem no banco**, do total que o próprio banco calculou para o pedido. O navegador não manda (nem consegue mudar) valor,
   total, desconto ou comissão.
-- **Comissão: 2%** (`payment_commission_bps() = 200`, desde a migration `0016`; antes era 5%) do **total do pedido** (itens + entrega − descontos), em centavos,
-  arredondada ao centavo mais próximo (metade para cima): R$ 100,00 → R$ 2,00; R$ 10,10 → R$ 0,20; R$ 88,25 → R$ 1,77. Cada cobrança guarda a taxa e o valor
-  de quando nasceu (`commission_bps`, `commission_cents`): mudar a taxa afeta só as cobranças novas, e exige uma migration nova. A tela *Pagamentos* mostra a taxa
-  vigente lida do banco. Na **tela** do painel o nome é **"Taxa"** (e não "comissão"); no código, no banco e neste documento continua `commission_*` / "comissão".
+- **Taxa de serviço do Pix: 5%** (migration `0020`), dividida em **2,5% pagos pelo cliente** e **2,5% pagos pelo estabelecimento**; os 5% vão inteiros para a
+  conta master. A base é **itens + entrega − descontos** (o total do pedido antes da taxa), em centavos, e o dinheiro é sempre exato:
+  - `service_fee_cents(base, bps) = floor((base × bps + 5000) ÷ 10000)` (metade para cima), calculada no **banco**; o TypeScript (`serviceFeeCents`) é o mesmo
+    cálculo só para mostrar o total antes de o cliente confirmar, e um teste compara os dois.
+  - **Cliente**: a taxa dele (2,5% da base) é somada ao total do pedido (`orders.payment_fee`, `payment_fee_bps`) e aparece como **"Taxa de serviço do Pix"** no
+    checkout, no acompanhamento, no pedido do painel e no e-mail. Mudou o valor entre abrir o checkout e confirmar? O pedido é recusado com os valores novos (409), como no cartão.
+  - **Divisão (split)**: a comissão enviada à conta master é a taxa total (5%) calculada **uma só vez** sobre a base (`service_fee_cents(base, 500)`), e não duas
+    metades arredondadas separadamente. A parte do estabelecimento é `comissão − taxa do cliente`; a subconta fica com `valor cobrado − comissão`.
+  - Exemplo, pedido de R$ 100,00 (itens + entrega): o cliente paga **R$ 102,50**; a master recebe **R$ 5,00**; a subconta do estabelecimento fica com **R$ 97,50**.
+    Pedido de R$ 25,00: o cliente paga R$ 25,63 (taxa de R$ 0,63), a master recebe R$ 1,25 e a subconta fica com R$ 24,38.
+  - Os percentuais (2,5% e 2,5%) ficam em `payment_fee_settings` (`pix_customer_fee_bps`, `pix_store_fee_bps`, de 0 a 10% cada). Cada pedido e cada cobrança guardam o
+    percentual e o valor de quando nasceram: mudar o percentual afeta só os pedidos novos.
+  - **Pedidos antigos não mudam**: um pedido de Pix online feito **antes** da migration `0020` (sem `payment_fee_bps`) continua com o total de antes e a **comissão de 2%**
+    (`payment_commission_bps() = 200`, migration `0016`) sobre o total; o mesmo vale para as cobranças já criadas.
+  - O **cartão online não tem essa taxa**: segue só com a taxa do cartão, sem split.
+  Na **tela** do painel o nome é **"Taxa"** (e não "comissão"); no código, no banco e neste documento continua `commission_*` / "comissão".
 - **Só "efetivada" com evidência**: `commission_state = 'confirmed'` exige o valor que a ValidaPay confirmou ter repassado e a cobrança paga
   (restrição `payments_commission_evidence`). A loja só considera o repasse confirmado se o **extrato da conta master** mostrar um **crédito
   ligado a esta cobrança** (mesmo `chargeId`); sem isso a comissão fica "calculada" (e a conciliação posterior, com "Atualizar pagamento",
@@ -115,7 +127,7 @@ um bom reforço se o plano da Vercel permitir; não foi configurado.)
   preview nunca criar cobrança ou subconta de verdade). Sandbox e produção são "operadoras" diferentes no banco (`validapay-sandbox` e
   `validapay`): conta, cobranças e avisos de testes nunca se misturam com os de produção.
 - **Quem vê o quê**: o cliente só vê o pagamento do próprio pedido (código de acompanhamento ou a própria conta; erro igual para pedido
-  inexistente e de outra pessoa) e nunca vê comissão, tarifas, subconta ou código da operadora. Atendente (admin) vê a situação do pagamento;
+  inexistente e de outra pessoa). Ele vê a **própria** taxa de serviço (R$ 0,63, por exemplo) como linha do pedido, mas nunca a comissão da loja, a parte do estabelecimento, tarifas, subconta ou código da operadora. Atendente (admin) vê a situação do pagamento;
   **só o owner** vê comissão, tarifas, códigos, a página Pagamentos, gerencia a conta do estabelecimento e liga/desliga o Pix online.
 - Limites: 30 tentativas de gerar Pix a cada 10 minutos por rede; cadastro de conta limitado a 8 por hora por rede.
 - CSP e `Permissions-Policy` **não foram alterados** (o QR Code é desenhado no próprio site; não há script de terceiros). O cartão com SDK exigiria liberar
@@ -164,11 +176,11 @@ Cada um desses pontos precisa ser conferido no **sandbox**: se algum comportamen
 ## Cartão
 
 A forma "Cartão" (maquininha) continua sendo **paga na entrega ou na retirada**, como sempre foi: não passa pela ValidaPay e não tem taxa nem comissão automática
-(a comissão de 2% vale só para o Pix online).
+(a taxa de serviço de 5% vale só para o Pix online).
 
 O **cartão de crédito online** (o cliente paga pelo site e a taxa do cartão é repassada a ele) é outra forma de pagamento, `card_online`, que nasce **desligada** e
 está descrita em [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md). Ele **não** tem comissão: a documentação do cartão da ValidaPay (`POST /v1/charges`) **não traz o campo
-`split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`). Os dois fluxos são **separados**: o Pix continua com a subconta e a divisão de 2% (este guia); o cartão é cobrado na mesma subconta, mas sem divisão.
+`split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`). Os dois fluxos são **separados**: o Pix continua com a subconta e a divisão de 5% (2,5% do cliente + 2,5% do estabelecimento; este guia); o cartão é cobrado na mesma subconta, mas sem divisão.
 
 ## Ligar (passo a passo, começando pelo SANDBOX)
 
@@ -200,6 +212,6 @@ está descrita em [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md). Ele **não** tem comis
 ## Passos que dependem do proprietário do Disk Bebidas
 
 - Autorizar o cadastro da conta (subconta) do estabelecimento e fornecer à ValidaPay os dados do titular (pessoa física ou jurídica).
-- Conhecer e aceitar as tarifas **antes** de qualquer cadastro em produção, e a comissão de 2% da conta master.
+- Conhecer e aceitar as tarifas **antes** de qualquer cadastro em produção, e a taxa de serviço de 5% (2,5% cliente + 2,5% estabelecimento) da conta master.
 - Ligar o Pix online no painel (só o owner) depois de a conta estar aprovada.
 - Devolver manualmente ao cliente os pagamentos sinalizados (pago depois do cancelamento, em duplicidade, disputa) e marcar como conferido.
