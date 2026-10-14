@@ -8,9 +8,11 @@ import { refund, reserve, sha256 } from './auth.js';
 import { one, query } from './db.js';
 import { databaseUrl } from './env.js';
 import { HttpError } from './http.js';
-import { MailError, mailConfigured, sendMail } from './mail.js';
+import { deliver } from './email/service.js';
+import type { DeliverResult } from './email/service.js';
+import { mailConfigured } from './mail.js';
 import { loadBrand } from './mailBrand.js';
-import { alreadyRegisteredMessage, verificationMessage } from './mailTemplates.js';
+import { verificationMessage } from './mailTemplates.js';
 
 export const CODE_MINUTES = 15;
 export const LINK_HOURS = 24;
@@ -42,11 +44,19 @@ export const mailNotConfigured = () =>
     { code: 'mail_not_configured' },
   );
 
-function mailFailure(error: unknown): HttpError {
-  if (error instanceof MailError && error.kind === 'recipient') {
+function mailFailure(): HttpError {
+  return new HttpError(503, 'Não conseguimos enviar o e-mail agora. Tente de novo em instantes.', { code: 'mail_failed' });
+}
+
+// O que a pessoa vê quando o serviço de e-mails não conseguiu entregar a mensagem ao servidor de e-mail.
+export function deliveryError(result: DeliverResult): HttpError {
+  if (result.blocked === 'recipient_limit') {
+    return new HttpError(429, 'Já enviamos vários e-mails para este endereço hoje. Aguarde um pouco e tente de novo mais tarde.', { code: 'rate_limited' });
+  }
+  if (result.blocked || (result.failure?.kind === 'recipient' && !result.failure.retryable)) {
     return new HttpError(400, 'Esse endereço de e-mail não pôde receber a mensagem. Confira se digitou certo.', { code: 'mail_recipient_rejected' });
   }
-  return new HttpError(503, 'Não conseguimos enviar o e-mail agora. Tente de novo em instantes.', { code: 'mail_failed' });
+  return mailFailure();
 }
 
 // ---- Enviar um código ----------------------------------------------------------------------------------
@@ -77,21 +87,21 @@ export async function sendVerificationEmail(req: Request, ip: string, customer: 
   }
   try {
     const brand = await loadBrand(req);
-    await sendMail(
-      verificationMessage(brand, {
-        to: begin.email,
-        name: begin.name,
-        code,
-        link: `${brand.siteUrl}/conta/verificar/${token}`,
-        codeMinutes: CODE_MINUTES,
-        linkHours: LINK_HOURS,
-      }),
-    );
+    const message = verificationMessage(brand, {
+      to: begin.email,
+      name: begin.name,
+      code,
+      link: `${brand.siteUrl}/conta/verificar/${token}`,
+      codeMinutes: CODE_MINUTES,
+      linkHours: LINK_HOURS,
+    });
+    const result = await deliver({ kind: 'verification', to: begin.email, message, req, customerId: customer.id });
+    if (!result.ok) throw deliveryError(result);
   } catch (error) {
     // O código novo é descartado; o que a pessoa já tinha continua valendo.
     await query('select finish_email_verification($1::uuid, false)', [begin.id]);
     await refund(MAIL_IP_BUCKET, ip);
-    throw mailFailure(error);
+    throw error instanceof HttpError ? error : mailFailure();
   }
   await query('select finish_email_verification($1::uuid, true)', [begin.id]);
   return { sent: true };
@@ -103,8 +113,9 @@ export async function sendAlreadyRegisteredNotice(req: Request, customer: { emai
   try {
     // No máximo 1 aviso por hora por endereço (a reserva é atômica: cadastros simultâneos não mandam vários).
     await reserve('notice-email', customer.email, 3600, 1, 'aviso já enviado');
-    const brand = await loadBrand(req);
-    await sendMail(alreadyRegisteredMessage(brand, { to: customer.email, name: customer.name, loginUrl: `${brand.siteUrl}/conta` }));
+    // Tenta agora (o tempo de resposta do cadastro não pode revelar se o endereço já existe) e, se o servidor de e-mail falhar, o serviço
+    // refaz em segundo plano.
+    await deliver({ kind: 'already_registered', to: customer.email, spec: { name: customer.name }, req });
   } catch {
     /* quem tentou o cadastro não pode saber se o endereço já existe: falha de envio aqui não vira erro na tela */
   }

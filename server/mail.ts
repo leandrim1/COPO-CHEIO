@@ -1,5 +1,6 @@
-// Envio de e-mail (confirmação de conta). SMTP comum, que funciona com qualquer provedor: Gmail, Brevo, Resend
-// (smtp.resend.com), Amazon SES, SendGrid, Postmark, Zoho, o e-mail do seu domínio...
+// Envio de e-mail por SMTP comum, que funciona com qualquer provedor: Gmail, Brevo, Resend (smtp.resend.com), Amazon SES, SendGrid,
+// Postmark, Zoho, o e-mail do seu domínio... Este arquivo só sabe falar com o servidor SMTP; quem decide O QUE enviar, para quem, quando
+// e o que fazer se falhar é o serviço central (server/email/service.ts), que usa `smtpSend` abaixo.
 //
 // Variáveis do SERVIDOR (nunca chegam ao navegador):
 //   SMTP_HOST    servidor SMTP, ex.: smtp.gmail.com                                   (obrigatória)
@@ -46,22 +47,27 @@ export function mailStatus() {
   return { configured: Boolean(config), missing: mailMissing(), from: config?.from ?? null, host: config?.host ?? null };
 }
 
-export type MailKind = 'recipient' | 'auth' | 'network' | 'other';
-export class MailError extends Error {
-  constructor(
-    public kind: MailKind,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-export type Message = { to: string; subject: string; text: string; html: string };
+export type Message = {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+  // Cabeçalhos extras (ex.: List-Unsubscribe nas promoções).
+  headers?: Record<string, string>;
+};
 
 const loopback = (host: string) => host === 'localhost' || host === '127.0.0.1' || host === '::1';
 
-// Um envio por chamada (sem conexão guardada: funções da Vercel não vivem entre uma chamada e outra).
-export async function sendMail(message: Message): Promise<void> {
+// Resposta do servidor depois de aceitar a mensagem.
+export type SmtpInfo = { messageId: string | null; response: string | null };
+
+// Um envio por chamada (sem conexão guardada: funções da Vercel não vivem entre uma chamada e outra). Devolve o que o servidor
+// respondeu ao aceitar a mensagem; em caso de erro LANÇA o erro original do nodemailer (quem chama o classifica com
+// `classifyFailure`, server/email/errors.ts). `patient`: tempos maiores, para quem roda em segundo plano (fila).
+export async function smtpSend(
+  message: Message & { messageId?: string; replyTo?: string },
+  opts: { patient?: boolean } = {},
+): Promise<SmtpInfo> {
   const config = mailConfig();
   if (!config) throw new MissingConfig(mailMissing(), `Envio de e-mail não configurado. Faltam: ${mailMissing().join(', ')}.`);
   const transport = nodemailer.createTransport({
@@ -73,32 +79,22 @@ export async function sendMail(message: Message): Promise<void> {
     requireTLS: !config.secure && !loopback(config.host),
     // Curtos de propósito: a função da Vercel tem tempo limite (10 s no plano gratuito sem Fluid Compute); se o servidor de
     // e-mail travar, a pessoa recebe a mensagem "tente de novo" em vez de um erro 504 da plataforma.
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
-    socketTimeout: 7000,
+    connectionTimeout: opts.patient ? 8000 : 5000,
+    greetingTimeout: opts.patient ? 8000 : 5000,
+    socketTimeout: opts.patient ? 15000 : 7000,
   });
   try {
-    await transport.sendMail({
+    const info = (await transport.sendMail({
       from: config.from,
       to: message.to,
       subject: message.subject,
       text: message.text,
       html: message.html,
-      headers: { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'All' },
-    });
-  } catch (error) {
-    const e = error as { code?: string; command?: string; responseCode?: number; response?: string };
-    // Nunca registra senha, código, corpo da mensagem nem endereço de e-mail: só o motivo técnico.
-    const reason = String(e.response ?? (error as Error).message).replace(/[^\s<>"']+@[^\s<>"']+/g, '<e-mail>').slice(0, 200);
-    console.error('[mail] falha ao enviar:', e.code ?? 'sem código', e.command ?? '', e.responseCode ?? '', reason);
-    if (e.code === 'EAUTH') throw new MailError('auth', 'O servidor de e-mail recusou o usuário/senha (SMTP_USER / SMTP_PASS).');
-    if (e.code === 'EENVELOPE' || (e.command === 'RCPT TO' && e.responseCode && e.responseCode >= 500 && e.responseCode < 600)) {
-      throw new MailError('recipient', 'O servidor de e-mail recusou o endereço de destino.');
-    }
-    if (['ETIMEDOUT', 'ECONNECTION', 'ESOCKET', 'ECONNREFUSED', 'EDNS', 'ENOTFOUND', 'ECONNRESET'].includes(e.code ?? '')) {
-      throw new MailError('network', 'Não foi possível falar com o servidor de e-mail.');
-    }
-    throw new MailError('other', 'O servidor de e-mail não aceitou a mensagem.');
+      ...(message.messageId ? { messageId: message.messageId } : {}),
+      ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+      headers: message.headers ?? {},
+    })) as { messageId?: string; response?: string };
+    return { messageId: info.messageId ?? null, response: info.response ?? null };
   } finally {
     transport.close();
   }

@@ -9,9 +9,8 @@ import { DEVICE_COOKIE, createSession, deviceCookie, readCookie, sessionCookie, 
 import { one, query } from './db.js';
 import { json } from './http.js';
 import type { Admin, Ctx } from './http.js';
-import { mailConfigured, sendMail } from './mail.js';
-import { loadBrand, siteUrl } from './mailBrand.js';
-import { newAdminLoginMessage } from './mailTemplates.js';
+import { deliver } from './email/service.js';
+import { mailConfigured } from './mail.js';
 
 const MAX_DEVICES = 20;
 const NOTICE_TIMEOUT_MS = 4000;
@@ -61,8 +60,7 @@ async function notifyNewDevice(ctx: Pick<Ctx, 'req' | 'ip'>, admin: Admin, devic
   if (!mailConfigured()) return;
   const send = async () => {
     try {
-      const brand = await loadBrand(ctx.req);
-      await sendMail(newAdminLoginMessage(brand, { to: admin.email, name: admin.name, when: new Date(), device, ip: ctx.ip, panelUrl: `${siteUrl(ctx.req)}/admin` }));
+      await deliver({ kind: 'admin_new_login', to: admin.email, spec: { name: admin.name, at: new Date().toISOString(), device, ip: ctx.ip }, req: ctx.req });
     } catch {
       console.error('[painel] o aviso de novo acesso não foi enviado');
     }

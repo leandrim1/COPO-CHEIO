@@ -20,6 +20,7 @@
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.1",
+    "@vercel/functions": "^3.10.1",
     "lucide-react": "^1.48.0",
     "nodemailer": "^10.0.16",
     "qrcode-generator": "^2.0.4",

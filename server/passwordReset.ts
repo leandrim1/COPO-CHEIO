@@ -8,9 +8,10 @@ import { randomBytes } from 'node:crypto';
 import { reserve, sha256 } from './auth.js';
 import { one, query } from './db.js';
 import { HttpError } from './http.js';
-import { mailConfigured, sendMail } from './mail.js';
+import { deliver } from './email/service.js';
+import { mailConfigured } from './mail.js';
 import { loadBrand } from './mailBrand.js';
-import { passwordChangedMessage, passwordResetMessage } from './mailTemplates.js';
+import { passwordResetMessage } from './mailTemplates.js';
 import { MAIL_IP_BUCKET, MAIL_IP_MAX } from './verification.js';
 
 export const RESET_MINUTES = 60;
@@ -53,10 +54,12 @@ export async function sendPasswordResetEmail(req: Request, _ip: string, customer
   if (!begin.ok) return false;
   try {
     const brand = await loadBrand(req);
-    await sendMail(passwordResetMessage(brand, { to: begin.email, name: begin.name, link: `${brand.siteUrl}/conta/redefinir/${token}`, minutes: RESET_MINUTES }));
+    const message = passwordResetMessage(brand, { to: begin.email, name: begin.name, link: `${brand.siteUrl}/conta/redefinir/${token}`, minutes: RESET_MINUTES });
+    const result = await deliver({ kind: 'password_reset', to: begin.email, message, req, customerId: customer.id });
+    if (!result.ok) throw new Error('o e-mail não foi enviado');
   } catch {
     // O link novo é descartado; o que a pessoa já tinha continua valendo. (Nada de endereço nem de link no log: o motivo
-    // técnico já foi registrado por sendMail.)
+    // técnico já foi registrado pelo serviço de e-mails.)
     await query('select finish_password_reset($1, false)', [hash]);
     console.error('[senha] o e-mail de redefinição não foi enviado');
     return false;
@@ -69,8 +72,8 @@ export async function sendPasswordResetEmail(req: Request, _ip: string, customer
 export async function sendPasswordChangedNotice(req: Request, customer: { email: string; name: string }): Promise<void> {
   if (!mailConfigured()) return;
   try {
-    const brand = await loadBrand(req);
-    await sendMail(passwordChangedMessage(brand, { to: customer.email, name: customer.name, loginUrl: `${brand.siteUrl}/conta`, when: new Date() }));
+    // Tenta agora; se o servidor de e-mail falhar, o aviso de segurança fica na fila e é refeito depois (antes se perdia).
+    await deliver({ kind: 'password_changed', to: customer.email, spec: { name: customer.name, at: new Date().toISOString() }, req });
   } catch {
     console.error('[senha] o aviso de senha alterada não foi enviado');
   }

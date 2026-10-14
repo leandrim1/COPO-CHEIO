@@ -5,9 +5,8 @@ import { sha256 } from '../auth.js';
 import { batch, one, query } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Ctx, Router } from '../http.js';
-import { mailConfigured, sendMail } from '../mail.js';
-import { loadBrand, siteUrl } from '../mailBrand.js';
-import { adminResetLinkNoticeMessage } from '../mailTemplates.js';
+import { deliver } from '../email/service.js';
+import { mailConfigured } from '../mail.js';
 
 const RESET_HOURS = 24;
 
@@ -16,9 +15,9 @@ const RESET_HOURS = 24;
 async function noticeCustomer(ctx: Ctx, customer: { name: string; email: string; email_verified_at: string | null }): Promise<boolean> {
   if (!customer.email_verified_at || !mailConfigured()) return false;
   try {
-    const brand = await loadBrand(ctx.req);
-    await sendMail(adminResetLinkNoticeMessage(brand, { to: customer.email, name: customer.name, when: new Date(), loginUrl: `${siteUrl(ctx.req)}/conta` }));
-    return true;
+    // Se o servidor de e-mail falhar agora, o aviso fica na fila e sai depois (a resposta diz só se saiu agora).
+    const result = await deliver({ kind: 'admin_reset_notice', to: customer.email, spec: { name: customer.name, at: new Date().toISOString() }, req: ctx.req });
+    return result.ok;
   } catch {
     console.error('[clientes] o aviso do link de nova senha não foi enviado');
     return false;
