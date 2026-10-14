@@ -189,7 +189,7 @@ const people = {};
 }
 function prefsToken(email) {
   const p = prefs(email);
-  return `${p.id}.${p.link_key}`;
+  return `${p.id}_${p.link_key}`;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -216,7 +216,7 @@ let sent1;
   const mine = (await mailsTo(yes)).find((m) => m.subject === good.subject);
   check('quem consentiu recebeu a campanha, com o assunto e o texto escritos pelo dono', Boolean(mine) && /cerveja gelada/.test(mine.text) && /Peça pelo site/.test(mine.text), (await mailsTo(yes)).map((m) => m.subject));
   check('e quem NÃO está no público não recebeu nada', (await Promise.all([people.saiu, people.nunca, people.suprimido, people.inativo, people.pendente, 'visitante19@exemplo.com'].map(mailsTo))).every((l) => !l.some((m) => m.subject === good.subject)));
-  const token = `${prefs(yes).id}.${prefs(yes).link_key}`;
+  const token = `${prefs(yes).id}_${prefs(yes).link_key}`;
   check('cabeçalho de descadastro com um clique (RFC 8058): List-Unsubscribe com https e List-Unsubscribe-Post', mine.headers['list-unsubscribe']?.includes(`/api/email/unsubscribe/${token}`) && /^<https?:\/\/[^>]+>$/.test(String(mine.headers['list-unsubscribe']).trim()) && mine.headers['list-unsubscribe-post'] === 'List-Unsubscribe=One-Click', [mine.headers['list-unsubscribe'], mine.headers['list-unsubscribe-post']]);
   check('promoção NÃO é marcada como e-mail automático (Auto-Submitted) nem some com respostas', !mine.headers['auto-submitted'] && !mine.headers['x-auto-response-suppress']);
   check('o corpo traz o link "Cancelar inscrição" e o motivo de a pessoa estar recebendo', mine.html.includes(`/conta/emails/${token}`) && /Cancelar inscrição/.test(mine.text) && /pediu para receber novidades/i.test(mine.text), mine.text.slice(-600));
@@ -236,7 +236,7 @@ section('7. Descadastro com um clique (RFC 8058), sem login e sem cookie');
   check('o POST do provedor de caixa de entrada (form, sem cookie) cancela as promoções', r.status === 200 && r.data.ok === true && prefs(yes).marketing === false && prefs(yes).marketing_unsubscribed_via === 'one_click' && prefs(yes).marketing_unsubscribed_at !== null, [r.status, prefs(yes)]);
   check('repetir o clique é inofensivo (200)', (await bare.req('POST', url, 'List-Unsubscribe=One-Click', { raw: true, headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status === 200);
   check('só as promoções param: avisos de pedido e e-mails da conta continuam', prefs(yes).notify_orders === true);
-  check('link adulterado, de outro endereço ou inventado: 404 igual', (await bare.post(`/api/email/unsubscribe/${token.slice(0, -1)}0`)).status === 404 && (await bare.post('/api/email/unsubscribe/abc')).status === 404 && (await bare.post('/api/email/unsubscribe/00000000-0000-4000-8000-000000000000.00000000000000000000000000000000')).status === 404);
+  check('link adulterado, de outro endereço ou inventado: 404 igual', (await bare.post(`/api/email/unsubscribe/${token.slice(0, -1)}0`)).status === 404 && (await bare.post('/api/email/unsubscribe/abc')).status === 404 && (await bare.post('/api/email/unsubscribe/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
   check('o descadastro tira a pessoa do público da próxima campanha', JSON.parse(psql(`select count(*) from email_preferences where email = ${lit(yes)} and marketing`)) === 0);
   const g = await anon.get(`/api/email/preferences/${token}`);
   check('a página de preferências mostra "desligado" e que ele pode voltar a ligar (conta confirmada)', g.status === 200 && g.data.marketing === false && g.data.can_enable_marketing === true, g.data);

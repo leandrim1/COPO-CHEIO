@@ -1862,6 +1862,9 @@ function pageOf(pathname: string): Page {
   if (m) return { name: 'redefinir', token: m[1] };
   m = /^\/conta\/verificar\/([0-9A-Za-z_-]{20,100})$/.exec(pathname);
   if (m) return { name: 'verificar', token: m[1] };
+  // Link de preferências de e-mail (vai em cada e-mail): "<id do endereço>_<chave de 128 bits>".
+  m = /^\/conta\/emails\/([0-9a-f-]{36}_[0-9a-f]{32})$/.exec(pathname);
+  if (m) return { name: 'emails', token: m[1] };
   // Endereço que não existe: página "não encontrada" (e fora do Google), não a página inicial disfarçada.
   return { name: 'notfound' };
 }
@@ -1878,13 +1881,14 @@ const PAGE_TITLE: Record<Page['name'], string> = {
   recuperar: 'Recuperar senha',
   redefinir: 'Nova senha',
   verificar: 'Confirmar e-mail',
+  emails: 'Preferências de e-mail',
   privacidade: 'Política de privacidade',
   notfound: 'Página não encontrada',
 };
 
 // Páginas que não devem aparecer no Google (pessoais, de passagem ou inexistentes). Reforça o que o servidor já manda para os robôs.
 // (/pedido e /acompanhar-pedido ficam de fora: a própria página de acompanhamento já põe o noindex e o referrer.)
-const NOINDEX = new Set<Page['name']>(['checkout', 'conta', 'conta-pedidos', 'conta-pedido', 'recuperar', 'redefinir', 'verificar', 'notfound']);
+const NOINDEX = new Set<Page['name']>(['checkout', 'conta', 'conta-pedidos', 'conta-pedido', 'recuperar', 'redefinir', 'verificar', 'emails', 'notfound']);
 
 function CustomerLoading() {
   return (

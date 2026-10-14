@@ -648,8 +648,11 @@ begin
   delete from email_messages where created_at < now() - interval '180 days' and status not in ('queued', 'sending');
   delete from email_suppressions where expires_at is not null and expires_at < now();
   delete from email_alerts where resolved_at is not null and resolved_at < now() - interval '90 days';
+  -- Preferências sem nenhuma informação útil (nem consentimento, nem cancelamento, nem "não quero avisos de pedido") saem depois de 1 ano; o
+  -- pedido de promoções feito no cadastro e nunca confirmado, em 30 dias.
   delete from email_preferences
-   where marketing = false and marketing_consent_at is null and marketing_pending_at is null and notify_orders = true and created_at < now() - interval '1 year';
+   where marketing = false and marketing_consent_at is null and notify_orders = true
+     and ((marketing_pending_at is null and created_at < now() - interval '1 year') or marketing_pending_at < now() - interval '30 days');
 end;
 $$;
 -- statement-breakpoint

@@ -1,4 +1,5 @@
 import { AccountPage, MyOrderPage, MyOrdersPage, RecoverPage, ResetPage, VerifyLinkPage } from './Account';
+import { EmailPreferencesPage } from './EmailPreferences';
 import { NotFoundPage, PrivacyPage } from './Privacy';
 import { LookupPage, TrackingPage } from './Tracking';
 
@@ -12,6 +13,7 @@ export type CustomerPage =
   | { name: 'recuperar' }
   | { name: 'redefinir'; token: string }
   | { name: 'verificar'; token: string }
+  | { name: 'emails'; token: string }
   | { name: 'privacidade' }
   | { name: 'notfound' };
 
@@ -34,6 +36,8 @@ export default function CustomerPages({ page }: { page: CustomerPage }) {
       return <ResetPage token={page.token} />;
     case 'verificar':
       return <VerifyLinkPage key={page.token} token={page.token} />;
+    case 'emails':
+      return <EmailPreferencesPage key={page.token} token={page.token} />;
     case 'privacidade':
       return <PrivacyPage />;
     case 'notfound':

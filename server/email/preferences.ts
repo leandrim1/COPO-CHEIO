@@ -2,7 +2,7 @@
 //
 // • Promoções só saem para quem consentiu (e o dono do e-mail provou que lê a caixa: conta confirmada). O consentimento fica registrado
 //   com data, origem e a versão do texto que a pessoa viu.
-// • O link de preferências/descadastro de cada endereço é "<id>.<chave>" (chave aleatória de 128 bits guardada no banco): não depende de
+// • O link de preferências/descadastro de cada endereço é "<id>_<chave>" (chave aleatória de 128 bits guardada no banco; sem ponto, que o roteamento do site trata como nome de arquivo): não depende de
 //   nenhuma variável de ambiente, então continua valendo em e-mails antigos mesmo se a senha do banco for trocada.
 import { timingSafeEqual } from 'node:crypto';
 import { one, query } from '../db.js';
@@ -40,9 +40,9 @@ export async function ensurePreferences(email: string): Promise<Preferences> {
   return row!;
 }
 
-export const preferenceToken = (p: Pick<Preferences, 'id' | 'link_key'>): string => `${p.id}.${p.link_key}`;
+export const preferenceToken = (p: Pick<Preferences, 'id' | 'link_key'>): string => `${p.id}_${p.link_key}`;
 
-const TOKEN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([0-9a-f]{32})$/;
+const TOKEN = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_([0-9a-f]{32})$/;
 
 function sameKey(a: string, b: string): boolean {
   const x = Buffer.from(a);

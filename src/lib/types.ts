@@ -413,3 +413,119 @@ export type CustomerRow = {
 };
 
 export type TrackingLinkInfo = { id: string; source: 'checkout' | 'admin' | 'legacy'; created_at: string; revoked_at: string | null; created_by_name: string | null };
+
+// ---- Painel: E-mails e Entregabilidade ----------------------------------------------------------------------------------------------
+export type EmailStatus = 'queued' | 'sending' | 'accepted' | 'delivered' | 'delayed' | 'bounced' | 'complained' | 'failed' | 'blocked' | 'cancelled';
+export type EmailCategory = 'transactional' | 'promotional';
+export type EmailCounts = { total: number; queued: number; accepted: number; delivered: number; delayed: number; bounced: number; complained: number; failed: number; blocked: number; cancelled: number };
+export type EmailAlertSeverity = 'info' | 'warning' | 'critical';
+export type EmailAlert = { code: string; severity: EmailAlertSeverity; opened_at: string; last_seen_at: string; last_notified_at: string | null; title: string; detail: string; hint: string; data: Record<string, unknown> | null };
+export type EmailKindInfo = { kind: string; label: string; category: EmailCategory };
+
+export type EmailOverview = {
+  generated_at: string;
+  period_days: number;
+  kinds: EmailKindInfo[];
+  transport: {
+    name: 'smtp' | 'resend';
+    label: string;
+    capabilities: { acceptance: boolean; delivery: boolean; bounces: boolean; complaints: boolean; opens: boolean; clicks: boolean };
+    configured: boolean;
+    missing: string[];
+    host: string | null;
+    from_name: string | null;
+    from_email: string | null;
+    from_domain: string | null;
+    free_sender: boolean;
+  };
+  totals: EmailCounts;
+  by_category: Partial<Record<EmailCategory, Omit<EmailCounts, never>>>;
+  by_kind: (EmailCounts & { kind: string; label: string; category: EmailCategory | null })[];
+  by_day: { day: string; total: number; ok: number; failed: number; blocked: number }[];
+  top_domains: { domain: string; total: number; failed: number; rejected: number }[];
+  rates: { accepted_percent: number | null; delivered_percent: number | null; bounced_percent: number | null; complaint_percent: number | null };
+  budget: { limit: number; used: number | null; promo_limit: number; promo_used: number };
+  queue: { queued: number; due: number; oldest_due_minutes: number | null; sending: number };
+  suppressions: Record<string, number>;
+  consent: { marketing: number; pending: number; unsubscribed: number };
+  webhook: { applicable: boolean; configured: boolean; last_ok_at: string | null; last_error_at: string | null; last_error: string | null; ok_count: number; error_count: number; last_event_at: string | null };
+  alerts: EmailAlert[];
+};
+
+export type EmailMessageRow = {
+  id: string;
+  created_at: string;
+  kind: string;
+  kind_label: string;
+  category: EmailCategory;
+  audience: 'customer' | 'staff';
+  recipient_email: string | null;
+  recipient_domain: string | null;
+  subject: string | null;
+  status: EmailStatus;
+  transport: string | null;
+  attempts: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+  accepted_at: string | null;
+  delivered_at: string | null;
+  bounced_at: string | null;
+  complained_at: string | null;
+  opens: number;
+  clicks: number;
+  bounce_type: string | null;
+  error_kind: string | null;
+  error_code: string | null;
+  error_detail: string | null;
+  block_reason: string | null;
+  block_label: string | null;
+  campaign_id: string | null;
+  order_number: number | null;
+  // Só no detalhe:
+  message_id?: string | null;
+  provider_id?: string | null;
+  can_retry?: boolean;
+};
+
+export type EmailEvent = { id: string; provider: string; type: string; occurred_at: string; received_at: string; detail: Record<string, unknown> | null };
+export type EmailSuppression = { email: string; reason: 'hard_bounce' | 'complaint' | 'repeated_soft' | 'manual'; source: 'smtp' | 'webhook' | 'admin'; detail: string | null; created_at: string; expires_at: string | null };
+
+export type EmailCampaignStatus = 'draft' | 'sending' | 'done' | 'cancelled';
+export type EmailCampaign = {
+  id: string;
+  created_at: string;
+  created_by_name: string | null;
+  name: string;
+  subject: string;
+  status: EmailCampaignStatus;
+  audience_total: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  pending: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  // Só no detalhe:
+  preheader?: string | null;
+  title?: string;
+  body?: string;
+  cta_label?: string | null;
+  cta_url?: string | null;
+};
+
+export type DnsFinding = { level: 'ok' | 'info' | 'warning' | 'error'; text: string };
+export type DnsReport =
+  | { applicable: false; domain: string; reason: string }
+  | {
+      applicable: true;
+      domain: string;
+      checked_at: string;
+      status: 'ok' | 'attention' | 'problem' | 'unknown';
+      spf: { record: string | null; findings: DnsFinding[] };
+      dkim: { found: { selector: string; via: 'txt' | 'cname' }[]; tried: string[]; findings: DnsFinding[] };
+      dmarc: { record: string | null; policy: string | null; findings: DnsFinding[] };
+      mx: { hosts: string[]; findings: DnsFinding[] };
+    };
+
+// Preferências de e-mail (página do link do e-mail e "Minha conta").
+export type EmailPreferences = { marketing: boolean; notify_orders: boolean; consent_text: string; can_enable_marketing?: boolean; email_masked?: string };

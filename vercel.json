@@ -4,6 +4,7 @@
       "includeFiles": "dist/index.html"
     }
   },
+  "crons": [{ "path": "/api/cron/email", "schedule": "23 6 * * *" }],
   "headers": [
     {
       "source": "/(.*)",

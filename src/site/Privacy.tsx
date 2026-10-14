@@ -194,7 +194,13 @@ export function PrivacyPage() {
                 <strong className="text-white">Pedidos de privacidade:</strong> nome, contato e mensagem que você enviar pelo formulário abaixo.
               </>,
               <>
-                <strong className="text-white">E-mails:</strong> só mensagens de serviço (confirmar a conta, recuperar a senha, avisos de segurança). Não enviamos propaganda.
+                <strong className="text-white">E-mails de serviço:</strong> confirmar a conta, recuperar a senha, avisos de segurança e avisos dos seus pedidos (recebido, confirmado, saiu para entrega, entregue ou cancelado, e pagamento). O endereço digitado num pedido recebe os avisos desse pedido; se o endereço não for seu, use o link no fim da mensagem para não receber mais.
+              </>,
+              <>
+                <strong className="text-white">Novidades e promoções por e-mail:</strong> só se você marcar essa opção ao criar a conta ou em “Minha conta” (a caixa vem desmarcada). O consentimento fica registrado com a data, a origem e a versão do texto que você viu. Você cancela quando quiser, com um clique no “Cancelar inscrição” de qualquer promoção ou em “Minha conta”, e os e-mails de serviço continuam chegando.
+              </>,
+              <>
+                <strong className="text-white">Registro dos e-mails enviados:</strong> para saber se uma mensagem saiu e corrigir falhas, a loja guarda o destinatário, o tipo de e-mail, a data e o resultado do envio. O texto da mensagem, os códigos e os links <em>não</em> são guardados. Endereços que o servidor de e-mail recusa, ou que pedem para não receber, ficam numa lista para a loja não insistir.
               </>,
             ]}
           />
@@ -233,7 +239,7 @@ export function PrivacyPage() {
                 <strong className="text-white">Vercel</strong> (hospedagem do site) e <strong className="text-white">Neon</strong> (banco de dados onde ficam pedidos e contas).
               </>,
               <>
-                <strong className="text-white">Serviço de envio de e-mails</strong> contratado pela loja, para as mensagens de serviço.
+                <strong className="text-white">Serviço de envio de e-mails</strong> contratado pela loja (e o servidor de e-mail de quem recebe), por onde passam as mensagens de serviço e, se você aceitou, as promoções.
               </>,
               <>
                 <strong className="text-white">WhatsApp:</strong> ao tocar num botão de WhatsApp você sai do site e a conversa segue as regras do WhatsApp.
@@ -265,6 +271,9 @@ export function PrivacyPage() {
               </>,
               <>
                 <strong className="text-white">Sessão (login):</strong> 30 dias, ou até você sair.
+              </>,
+              <>
+                <strong className="text-white">Registro dos e-mails enviados:</strong> 180 dias. Ao excluir a conta ou pedir a anonimização, o seu endereço sai desses registros, da lista de preferências e da lista de endereços bloqueados.
               </>,
               <>
                 <strong className="text-white">Pedidos de privacidade:</strong> até 2 anos depois de atendidos, para a loja provar que respondeu.

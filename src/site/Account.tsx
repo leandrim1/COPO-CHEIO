@@ -1,6 +1,6 @@
-import { Check, ChevronDown, Info, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag, TriangleAlert, XCircle } from 'lucide-react';
+import { Check, ChevronDown, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
+import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { swapStillValid } from '../lib/combo';
 import { maskPhone, onlyDigits } from '../lib/format';
@@ -8,6 +8,8 @@ import { isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
+import { ErrorLine, InfoLine, OkLine, Panel, Spinner, Submit, Title } from './accountUi';
+import { EmailPrefsPanel } from './EmailPreferences';
 import { getLoginPrefill, getRecoverPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, setRecoverPrefill, useCustomer } from './customer';
 import { useShop } from './data';
 import { Field, PageShell } from './shell';
@@ -18,75 +20,7 @@ import { useOrderFeed } from './useOrderFeed';
 
 const query = () => new URLSearchParams(window.location.search);
 
-// ---- Peças ----------------------------------------------------------------------------------------
-
-function Panel({ id, title, subtitle, children }: { id: string; title: string; subtitle?: string; children: ReactNode }) {
-  return (
-    <section aria-labelledby={id} className="rounded-[1.75rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-5 sm:p-6">
-      <h2 id={id} className="text-lg font-black text-white">
-        {title}
-      </h2>
-      {subtitle && <p className="mt-1 text-sm text-white/60">{subtitle}</p>}
-      <div className="mt-4">{children}</div>
-    </section>
-  );
-}
-
-function ErrorLine({ children }: { children: ReactNode }) {
-  if (!children) return null;
-  return (
-    <p role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-400/30 bg-rose-500/10 px-3.5 py-2.5 text-sm text-rose-100">
-      <XCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      {children}
-    </p>
-  );
-}
-
-function OkLine({ children }: { children: ReactNode }) {
-  if (!children) return null;
-  return (
-    <p role="status" className="flex items-start gap-2 rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-3.5 py-2.5 text-sm text-emerald-100">
-      <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      {children}
-    </p>
-  );
-}
-
-function InfoLine({ children, tone = 'info' }: { children: ReactNode; tone?: 'info' | 'warn' }) {
-  if (!children) return null;
-  const Icon = tone === 'warn' ? TriangleAlert : Info;
-  return (
-    <p
-      role="status"
-      className={`flex items-start gap-2 rounded-2xl border px-3.5 py-2.5 text-sm ${tone === 'warn' ? 'border-amber-400/30 bg-amber-400/10 text-amber-100' : 'border-[#2563FF]/40 bg-[#145CFF]/10 text-blue-100'}`}
-    >
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{children}</span>
-    </p>
-  );
-}
-
-function Submit({ busy, children, className = '' }: { busy: boolean; children: ReactNode; className?: string }) {
-  return (
-    <button type="submit" disabled={busy} className={`${BLUE_BUTTON} w-full disabled:cursor-not-allowed disabled:opacity-60 ${className}`}>
-      {busy ? <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" /> : null}
-      {children}
-    </button>
-  );
-}
-
-const Spinner = () => (
-  <div className="mt-20 flex justify-center" role="status" aria-label="Carregando">
-    <LoaderCircle className="h-10 w-10 animate-spin text-[#2563FF]" aria-hidden="true" />
-  </div>
-);
-
-const Title = ({ children, sub }: { children: ReactNode; sub?: string }) => (
-  <>
-    <h1 className="text-3xl font-black tracking-tight text-white sm:text-4xl">{children}</h1>
-    {sub && <p className="mt-2 max-w-2xl text-white/60">{sub}</p>}
-  </>
-);
+// ---- Peças (src/site/accountUi.tsx) ----------------------------------------------------------------
 
 // ---- Entrar / criar conta ------------------------------------------------------------------------------
 
@@ -242,6 +176,8 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [form, setForm] = useState(() => ({ name: '', email: getLoginPrefill(), phone: '', password: '' }));
+  // "Quero receber novidades e promoções": desmarcada por padrão. Marcar só faz o pedido; ele vale depois que o e-mail for confirmado.
+  const [marketing, setMarketing] = useState(false);
   const set = (key: keyof typeof form, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
     setErrors((e) => ({ ...e, [key]: '' }));
@@ -282,7 +218,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
         done(customer);
       } else {
         // A conta nasce "pendente": nada de sessão até confirmar o código que o servidor manda por e-mail.
-        const res = await api.post<RegisterResponse>('/api/account/register', { name: form.name.trim(), email, phone: onlyDigits(form.phone), password: form.password });
+        const res = await api.post<RegisterResponse>('/api/account/register', { name: form.name.trim(), email, phone: onlyDigits(form.phone), password: form.password, marketing_opt_in: marketing });
         setPending({
           email: res.email,
           password: form.password,
@@ -394,6 +330,15 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             />
           )}
         </Field>
+        {tab === 'cadastro' && (
+          <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-white/10 bg-black/20 p-3.5 text-sm text-white/80">
+            <input type="checkbox" checked={marketing} onChange={(e) => setMarketing(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[#145CFF]" />
+            <span>
+              Quero receber novidades e promoções da Copo Cheio por e-mail. Posso cancelar quando quiser.
+              <span className="mt-1 block text-xs text-white/55">Opcional. Só vale depois que você confirmar o e-mail com o código. Os e-mails da sua conta e dos seus pedidos chegam de qualquer forma.</span>
+            </span>
+          </label>
+        )}
         <ErrorLine>{error}</ErrorLine>
         <Submit busy={busy}>
           {tab === 'cadastro' && !busy ? <Mail className="h-5 w-5" aria-hidden="true" /> : null}
@@ -680,6 +625,8 @@ function Profile({ customer }: { customer: CustomerAccount }) {
           <Panel id="vincular" title="Vincular um pedido de visitante" subtitle="Fez um pedido sem entrar na conta? Informe o número e o código de acompanhamento para ele aparecer em “Meus pedidos”.">
             <ClaimForm />
           </Panel>
+
+          <EmailPrefsPanel />
 
           <Panel id="senha" title="Trocar senha">
             <form onSubmit={changePassword} noValidate className="space-y-4">

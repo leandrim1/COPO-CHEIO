@@ -4,6 +4,7 @@ import {
   Image as ImageIcon,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
   Monitor,
   Package,
@@ -27,6 +28,7 @@ import BannersPage from './Banners';
 import CategoriesPage from './Categories';
 import CustomersPage from './Customers';
 import DashboardPage from './Dashboard';
+import EmailsPage from './Emails';
 import LoginPage from './Login';
 import { OrderDetailPage, OrdersPage } from './Orders';
 import PaymentsPage from './Payments';
@@ -253,6 +255,7 @@ const MENU: { href: string; label: string; icon: typeof Package; owner?: boolean
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
   { href: '/admin/pagamentos', label: 'Pagamentos', icon: Wallet, owner: true },
   { href: '/admin/clientes', label: 'Clientes', icon: Users },
+  { href: '/admin/emails', label: 'E-mails', icon: Mail },
   { href: '/admin/produtos', label: 'Produtos', icon: Package },
   { href: '/admin/categorias', label: 'Categorias', icon: Tags },
   { href: '/admin/estoque', label: 'Estoque', icon: Boxes },
@@ -412,6 +415,8 @@ function route(pathname: string): { title: string; page: ReactNode } | null {
       return { title: 'Pagamentos online', page: <PaymentsPage /> };
     case 'clientes':
       return { title: 'Clientes', page: <CustomersPage /> };
+    case 'emails':
+      return { title: 'E-mails e Entregabilidade', page: <EmailsPage /> };
     case 'produtos':
       return id ? { title: id === 'novo' ? 'Novo produto' : 'Editar produto', page: <ProductFormPage id={id} key={id} /> } : { title: 'Produtos', page: <ProductsPage /> };
     case 'categorias':

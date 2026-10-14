@@ -53,6 +53,8 @@ export function registerEmailAdmin(r: Router) {
     ]);
     return json({
       ...data,
+      // Os tipos de e-mail do sistema (para os filtros do painel), com o nome em português.
+      kinds: (Object.keys(KINDS) as (keyof typeof KINDS)[]).map((kind) => ({ kind, label: KINDS[kind].label, category: KINDS[kind].category })),
       // Cada alerta com o texto pronto em português: título, o que aconteceu (`detail`) e o que fazer (`hint`). `data` são os números crus.
       alerts: alerts.map(({ detail: data, ...a }) => ({ ...a, ...describeAlert(a.code, data ?? {}), data })),
     });

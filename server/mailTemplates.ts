@@ -5,7 +5,8 @@
 // Para criar um e-mail novo:
 //   1. escreva uma função aqui, no formato das de baixo: recebe `brand` (de `loadBrand(req)`) e os dados do e-mail e
 //      devolve `renderEmail(brand, { ... })`;
-//   2. envie com `sendMail(message)` (mail.ts), de dentro de uma rota, depois de conferir as regras de quem pode receber.
+//   2. registre o tipo em `server/email/kinds.ts` (se é conta/pedido ou promoção, se leva segredo, tetos) e envie com `deliver()`
+//      (server/email/service.ts), que confere as regras (endereço suprimido, consentimento, tetos), registra a mensagem e envia.
 import type { Brand } from './mailBrand.js';
 import { renderEmail } from './mailLayout.js';
 import type { Message } from './mail.js';

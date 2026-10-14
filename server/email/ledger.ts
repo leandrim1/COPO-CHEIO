@@ -107,12 +107,13 @@ export async function markFailed(id: string, attempt: number, failure: SendFailu
 
 // Não foi enviada de propósito (endereço suprimido, sem consentimento, teto atingido...). Sem receita: nada a refazer.
 export async function markBlocked(id: string, reason: string): Promise<void> {
-  await query(`update email_messages set status = 'blocked', block_reason = $2, spec = null, next_attempt_at = null, claimed_at = null where id = $1 and status in ('sending', 'queued')`, [id, reason.slice(0, 60)]);
+  // Pegar a mensagem da fila contou uma tentativa; como ela nem foi tentada, a tentativa volta.
+  await query(`update email_messages set status = 'blocked', block_reason = $2, spec = null, next_attempt_at = null, claimed_at = null, attempts = case when status = 'sending' then greatest(attempts - 1, 0) else attempts end where id = $1 and status in ('sending', 'queued')`, [id, reason.slice(0, 60)]);
   await addEvent(id, 'smtp', `blocked:${id}`, 'blocked', { reason });
 }
 
 export async function markCancelled(id: string, reason: string): Promise<void> {
-  await query(`update email_messages set status = 'cancelled', block_reason = $2, spec = null, next_attempt_at = null, claimed_at = null where id = $1 and status in ('sending', 'queued')`, [id, reason.slice(0, 60)]);
+  await query(`update email_messages set status = 'cancelled', block_reason = $2, spec = null, next_attempt_at = null, claimed_at = null, attempts = case when status = 'sending' then greatest(attempts - 1, 0) else attempts end where id = $1 and status in ('sending', 'queued')`, [id, reason.slice(0, 60)]);
   await addEvent(id, 'smtp', `cancelled:${id}`, 'cancelled', { reason });
 }
 

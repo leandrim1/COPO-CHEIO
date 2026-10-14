@@ -83,7 +83,7 @@ let G1;
   const link = /https?:\/\/[^\s"<>]+\/acompanhar-pedido\/([A-Za-z0-9_-]+)/.exec(mail.html)?.[1];
   check('o link de acompanhamento vale: o mesmo código que o cliente recebeu ao pedir', link === G1.token, [link, G1.token]);
   check('...e abre o pedido certo', (await anon.get(`/api/tracking/${link}`)).data?.order?.order_number === G1.number);
-  const prefs = /\/conta\/emails\/([0-9a-f-]{36}\.[0-9a-f]{32})/.exec(mail.html)?.[1];
+  const prefs = /\/conta\/emails\/([0-9a-f-]{36}_[0-9a-f]{32})/.exec(mail.html)?.[1];
   check('há um link para não receber e-mails de pedidos neste endereço', Boolean(prefs), mail.html.match(/href="[^"]+"/g));
   check('só links https/do próprio site e nenhuma imagem de rastreamento (sem pixel de abertura)', !/<img[^>]+\b(width|height)=["']?1["']?[\s>\/]/i.test(mail.html) && !/\bopen\b.*pixel|track\.gif/i.test(mail.html) && [...mail.html.matchAll(/(?:href|src)="([^"]+)"/g)].every((m) => /^(https:\/\/|mailto:|tel:|http:\/\/127\.0\.0\.1|http:\/\/localhost)/.test(m[1])), [...mail.html.matchAll(/(?:href|src)="([^"]+)"/g)].map((m) => m[1]));
   check('a lista de pedidos do painel não vê corpo nem receita', !Object.keys((await owner.get(`/api/admin/emails/messages?q=${g1mail}`)).data.messages[0] ?? {}).some((k) => /^(spec|html|text|body)/.test(k)));
@@ -322,7 +322,7 @@ section('8. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail
   await clearMail();
   const A = await placeOrder({ customer_email: email });
   const mail = (await arrive(email))[0];
-  const token = /\/conta\/emails\/([0-9a-f-]{36}\.[0-9a-f]{32})/.exec(mail.html)[1];
+  const token = /\/conta\/emails\/([0-9a-f-]{36}_[0-9a-f]{32})/.exec(mail.html)[1];
   const got = await anon.get(`/api/email/preferences/${token}`);
   check('a página de preferências mostra o endereço mascarado e o estado', got.status === 200 && got.data.notify_orders === true && got.data.marketing === false && !JSON.stringify(got.data).includes(email) && /\*/.test(got.data.email_masked), got.data);
   check('sem rastreio em cache: resposta marcada noindex', got.headers.get('x-robots-tag') === 'noindex, nofollow');
@@ -334,7 +334,7 @@ section('8. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail
   check('as etapas seguintes ficam bloqueadas ("pediu para não receber")', blocked?.status === 'blocked' && blocked.block_reason === 'order_notices_off', blocked);
   check('...e nada novo foi enviado', (await mailsTo(email)).length === 1);
   check('ligar promoções por este link é recusado quando a conta não existe (409)', (await anon.patch(`/api/email/preferences/${token}`, { marketing: true })).status === 409);
-  check('link adulterado ou inventado: sempre 404, igual', (await anon.get(`/api/email/preferences/${token.slice(0, -1)}0`)).status === 404 && (await anon.get('/api/email/preferences/qualquer-coisa')).status === 404 && (await anon.get('/api/email/preferences/00000000-0000-4000-8000-000000000000.00000000000000000000000000000000')).status === 404);
+  check('link adulterado ou inventado: sempre 404, igual', (await anon.get(`/api/email/preferences/${token.slice(0, -1)}0`)).status === 404 && (await anon.get('/api/email/preferences/qualquer-coisa')).status === 404 && (await anon.get('/api/email/preferences/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
   check('corpo inválido: 400', (await anon.patch(`/api/email/preferences/${token}`, { notify_orders: 'sim' })).status === 400 && (await anon.patch(`/api/email/preferences/${token}`, {})).status === 400);
   // Um código de login/senha NUNCA depende dessa preferência.
   await clearMail();
