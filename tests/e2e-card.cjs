@@ -154,7 +154,11 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
   await admin.fill('#login-senha', 'senha-forte-123');
   await admin.click('button[type=submit]');
   await admin.waitForURL('**/admin/dashboard');
-  // De propósito, SEM vincular subconta: o cartão é cobrado na conta principal e não depende dela (a subconta é só do Pix; seção 12).
+  // O cartão é cobrado na SUBCONTA do estabelecimento (a mesma do Pix; só o Pix tem split): sem ela, o cartão não liga.
+  await admin.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });
+  ok(/conta aprovada/.test(await admin.locator('[data-card-missing]').getAttribute('data-card-missing')), 'sem a subconta, o cartão online pede "conta aprovada" (como o Pix)');
+  const link = await api('POST', '/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
+  ok(link.status === 201, 'a subconta do estabelecimento é vinculada (sandbox falso)', link);
   await admin.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });
   {
     const body = await text(admin);
@@ -162,8 +166,7 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     ok(/Ainda NÃO conferida/.test(body), 'a taxa aparece como "Ainda NÃO conferida"');
     ok(await admin.getByRole('switch', { name: 'Oferecer cartão de crédito online no checkout' }).isDisabled(), 'o interruptor do cartão online fica desabilitado enquanto a taxa não for conferida');
     const missing = await admin.locator('[data-card-missing]').getAttribute('data-card-missing');
-    ok(missing === 'taxa do cartão conferida' && /taxa do cartão conferida/.test(body), 'o que falta para ligar o CARTÃO é só "taxa do cartão conferida" (nada de subconta; o Pix, ao lado, ainda pede conta aprovada)', missing);
-    ok(/Sem cadastro/.test(body), 'a conta do estabelecimento (subconta do Pix) continua sem cadastro e o cartão liga mesmo assim');
+    ok(missing === 'taxa do cartão conferida', 'com a subconta aprovada, o que falta para ligar o cartão é só "taxa do cartão conferida"', missing);
     ok(/Confira no painel ou no contrato da ValidaPay/.test(body), 'o aviso manda conferir 5,37% + R$ 0,37 no contrato da ValidaPay');
     const percent = await admin.getByLabel('Percentual (%)').inputValue();
     const fixed = await admin.getByLabel('Tarifa fixa por venda (R$)').inputValue();
@@ -458,8 +461,6 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
   // ---- 12. Os dois fluxos no mesmo site: Pix (split na subconta) e cartão (conta principal, sem split) ----------------------------------------
   console.log('# 12. Pix com split e cartão sem split, de ponta a ponta, no mesmo site');
   {
-    const link = await api('POST', '/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
-    ok(link.status === 201, 'a subconta do Pix é vinculada (o fluxo do Pix de sempre)', link);
     const on = await api('PATCH', '/api/admin/payments/pix_online', { enabled: true });
     ok(on.status === 200 && on.data.payment.enabled === true, 'o Pix online liga (e o cartão online segue ligado)', on);
     const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
@@ -493,10 +494,10 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     await cardPage.getByRole('button', { name: /^Pagar R\$/ }).click();
     ok(await until(async () => /Pagamento aprovado!/.test(await text(cardPage)), 20000), 'cartão: "Pagamento aprovado!" (fluxo do cartão)');
     const cardCall = fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges').at(-1);
-    ok(!!cardCall && cardCall.body.amount === 106.07 && cardCall.subAccount === null && !('split' in cardCall.body) && cardCall.body.paymentMethod === 'creditcard', 'cartão: R$ 106,07 (subtotal + taxa) na conta PRINCIPAL, sem split', cardCall && { a: cardCall.body.amount, s: cardCall.subAccount, sp: cardCall.body.split });
+    ok(!!cardCall && cardCall.body.amount === 106.07 && cardCall.subAccount === '4960589' && !('split' in cardCall.body) && cardCall.body.paymentMethod === 'creditcard', 'cartão: R$ 106,07 (subtotal + taxa) na SUBCONTA do estabelecimento, sem split', cardCall && { a: cardCall.body.amount, s: cardCall.subAccount, sp: cardCall.body.split });
     ok(fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges/pix').length === 0, '...e nenhuma cobrança de Pix foi chamada para o cartão');
     const cardOrderNumber = lastOrder().order_number;
-    ok(psql(`select p.method || '/' || p.commission_state || '/' || p.customer_fee_cents || '/' || coalesce(p.merchant_account_id::text, 'sem-subconta') from payments p join orders o on o.id = p.order_id where o.order_number = ${cardOrderNumber}`) === 'card/not_applicable/607/sem-subconta', 'no banco: pagamento de cartão, sem comissão, taxa de R$ 6,07 e sem subconta');
+    ok(psql(`select p.method || '/' || p.commission_state || '/' || p.customer_fee_cents || '/' || case when p.merchant_account_id is null then 'sem-subconta' else 'com-subconta' end from payments p join orders o on o.id = p.order_id where o.order_number = ${cardOrderNumber}`) === 'card/not_applicable/607/com-subconta', 'no banco: pagamento de cartão, sem comissão, taxa de R$ 6,07 e ligado à subconta');
     await cctx.close();
   }
 

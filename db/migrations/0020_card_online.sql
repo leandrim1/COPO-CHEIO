@@ -354,9 +354,8 @@ begin
   if not exists (select 1 from payment_methods m where m.code = v_payment and m.enabled) then
     raise exception 'Escolha uma forma de pagamento disponível.' using errcode = 'P0001';
   end if;
-  -- Pix online: sem uma conta (subconta) aprovada na operadora não há como cobrar o Pix com divisão. (O painel também não deixa ligar o meio de pagamento assim.)
-  -- O cartão online NÃO depende da subconta: é cobrado na conta principal da operadora, sem divisão (veja payment_begin_card).
-  if v_payment = 'pix_online' and not exists (select 1 from merchant_accounts a where a.status = 'approved') then
+  -- Pagamento online (Pix e cartão): sem uma conta (subconta) aprovada na operadora não há como cobrar. (O painel também não deixa ligar o meio de pagamento assim.)
+  if is_online_payment(v_payment) and not exists (select 1 from merchant_accounts a where a.status = 'approved') then
     raise exception 'O pagamento online não está disponível agora. Escolha outra forma de pagamento.' using errcode = 'P0001';
   end if;
   -- Cartão online: só com a taxa conferida pelo dono (o painel não deixa ligar sem isso; aqui é a segunda trava) e com e-mail (a operadora exige).
@@ -629,8 +628,8 @@ $$;
 --   - criando e sem resultado (a resposta se perdeu): devolve a MESMA tentativa para ser refeita. O identificador que a loja manda à
 --     operadora é o id desta tentativa, então a operadora recusa a duplicata e devolve a cobrança original em vez de cobrar duas vezes.
 -- • O valor e a taxa saem do pedido gravado no banco, nunca do navegador.
--- • O CARTÃO É UM FLUXO SEPARADO DO PIX: cobrança na conta principal da operadora, SEM divisão (a comissão é "não se aplica") e SEM subconta
---   (merchant_account_id fica vazio). O Pix continua com a divisão e a subconta de sempre (payment_begin, que só aceita pedido de Pix online).
+-- • O CARTÃO É UM FLUXO SEPARADO DO PIX: cobrado na SUBCONTA do estabelecimento (a mesma do Pix), mas SEM divisão (a comissão é "não se aplica").
+--   O Pix continua com a divisão de sempre (payment_begin, que só aceita pedido de Pix online).
 -- ---------------------------------------------------------------------------------------------
 
 create or replace function payment_begin_card(p_order uuid, p_provider text, p_busy_seconds integer default 45)
@@ -640,6 +639,7 @@ volatile
 as $$
 declare
   v_order orders;
+  v_merchant merchant_accounts;
   v_open payments;
   v_new payments;
   v_attempts integer;
@@ -656,19 +656,24 @@ begin
     raise exception 'Este pedido não está aguardando pagamento.' using errcode = 'P0001';
   end if;
 
+  select * into v_merchant from merchant_accounts where provider = p_provider and status = 'approved';
+  if not found then
+    raise exception 'O pagamento online não está disponível agora. Fale com a loja.' using errcode = 'P0001';
+  end if;
+
   select * into v_open from payments where order_id = p_order and status in ('creating', 'pending') order by created_at desc limit 1;
   if found then
     if v_open.method <> 'card' then
       raise exception 'Este pedido já tem um pagamento em andamento.' using errcode = 'P0001';
     end if;
     if v_open.status = 'pending' then
-      return jsonb_build_object('created', false, 'busy', false, 'retry', false, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number);
+      return jsonb_build_object('created', false, 'busy', false, 'retry', false, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number, 'merchant_account', v_merchant.provider_account_id);
     end if;
     if coalesce(v_open.last_attempt_at, v_open.created_at) > now() - make_interval(secs => p_busy_seconds) then
-      return jsonb_build_object('created', false, 'busy', true, 'retry', false, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number);
+      return jsonb_build_object('created', false, 'busy', true, 'retry', false, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number, 'merchant_account', v_merchant.provider_account_id);
     end if;
     update payments set last_attempt_at = now(), card_attempts = card_attempts + 1 where id = v_open.id returning * into v_open;
-    return jsonb_build_object('created', false, 'busy', false, 'retry', true, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number);
+    return jsonb_build_object('created', false, 'busy', false, 'retry', true, 'payment', to_jsonb(v_open), 'order_number', v_order.order_number, 'merchant_account', v_merchant.provider_account_id);
   end if;
 
   select count(*) into v_attempts from payments where order_id = p_order;
@@ -683,11 +688,11 @@ begin
 
   insert into payments (order_id, attempt, provider, method, merchant_account_id, amount_cents, commission_bps, commission_cents, commission_state,
                         customer_fee_cents, last_attempt_at, card_attempts)
-  values (p_order, v_attempts + 1, p_provider, 'card', null, v_amount, 0, 0, 'not_applicable',
+  values (p_order, v_attempts + 1, p_provider, 'card', v_merchant.id, v_amount, 0, 0, 'not_applicable',
           round(v_order.payment_fee * 100)::integer, now(), 1)
   returning * into v_new;
 
-  return jsonb_build_object('created', true, 'busy', false, 'retry', false, 'payment', to_jsonb(v_new), 'order_number', v_order.order_number);
+  return jsonb_build_object('created', true, 'busy', false, 'retry', false, 'payment', to_jsonb(v_new), 'order_number', v_order.order_number, 'merchant_account', v_merchant.provider_account_id);
 end;
 $$;
 -- statement-breakpoint

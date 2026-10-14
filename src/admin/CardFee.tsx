@@ -92,7 +92,7 @@ export function CardFeeCard({ overview, onChanged }: { overview: PaymentsOvervie
     <Card
       className="mt-4"
       title="Cartão de crédito online"
-      description="O cliente paga no cartão pelo site e a taxa de processamento do cartão é somada ao total, mostrada antes de ele confirmar. A cobrança do cartão é feita na conta principal da ValidaPay, separada do Pix: sem divisão (split) e sem depender da subconta. O Pix e os pagamentos na entrega não têm essa taxa."
+      description="O cliente paga no cartão pelo site e a taxa de processamento do cartão é somada ao total, mostrada antes de ele confirmar. A cobrança do cartão é feita na subconta do estabelecimento, separada do Pix: sem divisão (split). O Pix e os pagamentos na entrega não têm essa taxa."
     >
       <dl className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-[14rem_1fr]">
         <dt className="font-semibold text-white/60">Cartão online no site</dt>
@@ -111,7 +111,7 @@ export function CardFeeCard({ overview, onChanged }: { overview: PaymentsOvervie
                 <li key={item}>
                   {item === 'VALIDAPAY_PUBLIC_ID' ? (
                     <>
-                      Variável <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[11px]">VALIDAPAY_PUBLIC_ID</code> no servidor (Id Público da conta: ValidaPay → Gerenciamento → Minha Conta)
+                      Variável <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-[11px]">VALIDAPAY_PUBLIC_ID</code> no servidor (o Id Público da subconta do estabelecimento: ValidaPay → Gerenciamento → Minha Conta)
                     </>
                   ) : (
                     item
@@ -140,7 +140,7 @@ export function CardFeeCard({ overview, onChanged }: { overview: PaymentsOvervie
         <p role="note" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-400/10 px-3 py-2.5 text-xs text-amber-100">
           <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>
-            Os valores 5,37% + R$ 0,37 são os de referência informados pela loja. <strong>Confira no painel ou no contrato da ValidaPay</strong> (e o prazo de recebimento, D+1, habilitado na sua conta principal) antes de ligar o cartão em produção. Se a tarifa
+            Os valores 5,37% + R$ 0,37 são os de referência informados pela loja. <strong>Confira no painel ou no contrato da ValidaPay</strong> (e o prazo de recebimento, D+1, habilitado na subconta do estabelecimento) antes de ligar o cartão em produção. Se a tarifa
             real for diferente, a loja paga ou cobra a mais a diferença.
           </span>
         </p>

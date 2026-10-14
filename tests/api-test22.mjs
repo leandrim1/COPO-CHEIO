@@ -55,12 +55,11 @@ await owner.patch('/api/admin/store', { opening_hours: ALL_DAYS, delivery_fee: 5
 const staff = new Client(undefined, '198.51.100.71');
 await owner.post('/api/admin/admins', { name: 'Atendente', email: 'atendente22@copocheio.local', password: 'senha-forte-456', role: 'admin' });
 await staff.login('atendente22@copocheio.local', 'senha-forte-456');
-// De propósito, NÃO vincula nenhuma subconta aqui: o cartão é cobrado na conta PRINCIPAL e não depende dela (a subconta é só do Pix; seção 17).
 {
   const fees = await owner.get('/api/admin/payment-fees/card');
   check('a taxa de referência vem do banco: 5,37% + R$ 0,37, ainda NÃO conferida', fees.status === 200 && fees.data.bps === 537 && fees.data.fixed_cents === 37 && fees.data.confirmed_at === null, fees.data);
   check('exemplos do painel (R$ 10, R$ 50, R$ 100) batem com a conta: taxa 96 / 323 / 607', JSON.stringify(fees.data.examples.map((e) => e.fee_cents)) === JSON.stringify([feeOf(1000), feeOf(5000), feeOf(10000)]) && fees.data.examples[0].fee_cents === 96 && fees.data.examples[2].fee_cents === 607 && fees.data.examples[2].total_cents === 10607, fees.data.examples);
-  check('sem conferir, o cartão online não está pronto e diz o que falta: SÓ a taxa conferida (não pede subconta nem conta do estabelecimento)', fees.data.readiness.ready === false && JSON.stringify(fees.data.readiness.missing) === JSON.stringify(['taxa do cartão conferida']), fees.data.readiness);
+  check('sem conferir, o cartão online não está pronto e diz o que falta: a conta do estabelecimento (subconta) e a taxa conferida', fees.data.readiness.ready === false && JSON.stringify(fees.data.readiness.missing) === JSON.stringify(['conta aprovada', 'taxa do cartão conferida']), fees.data.readiness);
   const anon = new Client();
   for (const [method, path, body] of [['get', '/api/admin/payment-fees/card'], ['patch', '/api/admin/payment-fees/card', { percent: '3', confirmed: true }], ['patch', '/api/admin/payments/card_online', { enabled: true }]]) {
     const a = await anon[method](path, body);
@@ -68,7 +67,11 @@ await staff.login('atendente22@copocheio.local', 'senha-forte-456');
     check(`${method.toUpperCase()} ${path.replace('/api/admin/', '')}: sem login 401 e atendente 403`, a.status === 401 && s.status === 403, [a.status, s.status]);
   }
   const early = await owner.patch('/api/admin/payments/card_online', { enabled: true });
-  check('ligar o cartão online sem a taxa conferida: 409 payments_not_ready', early.status === 409 && early.data.code === 'payments_not_ready' && early.data.missing.includes('taxa do cartão conferida'), early.data);
+  check('ligar o cartão online sem subconta aprovada nem taxa conferida: 409 payments_not_ready, e diz o que falta', early.status === 409 && early.data.code === 'payments_not_ready' && early.data.missing.includes('conta aprovada') && early.data.missing.includes('taxa do cartão conferida'), early.data);
+  const link = await owner.post('/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
+  check('a subconta do estabelecimento é vinculada (o cartão é cobrado nela, como o Pix)', link.status === 201, link.data);
+  const afterLink = await owner.patch('/api/admin/payments/card_online', { enabled: true });
+  check('com a subconta mas sem a taxa conferida: continua 409, agora só faltando a taxa', afterLink.status === 409 && JSON.stringify(afterLink.data.missing) === JSON.stringify(['taxa do cartão conferida']), afterLink.data);
   for (const bad of ['abc', '-1', '26', '25,01', '5,3799', '']) {
     const r = await owner.patch('/api/admin/payment-fees/card', { percent: bad, confirmed: true });
     check(`percentual inválido (${JSON.stringify(bad)}): 400 e nada muda`, r.status === 400 && r.data.code === 'invalid_percent', r.data);
@@ -196,8 +199,8 @@ let PAID;
   check('UMA cobrança na operadora, em REAIS: 106.07 (o total do banco, não o do navegador), cartão de crédito à vista', sent.length === 1 && sent[0].body.amount === 106.07 && sent[0].body.paymentMethod === 'creditcard' && sent[0].body.installments === 1 && sent[0].body.passFeesToCustomer === false, sent[0]?.body);
   const p = payRow(o.number);
   check('o externalId (idempotência) é o id da tentativa da loja; o CPF vai só com dígitos; telefone em E.164; token e dispositivo como o SDK gerou', sent[0].body.externalId === p.id && sent[0].body.customer.documentNumber === '52998224725' && /^\+55349\d{8}$/.test(sent[0].body.customer.phone) && sent[0].body.cardToken === tok.cardToken && sent[0].body.deviceId === tok.deviceId, sent[0].body);
-  check('o cartão é cobrado na conta PRINCIPAL: escopo charges/write, SEM X-Sub-Account e SEM split; metadata não é enviado (a rota do cartão não o grava)', sent[0].scope === 'charges/write' && sent[0].subAccount === null && !('split' in sent[0].body) && !('metadata' in sent[0].body), sent[0]);
-  check('...e nada de subconta no banco: o pagamento do cartão não aponta para conta do estabelecimento e não existe conta cadastrada', psql(`select coalesce(merchant_account_id::text, 'nenhuma') from payments where order_id = '${orderRow(o.number).id}'`) === 'nenhuma' && psql('select count(*) from merchant_accounts') === '0');
+  check('o cartão é cobrado na SUBCONTA do estabelecimento (X-Sub-Account) e SEM split; escopo charges/write; metadata não é enviado (a rota do cartão não o grava)', sent[0].scope === 'charges/write' && sent[0].subAccount === '4960589' && !('split' in sent[0].body) && !('metadata' in sent[0].body), sent[0]);
+  check('...e no banco o pagamento do cartão aponta para a subconta aprovada', psql(`select (p.merchant_account_id = m.id)::text from payments p cross join merchant_accounts m where p.order_id = '${orderRow(o.number).id}' and m.status = 'approved'`) === 'true');
   check('a requisição à operadora NÃO leva número de cartão nem CVV (só o token)', !JSON.stringify(sent[0].body).includes(PAN) && !('number' in sent[0].body) && !('cvv' in sent[0].body), sent[0].body);
   check('no banco: pagamento no cartão pago, taxa do cliente R$ 6,07 dentro dos R$ 106,07, tarifa da operadora R$ 6,07 e líquido R$ 100,00, sem comissão', p.method === 'card' && p.status === 'paid' && p.amount_cents === 10607 && p.customer_fee_cents === 607 && p.fee_cents === 607 && p.net_cents === 10000 && p.commission_state === 'not_applicable' && p.commission_cents === 0 && p.needs_attention === false && p.card_attempts === 1 && /^cha_/.test(p.provider_charge_id), p);
   check('o valor cobrado na operadora é igual ao total do pedido gravado', charge(p.provider_charge_id).amount === orderRow(o.number).total && orderRow(o.number).total === 106.07 && charge(p.provider_charge_id).status === 'PAID');
@@ -618,14 +621,11 @@ section('16. Cabeçalhos de segurança: só a tela do cartão (/pagar) tem as pe
 }
 
 // ------------------------------------------------------------------------------------------------
-section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix com split na subconta × cartão na conta principal sem split');
+section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix (subconta + split de 2%) × cartão (subconta, sem split, subtotal + taxa)');
 {
-  // Agora sim: liga a subconta do Pix (o cartão nunca dependeu dela) e o Pix online.
-  const link = await owner.post('/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
-  check('a subconta do estabelecimento é vinculada (o fluxo do Pix de sempre)', link.status === 201, link.data);
   const merchantBefore = psql("select status || '|' || provider_account_id from merchant_accounts");
   const on = await owner.patch('/api/admin/payments/pix_online', { enabled: true });
-  check('o Pix online liga (depende da subconta aprovada) e o cartão online continua ligado', on.status === 200 && (await new Client().get('/api/site')).data.payments.map((p) => p.code).includes('card_online'), on.data);
+  check('o Pix online liga (mesma subconta) e o cartão online continua ligado', on.status === 200 && (await new Client().get('/api/site')).data.payments.map((p) => p.code).includes('card_online'), on.data);
   await clearCalls();
   const baseCharges = fake.state.cardChargeCount;
 
@@ -640,15 +640,15 @@ section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix com split na subc
   const pixRow = payRow(pixOrder.number);
   check('no banco: pagamento "pix", comissão de R$ 0,50 calculada, sem taxa de cartão e ligado à subconta', pixRow.method === 'pix' && pixRow.commission_cents === 50 && pixRow.customer_fee_cents === 0 && pixRow.merchant_account_id !== null && pixRow.amount_cents === 2500, pixRow);
 
-  // --- Cartão: subtotal + taxa, conta principal, sem split ---
+  // --- Cartão: subtotal + taxa, mesma subconta, sem split ---
   await clearCalls();
   const cardOrder = await placeOrder([{ product_id: p25.id, quantity: 1 }], { expected_total: (2500 + feeOf(2500)) / 100 });
   const cardPay = await payCard(cardOrder);
   check('pedido de cartão: aprovado pelo fluxo do cartão', cardPay.status === 200 && cardPay.data.payment.method === 'card' && cardPay.data.payment.status === 'paid', cardPay.data);
   const cardSent = cardCalls();
-  check('cartão: UMA chamada a POST /v1/charges (e nenhuma ao Pix), amount = subtotal + taxa, conta principal, sem split', cardSent.length === 1 && callsTo('POST', '/v1/charges/pix').length === 0 && cardSent[0].body.amount === (2500 + feeOf(2500)) / 100 && cardSent[0].subAccount === null && !('split' in cardSent[0].body) && cardSent[0].body.paymentMethod === 'creditcard', cardSent[0]);
+  check('cartão: UMA chamada a POST /v1/charges (e nenhuma ao Pix), amount = subtotal + taxa, na SUBCONTA, SEM split', cardSent.length === 1 && callsTo('POST', '/v1/charges/pix').length === 0 && cardSent[0].body.amount === (2500 + feeOf(2500)) / 100 && cardSent[0].subAccount === '4960589' && !('split' in cardSent[0].body) && cardSent[0].body.paymentMethod === 'creditcard', cardSent[0]);
   const cardRow = payRow(cardOrder.number);
-  check('no banco: pagamento "card", sem comissão ("não se aplica"), taxa do cliente dentro do valor, sem subconta', cardRow.method === 'card' && cardRow.commission_state === 'not_applicable' && cardRow.commission_cents === 0 && cardRow.customer_fee_cents === feeOf(2500) && cardRow.merchant_account_id === null, cardRow);
+  check('no banco: pagamento "card", sem comissão ("não se aplica"), taxa do cliente dentro do valor, ligado à MESMA subconta do Pix', cardRow.method === 'card' && cardRow.commission_state === 'not_applicable' && cardRow.commission_cents === 0 && cardRow.customer_fee_cents === feeOf(2500) && cardRow.merchant_account_id === pixRow.merchant_account_id && cardRow.merchant_account_id !== null, cardRow);
 
   // --- Um nunca entra no fluxo do outro ---
   await clearCalls();
@@ -668,7 +668,7 @@ section('17. Os dois fluxos de ponta a ponta, lado a lado: Pix com split na subc
   const before = events();
   const whCard = await hook(paymentSuccessCard(charge(cardRow.provider_charge_id)), { id: 'wh-fluxos-cartao' });
   check('o aviso do CARTÃO é aceito, sem mexer no pedido de Pix (nenhuma transição repetida)', whCard.status === 200 && events() === before + 1 && history(pixOrder.number) === '->awaiting_payment | awaiting_payment>new' && history(cardOrder.number) === '->awaiting_payment | awaiting_payment>new', [history(pixOrder.number), history(cardOrder.number)]);
-  check('a subconta cadastrada não foi tocada pelo cartão', psql("select status || '|' || provider_account_id from merchant_accounts") === merchantBefore && Number(psql('select count(*) from merchant_accounts')) === 1);
+  check('a subconta cadastrada não foi alterada pelo cartão', psql("select status || '|' || provider_account_id from merchant_accounts") === merchantBefore && Number(psql('select count(*) from merchant_accounts')) === 1);
   const list = await owner.get('/api/admin/payments?limit=100');
   const rows = list.data.payments.filter((x) => [pixOrder.number, cardOrder.number].includes(x.order_number));
   check('o painel lista os dois, cada um com o seu método: Pix (com taxa/comissão) e cartão (com a taxa do cliente)', rows.length === 2 && rows.find((x) => x.order_number === pixOrder.number).method === 'pix' && rows.find((x) => x.order_number === cardOrder.number).method === 'card', rows.map((x) => [x.order_number, x.method]));

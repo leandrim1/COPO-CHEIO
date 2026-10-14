@@ -55,6 +55,8 @@ export type CreateCardInput = {
   cardToken: string;
   deviceId: string;
   customer: { name: string; email: string; document: string; phone: string };
+  // Subconta do estabelecimento em que o cartão é cobrado (a mesma do Pix; só o Pix leva divisão).
+  merchantAccountId: string;
   description: string;
 };
 

@@ -1,14 +1,14 @@
 # Cartão de crédito online com a taxa repassada ao cliente (Copo Cheio + ValidaPay)
 
 > **Regra de ouro: Pix e cartão são DOIS FLUXOS SEPARADOS.** O **Pix** continua exatamente como era: valor original do pedido, cobrança na subconta do estabelecimento e **split** de 2% para a conta master.
-> O **cartão** é uma cobrança à parte, na **conta principal** da ValidaPay, **sem split**, com o **subtotal + taxa de processamento** calculados no backend; ele **não depende da subconta**.
+> O **cartão** é uma cobrança à parte, na **subconta do estabelecimento** (a mesma do Pix), **sem split**, com o **subtotal + taxa de processamento** calculados no backend.
 > A forma de pagamento escolhida no pedido decide o fluxo no servidor, e o banco recusa que um pedido use o fluxo do outro (seção 3).
 >
 > **Estado: escrito e testado, mas NUNCA testado de verdade contra a ValidaPay (nem sandbox, nem produção).**
 > O que está provado: a **lógica da loja** (conta da taxa, banco, idempotência, confirmação, painel, telas) e o **adaptador** contra um **servidor ValidaPay FALSO**
 > (`tests/validapay-fake.mjs`) escrito a partir da documentação oficial lida pelo servidor MCP da ValidaPay. O que **não** está provado: que a ValidaPay de verdade responde
 > exatamente assim, que a taxa de **5,37% + R$ 0,37** é a do contrato, que o SDK de tokenização funciona sob a CSP desta loja e que a cobrança do cartão aceita o cabeçalho
-> `X-Sub-Account` (não se aplica mais ao cartão, que é cobrado na conta principal). Isso só se prova no **sandbox** (seção 7).
+> `X-Sub-Account`, e que o `VALIDAPAY_PUBLIC_ID` (Id Público da **subconta**) gera token válido para a cobrança na subconta. Isso só se prova no **sandbox** (seção 7).
 >
 > **Nada foi feito em produção**: nenhum deploy, nenhum dado real alterado, nenhuma subconta criada, nenhuma cobrança, nenhuma transferência, nenhuma credencial de
 > produção usada, nenhum segredo gravado em arquivo versionado. O cartão online nasce **desligado**.
@@ -69,17 +69,17 @@ O total gravado em `orders.total` = subtotal + entrega − desconto + taxa (rest
 | --- | --- | --- |
 | Valor cobrado | o **valor original** do pedido | **subtotal + taxa de processamento** (calculada no banco, em centavos) |
 | Rota da ValidaPay | `POST /v1/charges/pix` | `POST /v1/charges` (`paymentMethod: "creditcard"`) |
-| Conta | **subconta** do estabelecimento (cabeçalho `X-Sub-Account`) | conta **principal** (a das credenciais; sem `X-Sub-Account`) |
+| Conta | **subconta** do estabelecimento (cabeçalho `X-Sub-Account`) | **a mesma subconta** do estabelecimento (cabeçalho `X-Sub-Account`) |
 | Divisão (split) | **sim**: valor fixo de 2% para a master, como sempre | **não** (a documentação não traz split para o cartão) |
-| Depende da subconta aprovada | sim | **não** |
-| Registro no banco | `payments.method = 'pix'`, comissão calculada, subconta ligada | `payments.method = 'card'`, comissão "não se aplica", sem subconta, taxa do cliente separada |
-| Recebimento | o do Pix | **D+1** conforme a habilitação da conta principal na ValidaPay (**não** vem da API e **não** é configurado pela loja: confira no painel/contrato) |
+| Depende da subconta aprovada | sim | sim (sem ela o cartão não liga) |
+| Registro no banco | `payments.method = 'pix'`, comissão calculada, subconta ligada | `payments.method = 'card'`, comissão "não se aplica", subconta ligada, taxa do cliente separada |
+| Recebimento | o do Pix | **D+1** conforme a habilitação da **subconta** na ValidaPay (**não** vem da API e **não** é configurado pela loja: confira no painel/contrato) |
 
 Quem decide o fluxo é o **método de pagamento gravado no pedido** (`pix_online` ou `card_online`), nunca o navegador:
 
 - A rota do Pix (`POST /api/tracking/:código/payment`) só aceita pedido de **Pix online**; a do cartão (`.../payment/card`) só aceita pedido de **cartão online**. Trocar uma pela outra é
   recusado **no banco** (`payment_begin` e `payment_begin_card`), antes de qualquer chamada à ValidaPay, e nenhum pagamento nasce.
-- No adaptador, `createPixCharge` é o único que manda `X-Sub-Account` e `split`; `createCardCharge` **nunca** manda nenhum dos dois (e o servidor falso dos testes recusa um `split` no cartão).
+- No adaptador, `createPixCharge` é o único que manda `split`; `createCardCharge` manda a subconta (`X-Sub-Account`) mas **nunca** o `split` (e o servidor falso dos testes recusa um `split` no cartão).
 - Os **avisos (webhooks) e a consulta** continuam sendo os de sempre (mesmo endpoint, mesma assinatura); cada aviso só mexe na cobrança a que se refere.
 - Pedidos existentes, subcontas cadastradas e a configuração do Pix **não são tocados** (a migration só acrescenta).
 
@@ -87,7 +87,7 @@ Quem decide o fluxo é o **método de pagamento gravado no pedido** (`pix_online
 
 | Parte | Como |
 | --- | --- |
-| Cobrança | `POST /v1/charges` com `paymentMethod: "creditcard"`, `amount` em **reais** (o total do banco), `cardToken` e `deviceId` (gerados no navegador), `customer` (nome, e-mail, CPF/CNPJ, telefone E.164), `installments: 1`, `passFeesToCustomer: false`, `externalId` = id da tentativa. Só no servidor, na conta principal e sem split. Credenciais só em variáveis de ambiente. |
+| Cobrança | `POST /v1/charges` com `paymentMethod: "creditcard"`, `amount` em **reais** (o total do banco), `cardToken` e `deviceId` (gerados no navegador), `customer` (nome, e-mail, CPF/CNPJ, telefone E.164), `installments: 1`, `passFeesToCustomer: false`, `externalId` = id da tentativa. Só no servidor, na subconta do estabelecimento e sem split. Credenciais só em variáveis de ambiente. |
 | Idempotência | `externalId` = id da tentativa da loja. A ValidaPay recusa o mesmo `externalId` com `409 DUPLICATE_CHARGE` e devolve o `chargeId` original em `error.details.chargeId`: a loja **adota** essa cobrança e confere o resultado. Uma tentativa em andamento **nunca** é substituída por outra; refazê-la reaproveita o mesmo `externalId`. Dois cliques simultâneos: o banco trava o pedido (uma só passa, a outra recebe "em andamento"). |
 | Confirmação | **Só a consulta à ValidaPay** (`GET /v1/charges/{id}/status` e `/{id}`) libera o pedido, na mesma transação do banco, **conferindo que o valor pago é igual ao cobrado**. A resposta da criação sozinha não libera nada. Voltar à página de sucesso, recarregar ou o navegador dizer "pago" não muda nada. |
 | Webhook | `POST /api/payments/webhook`: assinatura HMAC (`X-Webhook-Signature`) conferida **antes** de gravar qualquer coisa; deduplicado por `X-Webhook-Id`; o aviso só diz "olhe a cobrança X": o estado vem da consulta à ValidaPay. Aviso repetido/atrasado/fora de ordem não duplica pedido nem repasse. |
@@ -120,15 +120,15 @@ Aplicada **só** pelo `vercel-build` em deploy de **produção** (como as anteri
 | `VALIDAPAY_ENV` | `sandbox` (testes) ou `production` | você escolhe |
 | `VALIDAPAY_CLIENT_ID`, `VALIDAPAY_CLIENT_SECRET` | OAuth da API | ValidaPay → **Integração → API** (de sandbox e de produção, são diferentes) |
 | `VALIDAPAY_WEBHOOK_SECRET` (e `VALIDAPAY_WEBHOOK_TOKEN`, opcional) | assinatura dos avisos | ValidaPay → **Integração → Webhooks** |
-| **`VALIDAPAY_PUBLIC_ID`** (novo) | o **Id Público** que o navegador usa para gerar o token do cartão; **não é segredo** | ValidaPay → **Gerenciamento → Minha Conta → Id Público** |
+| **`VALIDAPAY_PUBLIC_ID`** (novo) | o **Id Público** que o navegador usa para gerar o token do cartão; **não é segredo**. Como o token "só funciona na conta que o gerou", tem de ser o Id Público **da subconta do estabelecimento** (a conta em que o cartão é cobrado) | ValidaPay → **Gerenciamento → Minha Conta → Id Público**, no painel da subconta. **Não confirmado** se o painel da conta principal mostra o da subconta: confira no sandbox |
 
 Na Vercel: *Settings → Environment Variables* (sem prefixo `VITE_`). Sem `VALIDAPAY_PUBLIC_ID` o painel mostra o **nome** da variável como faltante e o cartão online não liga.
-O Id Público é o da conta **principal** (a mesma das credenciais): é nela que o cartão é cobrado. Não há variável para escolher outra conta: de propósito, o cartão nunca vai para a subconta.
+O Id Público é o da **subconta** do estabelecimento (a conta em que o cartão é cobrado). Se você trocar a subconta vinculada, troque também esta variável. Não há opção para cobrar o cartão na conta principal: é a subconta, como pedido.
 O webhook deve assinar também `payment.success` e `payment.failed` (já usados no Pix); o cartão usa os mesmos.
 
 ## 7. Teste no SANDBOX (obrigatório antes de qualquer cartão real)
 
-Pré-requisitos: a conta **principal** de sandbox da ValidaPay com o cartão habilitado (e o recebimento D+1, se for o caso, conforme o seu plano). O Pix e a subconta **não** são necessários para o cartão (o Pix continua como está; veja `PAGAMENTO-ONLINE.md`).
+Pré-requisitos: a **subconta** de sandbox do estabelecimento já vinculada e aprovada (veja `PAGAMENTO-ONLINE.md`), com o cartão habilitado (e o recebimento D+1, se for o caso, conforme o seu plano). O Pix não é necessário para o cartão.
 **Use só um deploy de teste (preview) com `VALIDAPAY_ENV=sandbox`**; a produção da ValidaPay nunca vale em preview.
 
 1. Defina `VALIDAPAY_PUBLIC_ID` (Id Público da conta **de sandbox**) e faça um deploy de teste. *Pagamentos → Cartão de crédito online* deve listar só "taxa do cartão conferida" como pendência.
@@ -137,7 +137,7 @@ Pré-requisitos: a conta **principal** de sandbox da ValidaPay com o cartão hab
    → logs da Vercel: se o antifraude ou o SDK forem bloqueados, anote o endereço bloqueado e ajuste o `vercel.json`); o pedido virou "novo"; no painel o pagamento mostra **valor cobrado = total**, tarifa e líquido.
    **Compare a tarifa da ValidaPay com a taxa cobrada do cliente** (devem ficar a no máximo R$ 0,01).
 4. Cartões de teste recusados do sandbox (documentação): `4000000000000002` (recusado), `…004` (saldo insuficiente), `…006` (cartão expirado), `…008` (CVV inválido), `…010` (suspeita de fraude). Cada um deve mostrar "O cartão não foi aprovado" e permitir tentar de novo.
-5. Confira o que a documentação **não** confirma (lista na seção 9): a conta principal tem o cartão habilitado e o `publicId` gera token para ela?; o detalhe da cobrança traz `fee`, `netAmount` e `paidAmount`?; o webhook `payment.success` chega
+5. Confira o que a documentação **não** confirma (lista na seção 9): a cobrança do cartão aceita `X-Sub-Account`? o `publicId` da **subconta** gera um token que a cobrança na subconta aceita (o token "só funciona na conta que o gerou")? a subconta tem o cartão habilitado?; o detalhe da cobrança traz `fee`, `netAmount` e `paidAmount`?; o webhook `payment.success` chega
    para o cartão e é aceito (200)?; `deviceId` chega como UUID.
 6. Teste uma queda: pague e, antes da resposta, recarregue a página → a tela deve mostrar "processando", sem formulário e sem nova cobrança.
 7. Anote tudo o que for diferente do documentado e ajuste `server/payments/validapay.ts` (mudança pequena e localizada) antes de seguir.
@@ -158,7 +158,7 @@ Pré-requisitos: a conta **principal** de sandbox da ValidaPay com o cartão hab
 | `passFeesToCustomer` | Segundo a documentação, só repassa a taxa do **parcelamento**. A loja envia `false`; a taxa do cartão é somada ao `amount`. |
 | Parcelamento | **Não implementado** (só à vista). Só deve ser feito depois de confirmar as tarifas por parcela. |
 | Divisão (split) no cartão | **Não existe na documentação** (só no Pix). O cartão online não tem a comissão de 2%. |
-| Conta do cartão | **Conta principal, sem `X-Sub-Account`** (decisão do dono: cartão separado do Pix). A loja **não confirmou** que a sua conta principal tem o cartão habilitado nem o prazo (D+1): confira com a ValidaPay. |
+| Conta do cartão | **Subconta do estabelecimento (`X-Sub-Account`), sem split** (decisão do dono). **Não confirmado** na documentação: se `POST /v1/charges` aceita `X-Sub-Account`; se o `publicId` da subconta gera token válido para ela; se a subconta tem o cartão habilitado e o prazo D+1. Se a ValidaPay recusar, é uma mudança pequena e localizada em `validapay.ts` (e a decisão volta ao dono). |
 | 3DS | **Desligado** (opcional na documentação; pede telefone e endereço). Sem 3DS, o risco de chargeback por fraude fica com a conta (aviso da própria documentação). |
 | `metadata` na cobrança do cartão | A ValidaPay **não grava** nesta rota; a ligação com o pedido é o `externalId`/`chargeId`. Se a resposta da criação se perder e o cliente **nunca** tentar de novo, o aviso `payment.success` não tem como achar o pedido: a tentativa fica sinalizada ("sem resposta", em 5 min) para o dono conferir na ValidaPay. |
 | Reembolso do cartão | A API tem `POST /v1/wallet/refunds`, mas o adaptador **nunca** pede o escopo `wallet/write`: estorno é manual, pelo painel da ValidaPay. A loja registra o que a ValidaPay informar. |
@@ -191,14 +191,14 @@ Os **12 cenários obrigatórios** e onde cada um é provado:
 
 ## 11. Resultados
 
-Última execução completa (build, tipos, unitários, 23 suítes de API e 13 arquivos de navegador, **depois** da separação Pix × cartão), tudo contra bancos de teste locais, o servidor ValidaPay **falso** e o SDK com as chamadas
+Última execução completa (build, tipos, unitários, 23 suítes de API e 13 arquivos de navegador, **depois** da separação Pix × cartão e da cobrança do cartão na subconta), tudo contra bancos de teste locais, o servidor ValidaPay **falso** e o SDK com as chamadas
 interceptadas; **nenhum serviço real** foi acionado:
 
 | Camada | Resultado |
 | --- | --- |
 | `npm run build` e `tsc -b` | sem erros |
 | Unitários (`npm run test:unit`) | **213 de 213** (inclui `cardfee` 9, `cardinput` 4 e os 9 novos do adaptador: cartão, renovação do token e a separação Pix × cartão) |
-| `api-test22` (cartão: os 12 cenários, segurança, cabeçalhos **e os dois fluxos lado a lado**, seção 17) | **185 verificações, 0 falhas** |
+| `api-test22` (cartão: os 12 cenários, segurança, cabeçalhos **e os dois fluxos lado a lado**, seção 17) | **186 verificações, 0 falhas** |
 | Demais suítes de API (`api-test` a `api-test21`) | todas **OK** (incluindo a migração de dados antigos de `api-test14`, 200 verificações, e o "pedir de novo" de combos de `api-test16`, 133) |
 | `e2e-card` (navegador, celular e computador; inclui, na seção 12, **Pix com split e cartão sem split de ponta a ponta no mesmo site**) | **157 verificações, 0 falhas**, sem erro de console nem violação de CSP |
 | Demais arquivos de navegador (`e2e`, `e2e-track`, `e2e-pix`, `e2e-account`…) | todos **OK** |
@@ -210,8 +210,7 @@ interceptadas; **nenhum serviço real** foi acionado:
 - O Pix (`payment_begin`) aceitava qualquer pedido "online", inclusive o de cartão: agora só pedido de Pix online gera Pix.
 - A restrição `orders_payment_fee_total` deixava zerar a taxa de um pedido de cartão mantendo o total: agora o total tem de ser exatamente a soma das partes.
 - O adaptador não renovava um token OAuth recusado com 401: agora pede outro e repete uma única vez.
-- O cartão nascia na subconta e exigia conta aprovada: contra a regra "cartão separado do Pix", agora é cobrado na conta **principal**, sem `X-Sub-Account`, sem split e **sem depender da subconta**
-  (testes: o cartão liga e cobra **sem nenhuma subconta cadastrada**; o Pix continua exigindo a subconta e mantendo o split de 2%, com `api-test14`, `api-test15`, `e2e-pix` e `e2e-account` passando sem alteração de comportamento).
+- Cartão e Pix passaram a ser fluxos separados: o cartão é cobrado na **subconta** do estabelecimento (`X-Sub-Account`) **sem split**, e o Pix mantém o split de 2% (`api-test14`, `api-test15`, `e2e-pix` e `e2e-account` passam sem alteração de comportamento).
 
 **O que estes números NÃO provam:** que a ValidaPay de verdade se comporta como o servidor falso, que 5,37% + R$ 0,37 é o contrato, que a CSP deixa o antifraude da ValidaPay funcionar, nem que a cobrança do cartão aceita `X-Sub-Account`.
 Tudo isso depende do teste no sandbox (seção 6) e de credenciais que este ambiente não tem.

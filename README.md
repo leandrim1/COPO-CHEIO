@@ -241,8 +241,8 @@ produto e envie a foto.
     repassada a ele** (total = (pedido + tarifa fixa) ÷ (1 − percentual), em centavos, calculado no **banco**; Pix e pagamento na entrega não têm taxa). O resumo
     mostra subtotal, entrega, **taxa do cartão** e total em tempo real, o cartão é trocado por um token **direto no navegador** (a loja nunca vê número nem CVV), a
     cobrança usa o total gravado no pedido e uma chave de idempotência, e só a **consulta à ValidaPay** libera o pedido. A taxa (valores de referência 5,37% + R$ 0,37)
-    é configurada pelo owner e **precisa ser conferida com o contrato da ValidaPay** antes de ligar. **Fluxo separado do Pix**: o cartão é cobrado na conta
-    **principal**, sem split e sem depender da subconta; o Pix segue com a subconta e o split de 2%, como sempre. Guia completo, procedimento de teste no sandbox, ativação em
+    é configurada pelo owner e **precisa ser conferida com o contrato da ValidaPay** antes de ligar. **Fluxo separado do Pix**: o cartão é cobrado na **subconta**
+    do estabelecimento, sem split; o Pix segue com a subconta e o split de 2%, como sempre. Guia completo, procedimento de teste no sandbox, ativação em
     produção e limitações: [`docs/CARTAO-ONLINE.md`](docs/CARTAO-ONLINE.md).
   - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
     autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
