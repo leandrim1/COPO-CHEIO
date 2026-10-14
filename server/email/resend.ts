@@ -26,7 +26,8 @@ async function post(message: OutgoingMessage): Promise<SendResult> {
   if (!key || !from) throw new MissingConfig(['RESEND_API_KEY', 'MAIL_FROM'].filter((name) => !(process.env[name] ?? '').trim()));
   let response: Response;
   try {
-    response = await fetch(process.env.RESEND_API_URL?.trim() || ENDPOINT, {
+    // RESEND_API_URL só vale fora da produção (testes e desenvolvimento): em produção a chave de API nunca vai para outro endereço.
+    response = await fetch(process.env.VERCEL_ENV === 'production' ? ENDPOINT : process.env.RESEND_API_URL?.trim() || ENDPOINT, {
       method: 'POST',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', 'idempotency-key': message.id },
       body: JSON.stringify({

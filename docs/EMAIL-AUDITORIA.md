@@ -1,5 +1,27 @@
 # Auditoria dos e-mails do COPO CHEIO (etapa 1 de 6 — somente leitura)
 
+> **Status (implementado depois desta auditoria).** O que está abaixo é a **foto de antes** (14/10/2026). O resultado da implementação, com as regras, as variáveis, o DNS, os testes e as
+> pendências, está em **[`EMAIL.md`](EMAIL.md)**. Decisões do dono que moldaram o plano: **manter só o SMTP atual** (o provedor Resend ficou pronto, **desligado**, para quando houver domínio),
+> **ainda não há domínio próprio**, e-mails de pedido também para **visitantes (com travas)** e **promoções completas** (consentimento, descadastro de um clique, campanhas pelo painel).
+>
+> | Achado | Situação |
+> | ------ | -------- |
+> | E-01 sem rastreamento | **Corrigido**: cada mensagem tem registro (tipo, destinatário, estado, tentativas, `Message-ID`), sem corpo/código/link |
+> | E-02 SMTP não emite eventos | **Limite do SMTP, explicitado**: o painel mostra "não informado" para entrega/devolução/spam; só o provedor opcional (Resend, ainda não testado contra o serviço real) avisa |
+> | E-03 sem domínio próprio autenticado | **Pendente (depende de você)**: guia de DNS e verificador no painel; DMARC começa em `p=none`; nenhum registro foi inventado |
+> | E-04 sem fila nem nova tentativa | **Corrigido**: fila com espera crescente (2 min → 12 h); avisos de segurança não se perdem mais |
+> | E-05 sem teto global de envio | **Corrigido**: teto diário (`EMAIL_DAILY_LIMIT`, padrão 450 no Gmail), promoções com parte própria; código de login nunca espera |
+> | E-06 sem e-mail de pedido/pagamento | **Corrigido**: 7 tipos, enfileirados pelo banco, sem duplicar |
+> | E-07 sem consentimento nem descadastro | **Corrigido**: caixa desmarcada, vale após confirmar o e-mail, descadastro de um clique (RFC 8058), preferências, texto da política atualizado |
+> | E-08 abuso contra terceiros | **Mitigado**: tetos por endereço (4/tipo, 12 no pedido, 2 promoções, 40 no total), supressão, domínio conferido, link "não quero e-mails de pedidos neste endereço" |
+> | E-09 sem correlação nos logs | **Corrigido**: o `Message-ID` é o id do registro (`<id@domínio>`); o log continua sem endereço, código ou link |
+> | E-10 cabeçalhos | **Corrigido**: transacional leva `Auto-Submitted`; promoção leva `List-Unsubscribe` + `List-Unsubscribe-Post`; `MAIL_REPLY_TO` opcional |
+> | E-11 assunto com código | **Preservado e protegido**: o registro guarda só o nome do tipo para e-mails com segredo |
+> | E-12 links no domínio da Vercel | **Pendente (depende de domínio)**: use `SITE_URL` com o domínio próprio quando houver |
+> | E-13 sem agendador | **Mitigado**: fila anda por atividade e por um cron **diário** (`CRON_SECRET`); limite do plano Hobby |
+> | E-14 segredos | **Mantido**: nenhum segredo versionado; chaves só no servidor; webhooks assinados |
+
+
 Data: 14/10/2026 · Escopo: tudo o que envia, valida, registra ou depende de e-mail no projeto. **Nada do sistema foi alterado nesta etapa**; este
 arquivo é o único acréscimo. O que não dá para ver daqui (valores das variáveis na Vercel, DNS do seu domínio, logs de produção) está marcado
 como **"não verificável"** e vira pergunta ou tarefa para você no fim.

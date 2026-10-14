@@ -374,6 +374,11 @@ qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta *
    | `SMTP_SECURE` | `true`/`false` (padrão: `true` na porta 465) | não |
    | `MAIL_FROM` | remetente, ex.: `Copo Cheio <copocheio@gmail.com>`; **obrigatória só** quando `SMTP_USER` não é um e-mail (Resend, SendGrid, SES…) | não |
    | `SITE_URL` | endereço do site nos links e na logo dos e-mails, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
+   | `CRON_SECRET` | texto aleatório longo; **liga o cron diário** que processa a fila de e-mails (`/api/cron/email`) | recomendada |
+   | `EMAIL_DAILY_LIMIT`, `EMAIL_PROMO_DAILY_LIMIT`, `MAIL_REPLY_TO` | teto diário de envio (padrão 450 no Gmail), parte dele para promoções e endereço de resposta | não |
+
+   (Provedor opcional com avisos de entrega: `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`. Tudo sobre envio, registro,
+   entregabilidade, DNS e promoções: [`docs/EMAIL.md`](docs/EMAIL.md).)
 
 3. Faça um novo deploy, abra *Painel → Clientes* e use **Enviar e-mail de teste** (owner). O painel e
    `GET /api/health` (`"mail":"ok"`) mostram se está configurado; se faltar algo, listam os **nomes** das variáveis.
@@ -431,7 +436,9 @@ cadastrado simplesmente não aparece) e uma versão em **texto simples** gerada 
 | `server/mailLayout.ts` | O layout: cabeçalho, rodapé, paleta, modo escuro, ajuste para celular e os blocos (texto, código, botão, link, aviso) em HTML e em texto |
 | `server/mailTemplates.ts` | Os e-mails de hoje: **confirmação de e-mail**, aviso **"você já tem uma conta"**, **redefinição de senha** e **"sua senha foi alterada"** (o de teste do painel é o de confirmação com um código de exemplo) |
 | `server/mailBrand.ts` | A marca na hora de enviar: nome, slogan, contatos e logo, vindos do banco (`loadBrand`) |
-| `server/mail.ts` | O envio (SMTP, `nodemailer`) |
+| `server/mail.ts` | O transporte SMTP (`nodemailer`): só fala com o servidor de e-mail e devolve o que ele respondeu |
+| `server/email/` | **O serviço central de e-mails**: `service.ts` (`deliver()`, fila, tentativas), `kinds.ts` (os tipos), `ledger.ts` (registro de cada mensagem), `templates.ts` (pedido, promoção, alerta), `render.ts`, `preferences.ts` (consentimento), `alerts.ts`, `dns.ts` (SPF/DKIM/DMARC), `svix.ts`/`webhooks.ts`/`resend.ts` (provedor opcional) |
+| `server/routes/emailadmin.ts`, `emailpublic.ts` | Painel **E-mails** (visão geral, mensagens, campanhas, supressões, DNS) e rotas públicas (preferências, descadastro de um clique, cron, avisos do provedor) |
 | `server/passwordReset.ts` | Recuperação de senha: pedir o link, enviar o e-mail, aviso de senha alterada |
 | `public/email/logo.png` | A logo oficial reduzida para e-mail |
 
@@ -456,8 +463,9 @@ corta acima de ~100 KB). As cores têm contraste WCAG AA nos dois modos.
    `renderEmail(brand, { to, subject, preheader, eyebrow, title, greeting, blocks: [...], reason })`. Os blocos disponíveis
    são `text`, `code`, `button`, `link` e `notice` (para um bloco novo, como o resumo de um pedido, acrescente o tipo em
    `mailLayout.ts`: HTML e texto).
-2. Na rota, carregue a marca com `await loadBrand(req)` e envie com `sendMail(mensagem)` (`mail.ts`), depois de aplicar as
-   regras de quem pode receber (limites, confirmação do endereço).
+2. Registre o tipo em `server/email/kinds.ts` (transacional ou promocional, se leva segredo, tetos) e envie com `deliver()`
+   (`server/email/service.ts`): ele confere as regras (endereço suprimido, consentimento, tetos), registra a mensagem, envia e trata a falha.
+   Detalhes em [`docs/EMAIL.md`](docs/EMAIL.md#14-como-criar-um-tipo-de-e-mail-novo).
 
 Cabeçalho, logo, cores, rodapé, modo escuro e versão em texto vêm do layout; o e-mail novo só diz o que tem a dizer.
 
@@ -467,6 +475,19 @@ exemplo `123456`, que não ativa conta nenhuma. Abra no celular e no computador,
 *⋮ → Mostrar original* para conferir que SPF, DKIM e DMARC estão em **PASS**. O e-mail de confirmação real é o do cadastro em
 `/conta`. Limites: a "foto" do remetente na lista do Gmail (a silhueta cinza) não vem do e-mail — só aparece a logo ali com
 BIMI, que exige um domínio próprio; e o Outlook para Windows mostra cantos retos nos cartões (o botão continua arredondado).
+
+### Entregabilidade, registro e promoções (resumo)
+
+Manual completo, com tabelas, alertas, DNS (SPF, DKIM, DMARC), procedimento para conferir no Gmail/Outlook e limites: **[`docs/EMAIL.md`](docs/EMAIL.md)**.
+
+- **Um só caminho de saída** (`deliver()`): classifica o e-mail (transacional × promocional), confere supressão, consentimento e tetos, **registra** a mensagem (sem corpo,
+  código nem link) e envia. Falha temporária → fila com espera crescente; código de login e link de senha **nunca** vão para a fila nem para o registro.
+- **E-mails de pedido e pagamento** (recebido, confirmado, saiu para entrega, entregue, cancelado, pagamento confirmado, reembolso), enfileirados pelo banco, sem duplicar,
+  também para visitantes (com travas: domínio, tetos por endereço e link “não quero e-mails de pedidos neste endereço”).
+- **Promoções**: só com consentimento (caixa desmarcada por padrão; vale depois de confirmar o e-mail), com descadastro de um clique (RFC 8058) e campanhas pelo painel.
+- **Painel *E-mails***: números honestos (o SMTP só informa “aceito”; entrega, devolução e spam aparecem como “não informado” a menos que o provedor opcional avise), histórico por
+  mensagem, fila, alertas, lista de supressão e verificador de SPF/DKIM/DMARC.
+- **Registros** ficam 180 dias; excluir a conta ou anonimizar uma pessoa remove o endereço deles.
 
 ### No painel
 
@@ -486,6 +507,7 @@ cliente na próxima consulta.
   dias, códigos de recuperação já usados (90 dias), registro de atividades com mais de 2 anos e pedidos de privacidade já
   respondidos há 2 anos são apagados sozinhos (função `purge_expired_data`, chamada de vez em quando por logins e pedidos). A
   tabela completa está em [`docs/OPERACAO.md`](docs/OPERACAO.md).
+- O **registro dos e-mails enviados** (destinatário, tipo, data e resultado; sem corpo, código nem link) fica **180 dias**; excluir a conta ou anonimizar uma pessoa tira o endereço dele, das preferências e da lista de supressão.
 - **Os pedidos em si não são apagados automaticamente**: a loja precisa deles como histórico e para obrigações fiscais.
   Prazo de guarda e eventual anonimização de pedidos antigos dependem da sua contabilidade; a anonimização a pedido do titular
   é feita pelo owner (veja [Privacidade (LGPD)](#privacidade-lgpd)).
@@ -505,7 +527,11 @@ Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-ve
 `POST /api/account/orders/claim`
 Painel, sessão: `POST /api/auth/login` · `POST /api/auth/login/2fa` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password` ·
 verificação em duas etapas: `GET /api/auth/2fa` · `POST /api/auth/2fa/setup|enable|disable|recovery-codes`
-Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner), `products`
+Preferências de e-mail (sem login, pelo link do e-mail): `GET|PATCH /api/email/preferences/:chave` · descadastro de um clique (RFC 8058): `POST /api/email/unsubscribe/:chave` ·
+logado: `GET|PATCH /api/account/email-preferences` · cron diário: `GET /api/cron/email` (só com `Authorization: Bearer $CRON_SECRET`) · avisos do provedor opcional:
+`POST /api/email/webhook/resend` (assinatura Svix; sem `RESEND_WEBHOOK_SECRET` nem existe)
+Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner),
+`emails/overview|messages[/:id]|suppressions|campaigns[/:id]|dns` (consulta; o owner age: reenviar/cancelar mensagem, `POST emails/process`, supressões, criar/testar/enviar/cancelar campanha), `products`
 (+ `POST products/import`, que devolve o relatório linha a linha), `categories`, `banners`, `settings`, `store` (`PATCH` aceita `expected_updated_at`: se outra pessoa salvou antes, responde `409` em vez de sobrescrever),
 `site`, `hero`, `payments` (formas de pagamento), `zones`, `upload`, `health` (estado do sistema, com o nome das variáveis que faltam), `privacy`
 Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
@@ -614,6 +640,7 @@ cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na
 `store_settings`, `delivery_zones`, `site_settings`, `hero_settings`, `banners`, **`order_tracking_tokens`**
 (hash dos códigos), **`customers`** (com `status` e `email_verified_at`), **`customer_sessions`**,
 **`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso),
+**`email_messages`**, **`email_events`**, **`email_suppressions`**, **`email_preferences`**, **`email_campaigns`**, **`email_alerts`** e **`email_webhook_state`** (o registro e a fila de e-mails: sem corpo, código nem link),
 **`audit_log`** (registro de atividades do painel), **`admin_recovery_codes`**, **`admin_login_challenges`** e **`admin_devices`**
 (verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares), **`merchant_accounts`** (conta da
 loja na operadora de pagamento), **`payments`** (cobranças online, em centavos) e **`payment_events`** (avisos da operadora)
@@ -649,6 +676,9 @@ A migration `0013_ice_choice.sql` acrescenta `categories.ice_choice_required` e 
 grava a escolha do gelo) e `order_json` (a escolha chega ao cliente) e marca as categorias "Copão" e "Copão com Monster". É a única
 migration que **escreve um dado** (um `UPDATE` que liga a marca nessas duas categorias, achadas pelo nome só nesse momento); nenhum
 pedido, produto, preço ou estoque é alterado.
+A migration `0019_email_deliverability.sql` acrescenta as tabelas do registro de e-mails (acima), as funções atômicas (`email_apply_event`, `email_claim_due`, `email_forget`), os **gatilhos** que enfileiram o
+e-mail de cada etapa do pedido e de cada pagamento (erro do gatilho nunca derruba o pedido) e troca `anonymize_person` e `purge_expired_data` por versões iguais para tudo o que já existe, mais a limpeza dos registros de
+e-mail (180 dias). Só acrescenta; não escreve nenhum dado nem envia nenhum e-mail para pedidos que já existem.
 A migration `0017_energetic_swap.sql` acrescenta `products.swap_base_product_id` (o energético que vem no combo; preenchida uma vez pelo nome),
 `order_items.swap_to_product_id` e funções de apoio (`norm_text`, `is_energetic_2l`...), e troca `create_order` (entende `swap_to` em cada item),
 `restore_order_stock` (devolve também o energético da troca) e `order_json` por versões iguais para tudo o que já existe: pedido sem troca se comporta
@@ -666,7 +696,7 @@ A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
 operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
 [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
-As migrations 0009 a 0018 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0019 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
@@ -694,7 +724,9 @@ dashboard) são funções do banco chamadas só pelo servidor.
 - Acessibilidade: o Hero (aprovado, não alterado) ainda tem apontamentos de leitor de tela (nome do link que não repete o texto
   visível e regiões sem rótulo); o texto bem pequeno e os alvos de toque de alguns botões no celular não foram mexidos para não
   mudar o visual do celular.
-- Alertas automáticos (queda do site, pico de erros) e envio de logs para fora da Vercel não existem: veja [`docs/OPERACAO.md`](docs/OPERACAO.md).
+- Alertas automáticos (queda do site, pico de erros) e envio de logs para fora da Vercel não existem: veja [`docs/OPERACAO.md`](docs/OPERACAO.md). (Os **e-mails** têm alertas próprios no painel *E-mails*.)
+- **E-mails**: sem domínio próprio não há SPF/DKIM/DMARC da loja; o SMTP comum **não informa** entrega, devolução nem spam; abertura e clique não são medidos; ninguém sabe em que pasta o e-mail caiu; a fila
+  não tem agendador (anda por atividade e pelo cron **diário**); e o provedor opcional (Resend) foi testado só contra um simulador. Tudo em [`docs/EMAIL.md`](docs/EMAIL.md#13-limites-conhecidos-e-pendências).
 
 ## Testes e CI
 
@@ -705,7 +737,7 @@ npm run test:e2e         # navegador (Chromium); precisa de `npm run build` ante
 ```
 
 Os testes rodam num **PostgreSQL de teste**, com Blob falso, e-mail de mentira e DNS simulado: não tocam no Neon, no Blob nem no e-mail
-de verdade. Como preparar o ambiente, o que cada arquivo cobre e o que os testes **não** provam estão em
+de verdade (nem o provedor de e-mail opcional: ele é um simulador). Como preparar o ambiente, o que cada arquivo cobre e o que os testes **não** provam estão em
 [`tests/README.md`](tests/README.md). O GitHub Actions (`.github/workflows/ci.yml`) roda tudo isso a cada envio para o GitHub.
 
 ## Operação
@@ -727,7 +759,8 @@ server/totp.ts         verificação em duas etapas (TOTP, códigos de recupera�
 server/audit.ts        registro de atividades do painel · clientIp.ts: IP de quem acessa · images.ts: conferência das imagens enviadas
 server/verification.ts confirmação do e-mail: códigos, links, reenvio e limites
 server/passwordReset.ts recuperação de senha por e-mail: link, envio, limites e aviso de senha alterada
-server/mail*.ts        envio SMTP, layout e textos dos e-mails (mailLayout, mailTemplates, mailBrand), domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
+server/mail*.ts        transporte SMTP, layout e textos dos e-mails (mailLayout, mailTemplates, mailBrand), domínio do e-mail (DNS/MX), lista de descartáveis (disposableDomains.ts, gerada)
+server/email/          serviço central de e-mails: deliver(), fila, registro, tipos, preferências, alertas, DNS, provedor opcional (veja docs/EMAIL.md)
 server/emailAddress.ts formato, normalização e máscara do e-mail
 db/migrations/         tabelas, funções e conteúdo inicial do Neon
 scripts/               migrate.mjs (migrations) · create-admin.mjs (administrador; `--reset-2fa`) · update-disposable-domains.mjs (lista de e-mails descartáveis)
@@ -738,9 +771,10 @@ src/site/Account.tsx   conta do cliente: login, Meus pedidos, recuperar senha
 src/ErrorBoundary.tsx  tela de erro do site (em vez de tela branca) · src/lib/report.ts: envia o erro para os logs
 public/email/logo.png  logo oficial reduzida para os e-mails (servida em /email/logo.png)
 src/lib/               cliente da API, tipos, formatação, horários, rotas
-src/admin/             painel (carregado só em /admin)
+src/admin/             painel (carregado só em /admin) · src/admin/emails/: abas do painel E-mails · src/site/EmailPreferences.tsx: preferências de e-mail do cliente
 tests/                 testes unitários, de API e de navegador, com o servidor de teste (veja tests/README.md)
 docs/OPERACAO.md       variáveis, deploy, monitoramento, backup, o que fazer quando algo quebra, prazos dos dados
+docs/EMAIL.md          e-mails: envio, registro, entregabilidade, DNS, promoções, alertas, testes e pendências (EMAIL-AUDITORIA.md: a auditoria que originou)
 docs/PAGAMENTO-ONLINE.md  Pix online: o que existe, o que falta (ValidaPay), regras, contrato do adaptador, como ligar
 .github/workflows/     ci.yml: tipos, build e testes a cada envio ao GitHub
 ```

@@ -43,7 +43,7 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   check('antes: o combo é pedido normalmente', oldOrder.order_number >= 1001 && oldOrder.total === 180, oldOrder);
 
   const out = migrate();
-  check('migrate.mjs aplica só a 0017 e a 0018, nessa ordem', /aplicada: 0017_energetic_swap[\s\S]*aplicada: 0018_swap_options/.test(out) && !/aplicada: 00(0|1[0-6])/.test(out), out);
+  check('migrate.mjs aplica a 0017 e a 0018 (e as seguintes), nessa ordem', /aplicada: 0017_energetic_swap[\s\S]*aplicada: 0018_swap_options/.test(out) && !/aplicada: 00(0|1[0-6])/.test(out), out);
   check('0018: nenhum combo ganha valor digitado nem lista (todos continuam aceitando qualquer energético de 2L)', q('select count(*) from products where swap_base_price is not null') === '0' && q('select count(*) from product_swap_options') === '0');
   const base = (id) => q(`select coalesce(swap_base_product_id::text, 'nenhum') from products where id = ${lit(id)}`);
   check('combo que cita "Energético Jack Power 2L" ganha o Jack Power 2L', base(busca) === jack, base(busca));
@@ -85,11 +85,16 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   const before = buy(true);
   check('antes da 0018 (banco de hoje): a troca já cobra a diferença pelo produto escolhido (90 + 2 = 92)', before.total === 92, before);
   const out = execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
-  check('migrate.mjs aplica só a 0018', /aplicada: 0018_swap_options/.test(out) && !/aplicada: 00(0|1[0-7])/.test(out), out);
+  check('migrate.mjs aplica a 0018 e as seguintes (0019), nenhuma das antigas', /aplicada: 0018_swap_options/.test(out) && /aplicada: 0019_email_deliverability/.test(out) && !/aplicada: 00(0|1[0-7])/.test(out), out);
+  // A 0019 (e-mails) sobre um banco de produção que já tem pedidos: não enfileira nada para eles e os gatilhos ficam instalados.
+  check('a 0019 não cria e-mail nenhum para os pedidos que já existiam (sem retroativo)', q('select count(*) from email_messages') === '0' && q("select count(*) from pg_trigger where tgname in ('order_status_history_email', 'orders_payment_email')") === '2');
   check('o pedido que já existia, o combo e o energético escolhido para ele continuam como estavam', q(`select count(*) from order_items where swap_to_product_id = ${lit(tropical)} and unit_price = 92`) === '1' && q(`select swap_base_product_id from products where id = ${lit(combo)}`) === jack);
   const after = buy(true);
   check('depois da 0018: o mesmo pedido de troca dá o mesmo preço (combo sem lista nem valor digitado = como antes)', after.total === 92 && after.items[0].unit_price === 92, after);
   check('...e o pedido sem troca também (90)', buy(false).total === 90);
+  check('pedido SEM e-mail (nem conta) não gera e-mail: a fila continua vazia', q('select count(*) from email_messages') === '0');
+  const withMail = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente 17', customer_phone: '34990009999', customer_email: 'Cliente17@Exemplo.com', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1 }] }))}::jsonb)`));
+  check('pedido COM e-mail: um único e-mail "pedido recebido" enfileirado, para o endereço normalizado, ligado ao pedido, só com o id na receita', q(`select count(*) || ':' || min(kind) || ':' || min(recipient_email) || ':' || min(status) from email_messages where order_id = (select id from orders where order_number = ${withMail.order_number})`) === '1:order_received:cliente17@exemplo.com:queued' && q(`select jsonb_object_keys(spec) from email_messages limit 1`) === 'order_id');
   execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
 }
 

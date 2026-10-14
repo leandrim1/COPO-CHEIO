@@ -213,6 +213,10 @@ export function registerEmailAdmin(r: Router) {
   // Regras de conteúdo (sem enganar filtros nem pessoas): assunto sem "Re:"/"Fwd:" falso e sem gritaria, botão só com https e sem encurtador.
   const SHORTENERS = /(^|\.)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|cutt\.ly|rebrand\.ly|tiny\.cc|buff\.ly|shorturl\.at)$/i;
   function checkCampaign(values: Row) {
+    // Campos de uma linha só (o assunto vira cabeçalho do e-mail: quebra de linha nele é tentativa de injeção de cabeçalho).
+    for (const [key, label] of [['name', 'Nome'], ['subject', 'Assunto'], ['preheader', 'Resumo'], ['title', 'Título'], ['cta_label', 'Texto do botão'], ['cta_url', 'Endereço do botão']] as const) {
+      if (typeof values[key] === 'string' && /[\r\n\u2028\u2029]/.test(values[key] as string)) throw new HttpError(400, `${label}: use uma linha só.`);
+    }
     const subject = String(values.subject ?? '');
     if (/^\s*(re|res|fw|fwd|enc)\s*:/i.test(subject)) throw new HttpError(400, 'Assunto: não use "Re:" nem "Fwd:" (parece uma resposta que nunca existiu).');
     const letters = subject.replace(/[^\p{L}]/gu, '');

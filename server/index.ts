@@ -156,6 +156,9 @@ function failure(error: unknown, admin: Admin | null, requestId: string): Respon
 
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
+// As rotas que mudam pedido ou pagamento (e, por isso, podem ter enfileirado um e-mail pelos gatilhos do banco).
+const ENQUEUES_EMAIL = /^\/api\/(orders|payments\/|admin\/(orders|payments)(\/|$)|tracking\/[^/]+\/payment|account\/orders\/\d+\/payment)/;
+
 // Defesa extra contra CSRF (além do cookie SameSite=Lax): escritas só da própria origem.
 function foreignOrigin(req: Request, url: URL): boolean {
   const origin = req.headers.get('origin');
@@ -193,9 +196,9 @@ export async function handle(req: Request): Promise<Response> {
       if (access === 'owner' && ctx.admin.role !== 'owner') throw new HttpError(403, 'Só o owner pode fazer isso.');
     }
     const response = await route.handler(ctx);
-    // Qualquer mudança que deu certo (pedido, etapa, pagamento) pode ter enfileirado um e-mail: os gatilhos do banco enfileiram sozinhos,
-    // então não é preciso que cada rota se lembre de avisar. Aqui só se manda enviar, sem esperar. (Painel de e-mails e cron cuidam da fila.)
-    if (!SAFE_METHODS.has(req.method) && response.status < 400 && !/^\/api\/(admin\/emails|cron)(\/|$)/.test(path)) kickQueue(req);
+    // Mudança que deu certo em pedido, etapa ou pagamento pode ter enfileirado um e-mail: os gatilhos do banco enfileiram sozinhos, então
+    // cada rota não precisa se lembrar de avisar. Aqui só se manda enviar, sem esperar. (O painel de e-mails e o cron cuidam da fila.)
+    if (!SAFE_METHODS.has(req.method) && response.status < 400 && ENQUEUES_EMAIL.test(path)) kickQueue(req);
     response.headers.set('x-request-id', requestId);
     return response;
   } catch (error) {

@@ -54,7 +54,7 @@ section('1. Banco de produção antes da mudança: a migration 0014 só acrescen
   const dashBefore = JSON.parse(q('select admin_dashboard(7)'));
 
   const out = migrate();
-  check('migrate.mjs aplica só as novas (0014 a 0016), nenhuma das antigas', /aplicada: 0014_online_payments/.test(out) && /aplicada: 0016_commission_2_percent/.test(out) && !/aplicada: 00(0|1[0-3])/.test(out), out);
+  check('migrate.mjs aplica as novas (0014 em diante), nenhuma das antigas', /aplicada: 0014_online_payments/.test(out) && /aplicada: 0016_commission_2_percent/.test(out) && !/aplicada: 00(0|1[0-3])/.test(out), out);
   check('os pedidos que já existiam continuam iguais (status, pagamento, total)', q(`select string_agg(order_number || ':' || order_status || ':' || payment_status || ':' || payment_method || ':' || total, ',' order by order_number) from orders`) === `${before.order_number}:new:pending:pix:20.00,${beforeCash.order_number}:new:pending:cash:20.00`);
   check('o estoque reservado antes da mudança continua o mesmo', q(`select stock from products where id = ${lit(prod)}`) === '8');
   check('nasce o meio "pix_online", DESLIGADO', q(`select enabled::text from payment_methods where code = 'pix_online'`) === 'false');
@@ -119,7 +119,7 @@ section('1b. Migration 0016 (comissão de 5% → 2%): só vale para cobranças n
   const old = begin(1);
   check('uma cobrança criada nessa época guarda 5%: R$ 25,00 → comissão 125 (500 pontos-base)', old.commission_bps === 500 && old.commission_cents === 125 && old.amount_cents === 2500, old);
   const out = migrate();
-  check('migrate.mjs aplica só a 0016', /aplicada: 0016_commission_2_percent/.test(out) && !/aplicada: 00(0|1[0-5])/.test(out), out);
+  check('migrate.mjs aplica a 0016 e as seguintes, nenhuma das antigas', /aplicada: 0016_commission_2_percent/.test(out) && !/aplicada: 00(0|1[0-5])/.test(out), out);
   check('a taxa vigente passa a ser 2% (200 pontos-base)', q('select payment_commission_bps()') === '200');
   const kept = JSON.parse(q(`select to_jsonb(p) from payments p where id = ${lit(old.id)}::uuid`));
   check('a cobrança de antes NÃO é reescrita: segue com 500 pontos-base e comissão 125', kept.commission_bps === 500 && kept.commission_cents === 125 && kept.status === old.status, kept);

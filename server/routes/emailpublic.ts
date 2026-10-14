@@ -44,6 +44,10 @@ function optionalBoolean(body: Record<string, unknown>, key: string): boolean | 
   return body[key] as boolean;
 }
 
+// Aviso com assinatura inválida vem de quem não é o provedor (qualquer um pode mandar): para não virar escrita no banco a cada tentativa,
+// o contador de "recusados" por assinatura só é atualizado uma vez por minuto por instância (os demais problemas vêm de quem assina certo).
+let lastBadSignature = 0;
+
 export function registerEmailPublic(r: Router) {
   // O cron diário da Vercel chama isto com "Authorization: Bearer <CRON_SECRET>". Sem CRON_SECRET configurado a rota recusa tudo.
   r.get('/api/cron/email', 'public', async (ctx) => {
@@ -65,7 +69,10 @@ export function registerEmailPublic(r: Router) {
     const h = ctx.req.headers;
     const svixId = h.get('svix-id');
     if (!verifySvix(secret, { id: svixId, timestamp: h.get('svix-timestamp'), signature: h.get('svix-signature') }, raw)) {
-      await recordWebhook('resend', false, 'assinatura inválida ou vencida').catch(() => undefined);
+      if (Date.now() - lastBadSignature > 60_000) {
+        lastBadSignature = Date.now();
+        await recordWebhook('resend', false, 'assinatura inválida ou vencida').catch(() => undefined);
+      }
       throw new HttpError(401, 'Assinatura inválida.');
     }
     let payload: unknown;

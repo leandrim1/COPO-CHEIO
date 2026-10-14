@@ -140,6 +140,8 @@ let C1;
     ['texto do botão sem endereço', { cta_url: null }],
     ['endereço do botão sem texto', { cta_label: null }],
     ['sem título', { title: '' }],
+    ['assunto com quebra de linha (injeção de cabeçalho)', { subject: 'Oi\r\nBcc: alguem@exemplo.com' }],
+    ['título com quebra de linha', { title: 'Linha 1\nLinha 2' }],
   ];
   for (const [label, patch] of bad) check(`recusa: ${label}`, (await owner.post('/api/admin/emails/campaigns', { ...good, ...patch })).status === 400);
   const created = await owner.post('/api/admin/emails/campaigns', good);

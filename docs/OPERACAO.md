@@ -19,6 +19,9 @@ nunca vão para o Git (`.env*` está no `.gitignore`; só o `.env.example` é ve
 | `BLOB_READ_WRITE_TOKEN` (ou `<PREFIXO>_READ_WRITE_TOKEN`) **ou** `BLOB_STORE_ID` | Vercel Blob (`copocheio-uploads`): fotos de produto, banners, logo. O Blob precisa ser **público** | Não dá para enviar imagens (o painel mostra o aviso). Pedidos e o resto do site seguem normais |
 | `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` | Envio de e-mail (confirmação de conta, "esqueci a senha", aviso de novo acesso ao painel) | **Ninguém cria conta de cliente** (`503 mail_not_configured`); recuperar senha por e-mail e o aviso de aparelho novo ficam desligados. Pedir e acompanhar pedido sem conta continua |
 | `SMTP_PORT`, `SMTP_SECURE`, `MAIL_FROM` | Opcionais. `MAIL_FROM` só é obrigatória se `SMTP_USER` não for um e-mail | Usa 465 / `true` / o próprio `SMTP_USER` |
+| `CRON_SECRET` | Texto aleatório longo (≥ 16 caracteres). **Liga o cron diário** (`vercel.json` → `/api/cron/email`): a Vercel o envia como `Authorization: Bearer …` e a rota recusa tudo sem ele. O cron processa a fila de e-mails e faz a limpeza dos dados vencidos | Sem ele, o cron responde `401` (aparece como falha nas execuções do cron na Vercel; o resto funciona). A fila continua andando por atividade (pedidos, painel aberto) |
+| `EMAIL_DAILY_LIMIT`, `EMAIL_PROMO_DAILY_LIMIT`, `MAIL_REPLY_TO` | Opcionais: teto de e-mails aceitos em 24 h (`0` = sem teto; padrão **450** com Gmail, sem teto nos outros), parte do teto que as promoções podem usar (padrão 40%, ou 300 sem teto) e endereço de resposta | Valem os padrões |
+| `EMAIL_PROVIDER`, `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET` | **Provedor opcional** com avisos de entrega (Resend): `EMAIL_PROVIDER=resend` troca o SMTP pela API; exige domínio próprio verificado na Resend. Sem `RESEND_WEBHOOK_SECRET` a rota de avisos não existe (404). Veja [`EMAIL.md`](EMAIL.md#9-provedor-opcional-resend-api--avisos-assinados) | Fica no SMTP (padrão) |
 | `SITE_URL` | Endereço público do site (ex.: `https://www.seudominio.com.br`) usado **nos links dos e-mails**, na logo dos e-mails e no endereço canônico das páginas | Na Vercel: em produção, o domínio de produção do projeto (`VERCEL_PROJECT_PRODUCTION_URL`); em preview, o endereço do deploy. Fora da Vercel só vale `localhost`; qualquer outro endereço sem `SITE_URL` impede montar o e-mail (`503`) e o painel mostra "Endereço do site: Não configurado" |
 | `MIGRATE_ON_PREVIEW` | `1` = deploys de teste (preview) também aplicam migrations. **Só** se o ambiente *Preview* usar um banco **separado** | Previews apenas listam as migrations pendentes e **não** mexem no banco |
 | `SHELL_HTML_FILE` | Avançado: caminho do `index.html` usado na página para robôs (WhatsApp, Facebook, Google). Os testes usam | Usa `dist/index.html`, que a Vercel inclui na função (`vercel.json` → `includeFiles`) |
@@ -97,6 +100,17 @@ ressalvas que você precisa conhecer:
 
 **A migration 0018 (valor do energético do combo e lista de energéticos da troca).** Só acrescenta uma coluna (`products.swap_base_price`) e uma tabela (`product_swap_options`) e troca `create_order` por uma versão igual para tudo o que já existe (pedido sem troca e combo com troca "pelo produto" dão o mesmo preço de antes). **Não preenche nada.** Depois do deploy, **abra cada combo no painel (Produtos → editar → "Troca do energético")**: escolha o energético que vem nele (ou deixe "Nenhum" e digite o valor dele, se não é vendido avulso) e marque os energéticos que o cliente pode escolher na troca (sem nenhum marcado, vale qualquer energético de 2L). Combo sem produto e sem valor não oferece a troca.
 
+**A migration 0019 (registro de e-mails, fila, promoções e e-mails de pedido).** Segue as regras acima: só acrescenta tabelas (`email_*`), funções e **dois gatilhos** (um em `order_status_history` e um em
+`orders.payment_status`) e troca `anonymize_person` e `purge_expired_data` por versões iguais para tudo o que já existia (mais a limpeza dos registros de e-mail). **Não escreve nenhum dado**, não toca em pedido, cliente
+ou produto existentes e **não envia nenhum e-mail** ao ser aplicada. Depois do deploy, **cada pedido novo (e cada mudança de etapa ou de pagamento) passa a gerar o e-mail ao cliente**, quando há e-mail no pedido ou na conta.
+Os gatilhos engolem qualquer erro: se a tabela de e-mails falhar, o **pedido entra do mesmo jeito**. Cuidados:
+
+1. **Rollback do código** para antes desta versão: o banco continua enfileirando e-mails de pedido, mas ninguém os envia (ficam "na fila"; a limpeza cancela os que passam de 7 dias). Nada quebra e nenhum pedido é afetado.
+   Quem voltar ao código novo depois recebe só o que ainda faz sentido (mensagem de etapa que o pedido já passou é cancelada, não enviada).
+2. Antes de publicar, **cadastre `CRON_SECRET`** (item 1) para o cron diário rodar, e confira `MAIL_FROM`/`SITE_URL`. Sem e-mail configurado, nada de pedido é enviado (as mensagens ficam na fila e saem quando o envio voltar).
+3. Tudo o que muda para o cliente: e-mail de **pedido recebido/confirmado/saiu para entrega/entregue/cancelado** e **pagamento confirmado/reembolso**; a caixa **opcional** de promoções (desmarcada) no cadastro; a página
+   `/conta/emails/…` e o painel de preferências em *Minha conta*. Promoções só saem quando o owner criar e enviar uma campanha.
+
 **As migrations 0014, 0015 e 0016 (pagamento online).** A 0016 só troca a função que informa a taxa da comissão (de 5% para 2%); cobranças já criadas guardam a taxa com que nasceram. A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
 conta ativo por operadora) e dois desfechos permitidos em `payment_events`. A 0014 segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
 e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
@@ -127,6 +141,7 @@ sempre compatíveis com a versão anterior. Nunca "desfaça" uma migration à m�
 | Logs do servidor | *Vercel → Logs*. Os erros saem em **uma linha JSON** (`level`, `msg`, `request_id`, `code`, `error`). Toda resposta da API tem o cabeçalho `x-request-id`; um erro `500` mostra o mesmo `request_id` no corpo: **peça esse número a quem relatou o problema** e busque por ele nos logs |
 | Erros no navegador das pessoas | O site envia tela branca/falha inesperada para `/api/client-error`; no log aparece `msg: "erro-no-navegador"` (tipo, mensagem, página, pilha e navegador, sem dados pessoais) |
 | Bloqueios da política de segurança (CSP) | `/api/csp-report` registra `msg: "csp-bloqueio"` (página, regra, endereço bloqueado). Se aparecer depois de um deploy, um recurso externo novo foi barrado: veja `vercel.json` → `Content-Security-Policy` |
+| **E-mails** | *Painel → E-mails*: o que foi enviado, aceito, falhou ou foi bloqueado; **alertas** (usuário/senha do e-mail recusados, falhas em excesso, fila parada, teto diário, devoluções e spam quando o provedor avisa) que também chegam **por e-mail aos donos**, uma vez por problema. Abra-o depois de cada deploy e quando um cliente disser que não recebeu |
 | Atividade no painel | *Configurações → Atividades* (só o owner): quem mudou o quê e quando, entradas de aparelho novo, 2FA, privacidade. Guardado por 2 anos, não editável |
 
 **Sinais que merecem olhar:** `/api/health` em 503; vários `500`/`erro inesperado` seguidos; `not_configured` ou `not_migrated` nos
@@ -178,7 +193,12 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | Painel: "Muitas tentativas de login" (`429`) | Os limites são por e-mail + rede (8 em 15 min), por rede (30 em 15 min) e, para aparelhos novos, por e-mail (40 por hora). **Aguarde ~15 minutos.** Senha certa não conta como tentativa errada. Quem digitou errado de longe só bloqueia a si mesmo, nunca o dono da conta |
 | Esqueci a senha do painel | Outro **owner** usa *Configurações → Administradores → Nova senha*. Se só você é owner: no seu computador, `vercel env pull .env.local` e `npm run admin:create -- seu@email.com "Seu Nome"` (pergunta a senha nova, encerra todas as sessões da conta) |
 | Perdi o celular do 2FA | Use um dos **códigos de recuperação** na tela do código (cada um vale uma vez). Sem eles: outro owner abre *Configurações → Administradores → Desligar 2 etapas* na sua conta. Se só você é owner: `npm run admin:create -- seu@email.com "Seu Nome" --reset-2fa` (também define uma senha nova e encerra as sessões). Depois ligue o 2FA de novo em *Configurações → Painel* |
-| E-mails não chegam | *Estado do sistema*: "Envio de e-mail" deve estar OK; senão cadastre `SMTP_HOST`, `SMTP_USER` e `SMTP_PASS`. O owner pode usar *Clientes → Enviar e-mail de teste*. Veja o spam. No Gmail confira a senha de app e o limite diário |
+| E-mails não chegam | *Estado do sistema*: "Envio de e-mail" deve estar OK; senão cadastre `SMTP_HOST`, `SMTP_USER` e `SMTP_PASS`. Abra **Painel → E-mails**: os alertas dizem o motivo (usuário/senha recusados, teto diário, fila parada). O owner pode usar *Clientes → Enviar e-mail de teste*. Veja o spam. No Gmail confira a senha de app e o limite diário (450 por dia é o teto de segurança do sistema) |
+| Cliente diz que não recebeu o e-mail (código, pedido, nova senha) | *E-mails → Mensagens*: busque o e-mail dele. **Aceito pelo servidor** = a loja entregou ao servidor de e-mail (peça para olhar o spam e a aba Promoções; o SMTP comum não avisa a entrega). **Bloqueado** = o motivo aparece na linha (endereço suprimido, pediu para não receber, teto por endereço, domínio inválido). **Falhou** = o motivo técnico aparece. Nada na lista = o endereço não chegou a ser usado (confira se foi digitado no pedido ou na conta) |
+| Endereço suprimido por engano (ex.: caixa criada depois) | *E-mails → Supressões → Liberar* (owner) |
+| Cliente reclama de promoções que não quer | Peça para usar "Cancelar inscrição" no e-mail (ou *Minha conta → E-mails*). Pelo painel: *E-mails → Supressões → adicionar o endereço* (ele não receberá mais nenhum e-mail do sistema, inclusive os de conta e pedido) |
+| Fila de e-mails parada / "Mensagens paradas na fila" | *E-mails → Visão geral → Processar fila agora* (owner). Se não resolver, abra uma mensagem e leia o motivo |
+| Cron diário com falha `401` | Falta `CRON_SECRET` na Vercel (item 1) |
 | O link do e-mail abre o endereço errado | Defina `SITE_URL` com o endereço público e faça um novo deploy |
 | Não consigo enviar imagem | *Estado do sistema*: "Armazenamento de imagens". Limites: 4 MB e JPG, PNG, WebP, GIF ou AVIF (SVG nunca) |
 | Cliente diz que o pedido "sumiu" | Busque o número em *Pedidos*. Sem o link do acompanhamento, o painel gera um novo (*Pedido → Acompanhamento do cliente*) |
@@ -217,6 +237,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
 | Sessão do painel / do cliente | 14 dias / 30 dias (ou até sair); vencidas são apagadas | |
 | Links de redefinição de senha, códigos de e-mail | usados ou vencidos: de 1 a 7 dias depois | Só o hash fica no banco |
 | Contadores de tentativas (limites) | 1 dia | |
+| **Registro dos e-mails enviados** (destinatário, tipo, data, resultado; sem corpo, código nem link) | **180 dias** (o que está na fila não é apagado; mensagem na fila há mais de 7 dias é cancelada) | Receitas de falhas: 14 dias. Alertas resolvidos: 90 dias. Excluir conta / anonimizar / "esquecer" remove o endereço na hora |
+| Preferências de e-mail e lista de supressão | preferência sem informação útil: 1 ano; pedido de promoções nunca confirmado: 30 dias; consentimento e cancelamentos: enquanto a pessoa existir; supressão: até um owner liberar (a temporária expira em 7 dias) | |
 | Aparelhos conhecidos do painel | 400 dias sem uso (no máximo 20 por pessoa) | |
 | Códigos de recuperação do 2FA já usados | 90 dias | |
 | **Registro de atividades do painel** | **2 anos** | Não pode ser alterado nem apagado antes disso |
@@ -231,7 +253,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
 4. Se mexeu em pedidos/checkout: faça **um pedido de teste** e cancele (ele aparece nos relatórios como cancelado). Depois da migration 0013,
    confira em *Categorias* que "Copão" e "Copão com Monster" mostram **Pede o gelo**, e, no site, que "Adicionar" num copão pergunta o gelo
    e o pedido de teste mostra a escolha em *Pedidos*.
-5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner).
+5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner) e abra **Painel → E-mails**: nenhum alerta aberto, "Aceitas pelo servidor" subindo e a fila vazia. Depois da migration 0019, faça **um pedido de teste com um e-mail seu** e
+   confira: chegou "Pedido recebido"; ao mudar a etapa no painel, chegou o aviso da etapa; abra a mensagem em **Mensagens** para ver a linha do tempo.
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
 7. Depois das migrations 0014 a 0018: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
    variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
@@ -239,7 +262,7 @@ agendador, então com o site parado ela só roda quando houver movimento.
 
 ## 9. O que este guia não cobre
 
-- Alertas automáticos, painel de métricas e retenção de logs fora da Vercel: não existem neste repositório.
+- Alertas automáticos do **site** (queda, pico de erros), painel de métricas e retenção de logs fora da Vercel: não existem neste repositório. (Os **e-mails** têm painel e alertas próprios: [`EMAIL.md`](EMAIL.md).)
 - Restauração do Neon e rollback da Vercel: descritos conforme a documentação dos serviços, **não testados aqui** (o ambiente de
   desenvolvimento não tem acesso à produção).
 - Análise jurídica: a política de privacidade do site descreve o que o sistema faz, mas razão social, CNPJ e encarregado (DPO)
