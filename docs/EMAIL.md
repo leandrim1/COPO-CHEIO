@@ -226,6 +226,13 @@ pessoal, o limite diário é de uma conta pessoal (~500; o sistema usa 450) e pr
 O verificador do painel **só lê o DNS público**; ele não cria registros. Sobre DKIM, ele tenta os nomes de chave mais comuns (`google`, `selector1`, `resend`, `s1`…) e **avisa
 que não achar não prova que não existe** (cada provedor escolhe o nome; informe o nome exato no campo “Nome da chave DKIM”).
 
+### Foto do remetente (a bolinha com a letra “C” no Gmail)
+
+A bolinha ao lado do nome “Copo Cheio” na caixa de entrada **não faz parte do e-mail**: o Gmail mostra a **foto de perfil do remetente**, e sem foto mostra a inicial do nome numa cor sorteada. Nenhum HTML, imagem ou cabeçalho do e-mail muda isso. Há dois caminhos:
+
+1. **Agora, sem domínio e de graça:** coloque a logo como foto da **conta Google da loja** (a do `SMTP_USER`). Entre nela em <https://myaccount.google.com> → **Informações pessoais** → **Foto** e envie o arquivo [`foto-remetente-gmail.png`](foto-remetente-gmail.png) (512 × 512, a logo sobre fundo preto, pronta para o recorte redondo). O Gmail passa a mostrar a logo para quem recebe, depois de algum tempo (e só quando a foto do perfil é visível para o destinatário, regra do Google). Outros leitores (Outlook, aplicativos de e-mail) usam as próprias regras e podem continuar mostrando a inicial.
+2. **Com domínio próprio (BIMI):** a logo da marca aparece direto na caixa de entrada de quem recebe, de qualquer remetente do domínio. Exige domínio com **DMARC em modo de aplicação** (`p=quarantine` ou `p=reject`; este manual começa em `p=none`), a logo em SVG no formato do BIMI e, no Gmail, um **certificado de marca** (VMC ou CMC, pago, emitido por uma autoridade certificadora). Confirme os requisitos atuais na documentação do Google antes de investir: eles mudam. Não é viável sem domínio.
+
 ## 9. Provedor opcional: Resend (API + avisos assinados)
 
 Fica **desligado**. Só vale com `EMAIL_PROVIDER=resend`, e exige um **domínio próprio verificado** na Resend (SPF e DKIM) e `MAIL_FROM` com esse domínio.
