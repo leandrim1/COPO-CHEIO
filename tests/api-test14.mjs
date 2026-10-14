@@ -58,7 +58,7 @@ section('1. Banco de produção antes da mudança: a migration 0014 só acrescen
   check('os pedidos que já existiam continuam iguais (status, pagamento, total)', q(`select string_agg(order_number || ':' || order_status || ':' || payment_status || ':' || payment_method || ':' || total, ',' order by order_number) from orders`) === `${before.order_number}:new:pending:pix:20.00,${beforeCash.order_number}:new:pending:cash:20.00`);
   check('o estoque reservado antes da mudança continua o mesmo', q(`select stock from products where id = ${lit(prod)}`) === '8');
   check('nasce o meio "pix_online", DESLIGADO', q(`select enabled::text from payment_methods where code = 'pix_online'`) === 'false');
-  check('os meios de pagamento de antes não mudaram', q(`select string_agg(code || ':' || enabled, ',' order by position) from payment_methods where code <> 'pix_online'`) === 'pix:true,cash:true,card:true');
+  check('os meios de pagamento de antes não mudaram', q(`select string_agg(code || ':' || enabled, ',' order by position) from payment_methods where code not in ('pix_online', 'card_online')`) === 'pix:true,cash:true,card:true');
   check('nenhuma cobrança, subconta ou aviso criados', q('select (select count(*) from payments) + (select count(*) from merchant_accounts) + (select count(*) from payment_events)') === '0');
   const dashAfter = JSON.parse(q('select admin_dashboard(7)'));
   check('o painel mostra os mesmos números de antes (pedidos, receita, em andamento)', dashAfter.cards.today_orders === dashBefore.cards.today_orders && dashAfter.cards.revenue_today === dashBefore.cards.revenue_today && dashAfter.cards.pending === dashBefore.cards.pending && dashAfter.cards.awaiting_payment === 0, { antes: dashBefore.cards, depois: dashAfter.cards });

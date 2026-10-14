@@ -11,10 +11,11 @@ import { requireCustomer } from '../customer.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Ctx, Router } from '../http.js';
 import { kickQueue } from '../email/service.js';
-import { linkAccount, listCandidates, refreshProposal, submitProposal } from '../payments/merchant.js';
+import { cardFeeCents, parseMoneyToCents, parsePercentToBps } from '../payments/cardFee.js';
+import { linkAccount, listCandidates, refreshProposal, submitProposal, validCnpj, validCpf } from '../payments/merchant.js';
 import type { MerchantRow } from '../payments/merchant.js';
 import { getProvider, providerSummary } from '../payments/provider.js';
-import { customerPaymentView, handleWebhook, normalizePayment, onlineReadiness, refreshPayment, startPixPayment, sweep } from '../payments/service.js';
+import { cardReadiness, customerPaymentView, handleWebhook, normalizePayment, onlineReadiness, refreshPayment, startCardPayment, startPixPayment, sweep } from '../payments/service.js';
 import { NOT_FOUND, assertNotThrottled, hashToken, missesStatement, normalizeToken, recordMiss, throttled } from '../tracking.js';
 
 const HEADERS = { 'x-robots-tag': 'noindex, nofollow' };
@@ -67,6 +68,26 @@ async function createPayment(ctx: Ctx, orderId: string): Promise<Response> {
   return json(view, created ? 201 : 200, HEADERS);
 }
 
+// Cartão: o navegador troca o cartão por um token (SDK da operadora) e manda só o TOKEN, o identificador do dispositivo e o CPF/CNPJ de quem paga.
+// O número do cartão e o CVV nunca chegam aqui. O valor cobrado não vem do navegador: é o total do pedido gravado no banco.
+async function payByCard(ctx: Ctx, orderId: string): Promise<Response> {
+  const body = await readJson(ctx.req, 2 * 1024);
+  const cardToken = typeof body.card_token === 'string' ? body.card_token.trim() : '';
+  const deviceId = typeof body.device_id === 'string' ? body.device_id.trim() : '';
+  const document = typeof body.document === 'string' ? body.document.replace(/\D/g, '') : '';
+  // Só dígitos (13 a 19) seria um NÚMERO DE CARTÃO no lugar do token: nunca segue adiante (nem para a operadora, nem para o log ou o banco).
+  if (!/^[A-Za-z0-9_-]{8,200}$/.test(cardToken) || /^[\d\s-]{13,23}$/.test(cardToken) || !/^[A-Za-z0-9_-]{8,100}$/.test(deviceId)) {
+    throw new HttpError(400, 'Não foi possível ler os dados do cartão. Digite de novo.', { code: 'card_data' });
+  }
+  if (!(document.length === 11 ? validCpf(document) : document.length === 14 ? validCnpj(document) : false)) {
+    throw new HttpError(400, 'Confira o CPF (ou CNPJ) e tente de novo.', { code: 'document_invalid' });
+  }
+  await reserve('card-pay-ip', ctx.ip, 600, 20, 'Muitas tentativas de pagamento em pouco tempo. Aguarde alguns minutos e tente de novo.');
+  await reserve('card-pay-order', orderId, 600, 8, 'Muitas tentativas de pagamento deste pedido. Aguarde alguns minutos ou fale com a loja.');
+  await startCardPayment(orderId, { cardToken, deviceId, document });
+  return json(await customerPaymentView(orderId, { refresh: false }), 200, HEADERS);
+}
+
 // Na lista e no detalhe do painel: nunca o Pix "copia e cola" (não é preciso para conferir nada).
 function adminRow(row: Row, owner: boolean): Row {
   const p = normalizePayment(row);
@@ -97,6 +118,8 @@ function adminRow(row: Row, owner: boolean): Row {
     fee_cents: p.fee_cents,
     net_cents: p.net_cents,
     refunded_cents: p.refunded_cents,
+    customer_fee_cents: p.customer_fee_cents,
+    card_attempts: p.card_attempts,
     checked_at: p.checked_at,
     closed_at: p.closed_at,
     last_error: p.last_error,
@@ -133,6 +156,10 @@ export function registerPayments(r: Router) {
   r.get('/api/account/orders/:number/payment', 'public', async (ctx) => showPayment(await orderIdOfCustomer(ctx)));
   r.post('/api/account/orders/:number/payment', 'public', async (ctx) => createPayment(ctx, await orderIdOfCustomer(ctx)));
 
+  // Cartão de crédito: o navegador manda o token do cartão (nunca o cartão); o valor sai do pedido, no banco.
+  r.post('/api/tracking/:token/payment/card', 'public', async (ctx) => payByCard(ctx, await orderIdFromToken(ctx)));
+  r.post('/api/account/orders/:number/payment/card', 'public', async (ctx) => payByCard(ctx, await orderIdOfCustomer(ctx)));
+
   // ---- Operadora ------------------------------------------------------------------------------------------------
 
   // Aviso (webhook). Rota pública porque a operadora não faz login; o que vale é a prova de autenticidade que o adaptador confere.
@@ -153,7 +180,7 @@ export function registerPayments(r: Router) {
     }
     if (q.get('attention') === '1') where.push('p.needs_attention');
     params.push(limit + 1);
-    const [rows, summary, merchant, method, rate] = await batch([
+    const [rows, summary, merchant, method, rate, cardMethod, cardFee] = await batch([
       [
         `select p.*, o.order_number from payments p join orders o on o.id = p.order_id
           ${where.length ? `where ${where.join(' and ')}` : ''} order by p.created_at desc limit $${params.length}`,
@@ -183,6 +210,8 @@ export function registerPayments(r: Router) {
       ["select code, label, enabled from payment_methods where code = 'pix_online'"],
       // A taxa atual da comissão vem do banco (a única fonte); cada cobrança guarda a taxa de quando foi criada.
       ['select payment_commission_bps() as bps'],
+      ["select code, label, enabled from payment_methods where code = 'card_online'"],
+      ['select card_fee_bps, card_fee_fixed_cents, confirmed_at, confirmed_by_name, updated_at from payment_fee_settings where id = 1'],
     ]);
     const account = publicMerchant(merchant[0] ?? null);
     return json({
@@ -195,7 +224,66 @@ export function registerPayments(r: Router) {
       account_fee_cents: getProvider()?.merchant?.accountCreationFeeCents ?? null,
       readiness: await onlineReadiness(),
       method: method[0] ?? null,
+      card: { method: cardMethod[0] ?? null, fee: cardFee[0] ?? null, readiness: await cardReadiness() },
     });
+  });
+
+  // ---- Taxa do cartão repassada ao cliente (só o owner) -----------------------------------------------------------------------------
+  // O percentual e a tarifa fixa vêm do contrato com a operadora e ficam NO BANCO (nunca no navegador do cliente). Só o owner muda; o
+  // banco recusa valores fora de limites sensatos e tira a "conferência" de qualquer valor que mude. O cartão online só liga conferido.
+  const feeView = async () => {
+    const row = await one<Row>('select card_fee_bps, card_fee_fixed_cents, confirmed_at, confirmed_by_name, updated_at from payment_fee_settings where id = 1');
+    const bps = Number(row?.card_fee_bps ?? 0);
+    const fixed = Number(row?.card_fee_fixed_cents ?? 0);
+    return {
+      bps,
+      fixed_cents: fixed,
+      confirmed_at: row?.confirmed_at ?? null,
+      confirmed_by_name: row?.confirmed_by_name ?? null,
+      updated_at: row?.updated_at ?? null,
+      // Exemplos para o dono ver a conta funcionando com os valores de agora (a mesma do banco).
+      examples: [1000, 5000, 10000].map((base) => ({ base_cents: base, fee_cents: cardFeeCents(base, { bps, fixedCents: fixed }), total_cents: base + cardFeeCents(base, { bps, fixedCents: fixed }) })),
+      readiness: await cardReadiness(),
+    };
+  };
+
+  r.get('/api/admin/payment-fees/card', 'owner', async () => json(await feeView()));
+
+  r.patch('/api/admin/payment-fees/card', 'owner', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    const current = await one<Row>('select card_fee_bps, card_fee_fixed_cents from payment_fee_settings where id = 1');
+    const bps = body.percent === undefined ? Number(current!.card_fee_bps) : parsePercentToBps(body.percent);
+    const fixed = body.fixed === undefined ? Number(current!.card_fee_fixed_cents) : parseMoneyToCents(body.fixed);
+    if (bps === null) throw new HttpError(400, 'Informe o percentual do cartão como em 5,37 (de 0 a 25).', { code: 'invalid_percent' });
+    if (fixed === null) throw new HttpError(400, 'Informe a tarifa fixa como em 0,37 (de 0 a 10,00).', { code: 'invalid_fixed' });
+    const confirmed = body.confirmed === true;
+    const changed = bps !== Number(current!.card_fee_bps) || fixed !== Number(current!.card_fee_fixed_cents);
+    if (!changed && !confirmed) throw new HttpError(400, 'Nada para salvar: os valores são os mesmos. Marque que conferiu com o contrato para confirmar.', { code: 'nothing_to_save' });
+    // Mudar a taxa com o cartão online LIGADO sem conferir os novos valores deixaria a loja sem cartão (o banco recusa pedido sem conferência).
+    if (changed && !confirmed) {
+      const on = await one<{ enabled: boolean }>("select enabled from payment_methods where code = 'card_online'");
+      if (on?.enabled) throw new HttpError(409, 'O cartão online está ligado. Confirme que conferiu os novos valores com o contrato, ou desligue o cartão online antes de mudar a taxa.', { code: 'confirm_required' });
+    }
+    const admin = ctx.admin!;
+    await one(
+      `update payment_fee_settings
+          set card_fee_bps = $1, card_fee_fixed_cents = $2, updated_by = $3,
+              confirmed_at = case when $4 then now() else confirmed_at end,
+              confirmed_by = case when $4 then $3::uuid else confirmed_by end,
+              confirmed_by_name = case when $4 then $5 else confirmed_by_name end
+        where id = 1`,
+      [bps, fixed, admin.id, confirmed, admin.name],
+    );
+    const pct = `${(bps / 100).toFixed(2).replace('.', ',')}%`;
+    const fix = `R$ ${(fixed / 100).toFixed(2).replace('.', ',')}`;
+    await audit(ctx, {
+      action: 'payment.card_fee',
+      summary: `Taxa do cartão repassada ao cliente: ${pct} + ${fix}${confirmed ? ' (conferida com o contrato da operadora)' : ' (ainda NÃO conferida)'}`,
+      entity: 'payment',
+      entityId: 'card_online',
+      details: { bps, fixed_cents: fixed, confirmed },
+    });
+    return json(await feeView());
   });
 
   // ---- Conta do estabelecimento na operadora (só o owner) ---------------------------------------------------------------------------

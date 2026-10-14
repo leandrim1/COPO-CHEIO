@@ -17,6 +17,8 @@ export function providerSummary(): {
   missing: string[];
   note: string | null;
   manages_accounts: boolean;
+  // O cartão online existe para esta operadora (ela cobra no cartão e há o identificador público para o SDK do navegador).
+  card_ready: boolean;
 } {
   const provider = getProvider();
   const setup = describeSetup();
@@ -27,9 +29,10 @@ export function providerSummary(): {
     missing: setup.missing,
     note: setup.note,
     manages_accounts: Boolean(provider?.merchant),
+    card_ready: Boolean(provider?.createCardCharge && provider.cardCheckout),
   };
 }
 
 // Formas de pagamento em que o cliente paga pelo site. Espelha is_online_payment() do banco (migration 0014).
-const ONLINE_METHODS = new Set(['pix_online']);
+const ONLINE_METHODS = new Set(['pix_online', 'card_online']);
 export const isOnlineMethod = (code: unknown): boolean => typeof code === 'string' && ONLINE_METHODS.has(code);

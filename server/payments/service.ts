@@ -12,10 +12,11 @@ import { audit } from '../audit.js';
 import { batch, one, query } from '../db.js';
 import type { Row } from '../db.js';
 import { HttpError, readBytes } from '../http.js';
+import { FEE_TOLERANCE_CENTS } from './cardFee.js';
 import { applyMerchantObservation } from './merchant.js';
 import { getProvider } from './provider.js';
 import { ProviderError, providerErrorKind } from './types.js';
-import type { ChargeSnapshot, CreatedPix, PaymentProvider, ProviderContext, WebhookEvent } from './types.js';
+import type { CardChargeResult, ChargeSnapshot, CreatedPix, PaymentProvider, ProviderContext, WebhookEvent } from './types.js';
 
 // Validade do Pix pedido à operadora. A validade que vale é a que ela devolver.
 export const PIX_TTL_SECONDS = 15 * 60;
@@ -33,6 +34,8 @@ export const WEBHOOK_LOOKUP_MS = 4000;
 const CHECK_EVERY_MS = 6000;
 // Mínimo entre duas varreduras na mesma instância do servidor.
 const SWEEP_EVERY_MS = 20_000;
+// Cobrança no cartão: o banco do cliente pode demorar para autorizar (a ValidaPay responde na hora, mas esperamos mais que nas outras chamadas).
+export const CARD_TIMEOUT_MS = 28_000;
 
 export type PaymentStatus = 'creating' | 'pending' | 'paid' | 'expired' | 'cancelled' | 'failed' | 'refunded';
 
@@ -42,7 +45,7 @@ export type PaymentRow = {
   order_id: string;
   attempt: number;
   provider: string;
-  method: 'pix';
+  method: 'pix' | 'card';
   merchant_account_id: string | null;
   status: PaymentStatus;
   provider_status: string | null;
@@ -56,6 +59,9 @@ export type PaymentRow = {
   net_cents: number | null;
   refunded_cents: number;
   pix_payload: string | null;
+  // Taxa do cartão que está dentro de amount_cents (0 no Pix) e quantas vezes esta tentativa foi enviada à operadora.
+  customer_fee_cents: number;
+  card_attempts: number;
   expires_at: string | null;
   paid_at: string | null;
   paid_seq: number | null;
@@ -140,12 +146,13 @@ export function toObservation(snapshot: ChargeSnapshot): Row | null {
 async function auditResult(result: ApplyResult, source: string): Promise<void> {
   if (!result.changed) return;
   const { payment, order_number: n } = result;
+  const what = payment.method === 'card' ? 'Cartão' : 'Pix';
   const line: Record<string, [string, string]> = {
-    paid: ['payment.paid', `Pix do pedido #${n} confirmado (${brl(payment.amount_cents)})`],
-    expired: ['payment.expired', `Pix do pedido #${n} venceu sem pagamento`],
-    cancelled: ['payment.cancelled', `Pix do pedido #${n} cancelado`],
-    failed: ['payment.failed', `Pix do pedido #${n} recusado pela operadora`],
-    refunded: ['payment.refunded', `Pix do pedido #${n} estornado (${brl(payment.refunded_cents)})`],
+    paid: ['payment.paid', `${what} do pedido #${n} confirmado (${brl(payment.amount_cents)})`],
+    expired: ['payment.expired', `${what} do pedido #${n} venceu sem pagamento`],
+    cancelled: ['payment.cancelled', `${what} do pedido #${n} cancelado`],
+    failed: ['payment.failed', `${what} do pedido #${n} recusado pela operadora`],
+    refunded: ['payment.refunded', `${what} do pedido #${n} estornado (${brl(payment.refunded_cents)})`],
   };
   const entry = line[payment.status];
   if (entry) {
@@ -178,6 +185,30 @@ export async function applySnapshot(paymentId: string, snapshot: ChargeSnapshot,
       [paymentId, note],
     );
     if (flagged) result = { ...result, payment: normalizePayment(flagged), outcome: result.outcome === 'applied' ? 'needs_attention' : result.outcome };
+  }
+  // Cartão: a tarifa que a operadora informou tem de bater com a taxa que o cliente pagou (a operadora arredonda a seu modo: até 1 centavo é
+  // normal). Diferença maior é sinalizada ao dono; o pedido NÃO fica retido por isso (o cliente pagou o valor certo), mas o dono precisa saber
+  // que a taxa configurada não é a do contrato (a loja estaria pagando a diferença, ou o cliente pagando a mais).
+  if (result.payment.method === 'card' && result.payment.status === 'paid' && typeof snapshot.feeCents === 'number') {
+    const customerFee = result.payment.customer_fee_cents;
+    const diff = snapshot.feeCents - customerFee;
+    if (Math.abs(diff) > FEE_TOLERANCE_CENTS) {
+      const note =
+        diff > 0
+          ? `Tarifa da ValidaPay (${brl(snapshot.feeCents)}) MAIOR que a taxa cobrada do cliente (${brl(customerFee)}): a loja paga a diferença de ${brl(diff)}. Confira a taxa do cartão em Pagamentos.`
+          : `Tarifa da ValidaPay (${brl(snapshot.feeCents)}) menor que a taxa cobrada do cliente (${brl(customerFee)}): o cliente pagou ${brl(-diff)} a mais. Confira a taxa do cartão em Pagamentos.`;
+      const flagged = await one<Row>(
+        `update payments
+            set needs_attention = true,
+                attention_reason = left(case when attention_reason is null then $2
+                                             when position($2 in attention_reason) > 0 then attention_reason
+                                             else attention_reason || ' ' || $2 end, 300)
+          where id = $1::uuid
+          returning *`,
+        [paymentId, note],
+      );
+      if (flagged) result = { ...result, payment: normalizePayment(flagged), outcome: result.outcome === 'applied' ? 'needs_attention' : result.outcome };
+    }
   }
   log('cobrança atualizada', { payment: paymentId, status: result.payment.status, outcome: result.outcome, released: result.released, source });
   await auditResult(result, source);
@@ -240,6 +271,106 @@ export async function startPixPayment(orderId: string): Promise<{ payment: Payme
   if (!marked!.r.updated) throw new HttpError(409, 'Este pedido não está mais aguardando pagamento.', { code: 'order_closed' });
   log('Pix criado', { payment: payment.id, attempt: payment.attempt });
   return { payment, created: true };
+}
+
+
+// ---- Cobrar no cartão ----------------------------------------------------------------------------------------------------------------
+
+// O que o navegador manda: o TOKEN do cartão e o identificador do dispositivo (gerados pelo SDK da operadora, no navegador) e o CPF/CNPJ do pagador.
+// Número do cartão e CVV nunca chegam aqui.
+export type CardInput = { cardToken: string; deviceId: string; document: string };
+
+const CARD_UNAVAILABLE = 'O pagamento por cartão não está disponível agora. Escolha outra forma de pagamento ou fale com a loja.';
+
+// Por que a operadora recusou o pedido de cobrança (definitivo: nada foi cobrado), em português e sem repetir o que ela escreveu.
+function cardRejectionMessage(code: string | undefined): { message: string; status: number } {
+  switch (code) {
+    case 'CARD_TOKEN_EXPIRED':
+    case 'CARD_TOKEN_NOT_FOUND':
+      return { message: 'O tempo para pagar acabou. Digite os dados do cartão de novo.', status: 400 };
+    case 'MISSING_CARD_DATA':
+    case 'CARD_DATA':
+    case 'DOCUMENT':
+      return { message: 'Confira os dados do cartão e o CPF e tente de novo.', status: 400 };
+    case 'CUSTOMER_PHONE_REQUIRED':
+      return { message: 'A operadora do cartão pediu um telefone válido. Fale com a loja.', status: 400 };
+    case 'TOKEN_UNAVAILABLE':
+    case 'TOKEN_REJECTED':
+      return { message: CARD_UNAVAILABLE, status: 503 };
+    default:
+      return { message: 'Não foi possível processar o cartão agora. Tente de novo ou escolha outra forma de pagamento.', status: 502 };
+  }
+}
+
+// Cobra o pedido no cartão de crédito. O valor vem do pedido gravado no banco (itens + entrega + taxa do cartão), nunca do navegador, e é o MESMO
+// que o cliente viu. Sem duplicar: uma tentativa em andamento nunca dá lugar a outra enquanto não tiver resultado, e refazer a mesma tentativa
+// manda à operadora o mesmo identificador (externalId), que por isso não cobra duas vezes. O pedido só é liberado pela operadora (consulta da
+// cobrança + valor conferido em payment_apply): a resposta da criação sozinha não libera nada.
+export async function startCardPayment(orderId: string, input: CardInput): Promise<PaymentRow> {
+  const provider = getProvider();
+  if (!provider || !provider.createCardCharge || !provider.cardCheckout) throw new HttpError(503, CARD_UNAVAILABLE, { code: 'payments_unavailable' });
+
+  const order = await one<Row>('select order_number, customer_name, customer_phone, customer_email from orders where id = $1::uuid', [orderId]);
+  if (!order) throw new HttpError(404, 'Pedido não encontrado.');
+  const email = typeof order.customer_email === 'string' ? order.customer_email : '';
+  if (!email) throw new HttpError(400, 'Este pedido não tem e-mail. Fale com a loja.', { code: 'email_required' });
+
+  const begun = await one<{ r: { created: boolean; busy: boolean; retry: boolean; payment: Row; order_number: number; merchant_account: string | null } }>(
+    'select payment_begin_card($1::uuid, $2) as r',
+    [orderId, provider.name],
+  );
+  const { created, busy, retry, payment: began, merchant_account: merchant } = begun!.r;
+  if (busy) throw new HttpError(409, 'Seu pagamento está sendo processado. Aguarde alguns segundos e não pague de novo.', { code: 'payment_in_progress' });
+  const paymentId = String(began.id);
+
+  // Já aguardando a confirmação da operadora (ela ainda não decidiu): não cobra de novo, só confere.
+  if (!created && !retry) {
+    await refreshPayment(paymentId, 'lookup').catch(() => undefined);
+    return normalizePayment((await one<Row>('select * from payments where id = $1::uuid', [paymentId]))!);
+  }
+
+  let charge: CardChargeResult;
+  try {
+    charge = await withTimeout(
+      provider.createCardCharge({
+        paymentId,
+        orderNumber: Number(order.order_number),
+        amountCents: Number(began.amount_cents),
+        cardToken: input.cardToken,
+        deviceId: input.deviceId,
+        customer: { name: String(order.customer_name), email, document: input.document, phone: String(order.customer_phone) },
+        merchantAccountId: merchant ?? null,
+        description: `Pedido #${order.order_number}`,
+      }),
+      CARD_TIMEOUT_MS,
+    );
+  } catch (error) {
+    const kind = providerErrorKind(error);
+    if (kind === 'rejected') {
+      // A operadora recusou o pedido de cobrança (token vencido, dado inválido, credencial): nada foi cobrado. Encerra esta tentativa.
+      const code = (error as ProviderError).code;
+      await one('select payment_mark_failed($1::uuid, $2, false)', [paymentId, `recusado pela operadora${code ? `: ${code}` : ''}`]);
+      log('cartão não cobrado', { payment: paymentId, code: code ?? null });
+      const { message, status } = cardRejectionMessage(code);
+      throw new HttpError(status, message, { code: 'card_rejected' });
+    }
+    // Sem resposta (tempo esgotado ou erro da operadora): o cartão PODE ter sido cobrado. A tentativa continua aberta (nunca vira outra
+    // cobrança); refazê-la usa o mesmo identificador e a operadora devolve a cobrança original em vez de cobrar de novo.
+    log('cartão sem resposta', { payment: paymentId, kind: kind ?? 'erro' });
+    throw new HttpError(503, 'Não conseguimos confirmar o pagamento agora. Não pague de novo ainda: aguarde um minuto nesta tela. Se o valor aparecer na sua fatura e o pedido não for confirmado, a loja confere.', { code: 'card_unconfirmed' });
+  }
+
+  // Guarda o código da cobrança (a partir daqui o aviso da operadora e a conferência a reconhecem).
+  await one('select payment_card_mark_charge($1::uuid, $2, $3)', [paymentId, charge.providerChargeId, charge.providerStatus ?? null]);
+  if (charge.outcome === 'declined') {
+    await applySnapshot(paymentId, { providerChargeId: charge.providerChargeId, status: 'failed', providerStatus: 'FAILED', amountCents: Number(began.amount_cents), detail: charge.reason ?? 'Cartão recusado' }, 'lookup');
+  } else {
+    // paga, duplicada (a operadora já conhecia a tentativa) ou em processamento: quem confirma é a CONSULTA à operadora (traz também a tarifa e o
+    // valor pago). Se a consulta falhar agora, a cobrança fica "aguardando" e o aviso assinado da operadora ou a conferência periódica concluem.
+    await refreshPayment(paymentId, 'lookup').catch((error) => log('consulta depois da cobrança falhou', { payment: paymentId, kind: providerErrorKind(error) ?? 'erro' }));
+  }
+  log('cartão processado', { payment: paymentId, outcome: charge.outcome, retry });
+  return normalizePayment((await one<Row>('select * from payments where id = $1::uuid', [paymentId]))!);
 }
 
 // ---- Consultar a operadora ---------------------------------------------------------------------------------------------------------
@@ -321,7 +452,7 @@ export async function settleOverdue(paymentId: string): Promise<PaymentStatus | 
 export type PaymentView = {
   id: string;
   status: PaymentStatus;
-  method: 'pix';
+  method: 'pix' | 'card';
   amount: number;
   attempt: number;
   expires_at: string | null;
@@ -332,7 +463,13 @@ export type PaymentView = {
   message: string | null;
 };
 
-export type CustomerPayment = { payment: PaymentView | null; order_status: string; payment_status: string };
+// `card_checkout`: o que o navegador precisa para trocar o cartão por um token (só enquanto o pedido de cartão online espera o pagamento).
+export type CustomerPayment = {
+  payment: PaymentView | null;
+  order_status: string;
+  payment_status: string;
+  card_checkout: { public_id: string; environment: 'sandbox' | 'production' } | null;
+};
 
 async function loadLatest(orderId: string): Promise<{ order: Row; payment: PaymentRow | null; attempts: number }> {
   const [orders, payments, counts] = await batch([
@@ -348,6 +485,13 @@ function messageFor(payment: PaymentRow, orderStatus: string): string | null {
   if (payment.status === 'paid' || payment.status === 'refunded') {
     if (orderStatus === 'cancelled') return 'Recebemos o pagamento, mas o pedido já tinha sido cancelado. A loja vai devolver o valor.';
     return payment.status === 'refunded' ? 'O pagamento foi estornado.' : null;
+  }
+  if (payment.method === 'card') {
+    if (payment.status === 'creating') return 'Estamos processando o pagamento. Não feche esta tela e não pague de novo.';
+    if (payment.status === 'pending') return 'Aguardando a confirmação do banco. Não pague de novo: assim que ele responder, o pedido segue para a loja.';
+    if (payment.status === 'cancelled') return 'Este pagamento foi cancelado.';
+    if (payment.status === 'failed') return 'O cartão não foi aprovado. Confira os dados ou use outro cartão.';
+    return null;
   }
   if (payment.status === 'expired') return 'O Pix venceu sem pagamento.';
   if (payment.status === 'cancelled') return 'Este Pix foi cancelado.';
@@ -366,7 +510,7 @@ export function toView(order: Row, payment: PaymentRow, attempts: number): Payme
     amount: payment.amount_cents / 100,
     attempt: payment.attempt,
     expires_at: payment.expires_at,
-    pix: pending && payment.pix_payload ? { payload: payment.pix_payload } : null,
+    pix: payment.method === 'pix' && pending && payment.pix_payload ? { payload: payment.pix_payload } : null,
     can_retry: retryable,
     retry_until: retryable && closed !== null ? new Date(closed + RETRY_WINDOW_MINUTES * 60_000).toISOString() : null,
     message: messageFor(payment, String(order.order_status)),
@@ -377,6 +521,11 @@ export function toView(order: Row, payment: PaymentRow, attempts: number): Payme
 // (cobre o aviso que atrasou ou se perdeu), no máximo a cada poucos segundos.
 export async function customerPaymentView(orderId: string, opts: { refresh: boolean }): Promise<CustomerPayment> {
   let state = await loadLatest(orderId);
+  // Cartão sem resposta da operadora: nunca é encerrado às cegas (o cartão pode ter sido cobrado); só sinaliza e, bem mais tarde, encerra.
+  if (state.payment?.method === 'card' && (state.payment.status === 'creating' || state.payment.status === 'pending')) {
+    await one('select payment_card_stale($1::uuid)', [state.payment.id]).catch(() => undefined);
+    state = await loadLatest(orderId);
+  }
   if (state.payment?.status === 'pending') {
     const overdue = state.payment.expires_at !== null && new Date(state.payment.expires_at).getTime() < Date.now();
     // Venceu: confere, cancela na operadora e encerra já (a tela do cliente passa a mostrar "O Pix venceu" na hora, sem esperar a conferência periódica).
@@ -392,10 +541,13 @@ export async function customerPaymentView(orderId: string, opts: { refresh: bool
     await one('select payment_expire_local($1::uuid, $2)', [state.payment.id, LOCAL_EXPIRY_GRACE_MINUTES]).catch(() => undefined);
     state = await loadLatest(orderId);
   }
+  const cardOrder = state.order.payment_method === 'card_online' && state.order.order_status === 'awaiting_payment';
+  const checkout = cardOrder ? getProvider()?.cardCheckout ?? null : null;
   return {
     payment: state.payment ? toView(state.order, state.payment, state.attempts) : null,
     order_status: String(state.order.order_status),
     payment_status: String(state.order.payment_status),
+    card_checkout: checkout ? { public_id: checkout.publicId, environment: checkout.environment } : null,
   };
 }
 
@@ -521,14 +673,21 @@ export async function sweep(opts: { lookups?: boolean; force?: boolean; limit?: 
   if (!opts.force && Date.now() - lastSweep < SWEEP_EVERY_MS) return out;
   lastSweep = Date.now();
   const provider = getProvider();
-  const due = await query<Row>('select id, status, provider, provider_charge_id, expires_at from payments_due($1)', [opts.limit ?? 5]);
+  const due = await query<Row>('select id, status, method, provider, provider_charge_id, expires_at from payments_due($1)', [opts.limit ?? 5]);
   for (const payment of due) {
     try {
       if (payment.status === 'creating') {
+        if (payment.method === 'card') {
+          // Cartão: o cobrança PODE existir na operadora. Nunca é encerrada às cegas (ver payment_card_stale).
+          const stale = await one<{ r: { changed: boolean } }>('select payment_card_stale($1::uuid) as r', [payment.id]);
+          if (stale?.r.changed) out.closed += 1;
+          continue;
+        }
         await one('select payment_mark_failed($1::uuid, $2, true)', [payment.id, 'sem resposta da operadora']);
         out.closed += 1;
         continue;
       }
+      if (payment.method === 'card' && payment.status === 'pending') await one('select payment_card_stale($1::uuid)', [payment.id]).catch(() => undefined);
       if (opts.lookups && provider && provider.name === payment.provider && provider.canLookup && payment.provider_charge_id) {
         const overdue = payment.expires_at !== null && new Date(String(payment.expires_at)).getTime() < Date.now();
         if (overdue) {
@@ -564,6 +723,23 @@ export async function sweep(opts: { lookups?: boolean; force?: boolean; limit?: 
 // ---- O pagamento online está pronto para ser ligado? ---------------------------------------------------------------------------------
 
 export type Readiness = { provider: string | null; merchant: string | null; ready: boolean };
+
+// O cartão online está pronto para ser ligado? Além do que o Pix pede (operadora e conta aprovada), precisa do identificador público para o
+// SDK do navegador e da taxa do cartão conferida pelo dono. `missing` diz o que falta, sem valores.
+export type CardReadiness = { ready: boolean; missing: string[] };
+
+export async function cardReadiness(): Promise<CardReadiness> {
+  const base = await onlineReadiness();
+  const provider = getProvider();
+  const missing: string[] = [];
+  if (!provider) missing.push('operadora');
+  else if (!provider.createCardCharge || !provider.cardCheckout) missing.push('VALIDAPAY_PUBLIC_ID');
+  if (provider && base.merchant !== 'approved') missing.push('conta aprovada');
+  else if (provider && !base.ready) missing.push('ciência das tarifas');
+  const fee = await one<{ confirmed: boolean }>('select confirmed_at is not null as confirmed from payment_fee_settings where id = 1');
+  if (!fee?.confirmed) missing.push('taxa do cartão conferida');
+  return { ready: missing.length === 0, missing };
+}
 
 export async function onlineReadiness(): Promise<Readiness> {
   const provider = getProvider();

@@ -27,6 +27,7 @@ export function describePath(path: string): PageInfo {
   if (path === '/privacidade') return { known: true, indexable: true, title: 'Política de privacidade' };
   if (path === '/checkout') return { known: true, indexable: false, title: 'Finalizar pedido' };
   if (new RegExp(`^/pedido/${token}$`).test(path)) return { known: true, indexable: false, title: 'Seu pedido' };
+  if (new RegExp(`^/pagar/${token}$`).test(path)) return { known: true, indexable: false, title: 'Pagamento do pedido' };
   if (path === '/acompanhar-pedido' || new RegExp(`^/acompanhar-pedido/${token}$`).test(path)) return { known: true, indexable: false, title: 'Acompanhar pedido' };
   if (path === '/conta' || path === '/conta/pedidos' || /^\/conta\/pedidos\/\d{1,12}$/.test(path) || path === '/conta/recuperar') return { known: true, indexable: false, title: 'Minha conta' };
   if (/^\/conta\/(redefinir|verificar)\/[0-9A-Za-z_-]{20,100}$/.test(path)) return { known: true, indexable: false, title: 'Minha conta' };
@@ -202,7 +203,7 @@ export function registerSeo(r: Router) {
     // Endereços com código de acompanhamento ou de redefinição de senha nunca vão para o log (o site já os mascara; aqui é a segunda trava).
     const clip = (value: unknown, max: number) =>
       String(value ?? '')
-        .replace(/(\/(?:pedido|acompanhar-pedido|conta\/redefinir|conta\/verificar)\/)[^/?#\s"']+/g, '$1:codigo')
+        .replace(/(\/(?:pedido|pagar|acompanhar-pedido|conta\/redefinir|conta\/verificar)\/)[^/?#\s"']+/g, '$1:codigo')
         .slice(0, max);
     console.error(JSON.stringify({ level: 'error', msg: 'erro-no-navegador', kind: clip(body.kind, 30), message: clip(body.message, 300), page: clip(body.page, 200), stack: clip(body.stack, 800), agent: clip(ctx.req.headers.get('user-agent'), 150) }));
     return json({ ok: true }, 202);

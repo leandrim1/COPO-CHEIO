@@ -36,6 +36,7 @@ type OrderRow = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
+  payment_fee: number;
   total: number;
   payment_method: string;
   payment_status: 'pending' | 'paid' | 'refunded';
@@ -59,7 +60,7 @@ async function renderOrder(kind: OrderKind, to: string, spec: Record<string, unk
   const orderId = text(spec.order_id, 40);
   if (!UUID.test(orderId)) return null;
   const o = await one<OrderRow>(
-    `select o.order_number, o.customer_name, o.delivery_type, o.neighborhood, o.subtotal, o.delivery_fee, o.discount, o.total, o.payment_method, o.payment_status,
+    `select o.order_number, o.customer_name, o.delivery_type, o.neighborhood, o.subtotal, o.delivery_fee, o.discount, o.payment_fee, o.total, o.payment_method, o.payment_status,
             o.order_status, o.idempotency_key, pm.label as payment_label
        from orders o left join payment_methods pm on pm.code = o.payment_method where o.id = $1`,
     [orderId],
@@ -86,11 +87,12 @@ async function renderOrder(kind: OrderKind, to: string, spec: Record<string, unk
     subtotal: Number(o.subtotal),
     deliveryFee: Number(o.delivery_fee),
     discount: Number(o.discount),
+    paymentFee: Number(o.payment_fee),
     total: Number(o.total),
     delivery: o.delivery_type,
     neighborhood: o.neighborhood,
     paymentLabel: o.payment_label ?? o.payment_method,
-    online: o.payment_method === 'pix_online',
+    online: o.payment_method === 'pix_online' || o.payment_method === 'card_online',
     paymentStatus: o.payment_status,
     trackUrl: await trackingUrl(brand, orderId, o.idempotency_key),
     prefsUrl: `${brand.siteUrl}/conta/emails/${preferenceToken(prefs)}`,

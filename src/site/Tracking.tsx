@@ -59,10 +59,10 @@ function headline(order: PublicOrder): string {
 function paymentText(order: PublicOrder): { label: string; tone: 'amber' | 'green' | 'red' } {
   if (order.payment_status === 'paid') return { label: 'Pagamento confirmado', tone: 'green' };
   if (order.payment_status === 'refunded') return { label: 'Pagamento estornado', tone: 'red' };
-  if (order.payment_method === 'pix_online') {
+  if (order.payment_method === 'pix_online' || order.payment_method === 'card_online') {
     // Pago depois do cancelamento: o dinheiro entrou, mas o pedido não vale mais (a loja devolve).
     if (order.payment?.status === 'paid') return { label: 'Pagamento recebido: a loja vai devolver', tone: 'amber' };
-    return { label: order.order_status === 'cancelled' ? 'Pagamento não realizado' : 'Aguardando o Pix', tone: 'amber' };
+    return { label: order.order_status === 'cancelled' ? 'Pagamento não realizado' : order.payment_method === 'card_online' ? 'Aguardando o cartão' : 'Aguardando o Pix', tone: 'amber' };
   }
   if (order.payment_method === 'pix') return { label: 'Pagamento pendente', tone: 'amber' };
   return { label: order.delivery_type === 'pickup' ? 'Pagar na retirada' : 'Pagar na entrega', tone: 'amber' };
@@ -121,7 +121,7 @@ function Timeline({ order }: { order: PublicOrder }) {
   const reached = new Map(order.history.map((h) => [h.status, h.at]));
   const cancelled = order.order_status === 'cancelled';
   // Pedido de pagamento online: antes de a loja receber, há a etapa do pagamento.
-  const flow = order.payment_method === 'pix_online' ? ONLINE_FLOW : STATUS_FLOW;
+  const flow = order.payment_method === 'pix_online' || order.payment_method === 'card_online' ? ONLINE_FLOW : STATUS_FLOW;
   const currentIndex = flow.indexOf(order.order_status);
   const next = !cancelled && currentIndex >= 0 && currentIndex < flow.length - 1 ? flow[currentIndex + 1] : null;
 
@@ -371,6 +371,8 @@ export function OrderView({
   // Pelo código de acompanhamento ou, em "Meus pedidos", pela conta (o endereço do pagamento muda; a tela é a mesma).
   const payBase = token ? `/api/tracking/${token}/payment` : mine ? `/api/account/orders/${order.order_number}/payment` : null;
   const showPayPanel = payBase !== null && order.payment_method === 'pix_online' && (awaiting || order.payment?.status === 'paid' || (confirmation && order.payment_status === 'paid'));
+  // Cartão: o pagamento é feito na tela /pagar (página à parte, com as regras de segurança do SDK da operadora); aqui só o caminho até ela.
+  const showCardPanel = token !== undefined && order.payment_method === 'card_online' && awaiting;
   const whatsapp = token ? storeWhatsappUrl(store, confirmation ? orderWhatsappMessage(store, order, link) : `Olá, ${store.store_name}! Estou acompanhando o pedido #${order.order_number}.\n\nAcompanhar pedido:\n${link}`) : '';
 
   useEffect(() => {
@@ -391,7 +393,7 @@ export function OrderView({
             {confirmation ? (
               awaiting ? (
                 <>
-                  Pague o Pix abaixo para enviar o pedido <strong className="text-white">#{order.order_number}</strong> para a {store.store_name}.
+                  {order.payment_method === 'card_online' ? 'Pague com o cartão abaixo' : 'Pague o Pix abaixo'} para enviar o pedido <strong className="text-white">#{order.order_number}</strong> para a {store.store_name}.
                 </>
               ) : (
                 <>
@@ -433,6 +435,20 @@ export function OrderView({
         <div className="mt-6">
           <PixPayment base={payBase} order={order} onSettled={feed.refresh} />
         </div>
+      )}
+      {showCardPanel && token && (
+        <section data-card-panel aria-labelledby="cartao-titulo" className="mt-6 rounded-[1.75rem] border border-[#145CFF]/40 bg-gradient-to-b from-[#145CFF]/15 via-[#0B1230] to-transparent p-5 sm:p-6">
+          <h2 id="cartao-titulo" className="text-xl font-black text-white">
+            Pague com <span className="text-[#2563FF] [text-shadow:0_0_24px_rgba(20,92,255,0.6)]">cartão de crédito</span>
+          </h2>
+          <p className="mt-1 text-sm text-white/70">
+            Total de {money(order.total)}, já com a taxa do cartão de {money(order.payment_fee)}. O pedido só vai para a loja depois que o pagamento for aprovado.
+          </p>
+          {/* Carregamento completo de propósito (data-full-reload): a tela do cartão tem regras de segurança próprias. */}
+          <a href={`/pagar/${encodeURIComponent(token)}`} data-full-reload data-card-pay-link className={`${BLUE_BUTTON} mt-4 w-full sm:w-auto`}>
+            Pagar {money(order.total)} no cartão
+          </a>
+        </section>
       )}
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[1fr_22rem] lg:items-start">
@@ -493,6 +509,12 @@ export function OrderView({
                 <dt>Entrega</dt>
                 <dd className="tabular-nums">{order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}</dd>
               </div>
+              {order.payment_fee > 0 && (
+                <div className="flex justify-between text-white/65">
+                  <dt>Taxa do cartão</dt>
+                  <dd className="tabular-nums">{money(order.payment_fee)}</dd>
+                </div>
+              )}
               {order.discount > 0 && (
                 <div className="flex justify-between text-white/65">
                   <dt>Desconto</dt>

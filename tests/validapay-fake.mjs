@@ -3,7 +3,10 @@
 // Segue o que a documentação oficial da ValidaPay (consultada pelo servidor MCP dela em 11/10/2026) diz de cada rota que a loja usa:
 // POST /auth/token (client_credentials, x-www-form-urlencoded), POST /v1/charges/pix (valores em REAIS, split, metadata, cabeçalho
 // X-Sub-Account), GET /v1/charges/{id}/status, GET /v1/charges/{id}, DELETE /v1/charges/{id}, GET /v1/wallet/refunds, GET /v1/wallet/transactions,
-// GET /v1/accounts/subaccounts, POST /v1/proposals e GET /v1/proposals/{formId}. Quando a loja foge do documentado, este servidor RECUSA, para o
+// GET /v1/accounts/subaccounts, POST /v1/proposals e GET /v1/proposals/{formId}. CARTÃO: POST /v1/charges com paymentMethod "creditcard"
+// (cardToken de uso único e 5 minutos, deviceId em UUID, externalId como idempotência → 409 DUPLICATE_CHARGE com o chargeId original em
+// error.details.chargeId, 200 "paid" ou 402 recusado, cartões de teste do sandbox) e as duas rotas que o SDK do navegador chama
+// (POST /v1/payment-sessions e POST /v1/payment-sessions/payment-methods). Quando a loja foge do documentado, este servidor RECUSA, para o
 // teste pegar o desvio. O que a documentação não diz tem um modo de teste para os dois comportamentos possíveis (marcado abaixo).
 // Isto prova a lógica do adaptador e da loja contra o CONTRATO DOCUMENTADO; não prova que a ValidaPay de verdade se comporta assim:
 // isso só se prova no sandbox da ValidaPay.
@@ -15,6 +18,7 @@ export const FAKE = {
   clientSecret: 'client-secret-de-teste',
   webhookSecret: 'segredo-do-webhook-de-teste',
   webhookToken: 'token-estatico-de-teste',
+  publicId: 'pub_teste_0001',
 };
 
 const SCOPES = new Set(['charges/read', 'charges/write', 'wallet/read', 'wallet/write', 'subaccounts/read', 'proposals/write']);
@@ -34,7 +38,19 @@ export function startFakeValidaPay() {
       proposal: null, // null | 'balance' (409 INSUFFICIENT_BALANCE_FOR_SUBACCOUNT_FEE) | 'conflict' (409) | 'hang' | 'invalid' (400)
       listFail: false,
       paidBetweenLookupAndCancel: null, // chargeId que vira PAID no instante do DELETE (corrida de pagamento × cancelamento)
+      // ---- Cartão ----
+      card: null, // null | 'processing' (200 sem "paid") | 'lose' (cobra e derruba a conexão) | 'hang' (cobra e nunca responde) | 'down' (500 sem cobrar) | 'down_after' (cobra e responde 500) | 'forbidden' (403)
+      cardFeePct: 5.37, // taxa que a ValidaPay "cobra" da loja no cartão (percentual e tarifa fixa em reais): vem no detalhe da cobrança
+      cardFeeFixed: 0.37,
+      cardFeeReport: 'rates', // 'rates' | 'none' (o detalhe da cobrança não informa a tarifa)
+      cardPaidDelta: 0, // reais somados ao valor "pago" informado (simula divergência entre o valor cobrado e o recebido)
+      phoneRequired: false, // 400 CUSTOMER_PHONE_REQUIRED quando falta o telefone
+      // NÃO CONFIRMADO na documentação: POST /v1/charges aceita o cabeçalho X-Sub-Account? 'any' | 'forbidden'
+      cardSub: 'any',
     },
+    cardTokens: new Map(),
+    externalIds: new Map(),
+    cardChargeCount: 0,
     charges: new Map(),
     subaccounts: [
       { accountNumber: '4960589', name: 'Estabelecimento Teste Ltda', documentNumber: '12345678000195', status: 'CONFIRMED', balance: 0 },
@@ -68,6 +84,34 @@ export function startFakeValidaPay() {
     return charge.status;
   }
 
+  // Tarifa que a ValidaPay cobra da loja neste cartão: percentual sobre o valor + tarifa fixa, arredondada ao centavo (em reais).
+  const cardFeeOf = (amount) => Math.round(amount * 100 * (state.mode.cardFeePct / 100) + state.mode.cardFeeFixed * 100) / 100;
+
+  // Cartões de teste do sandbox (documentação "Gerar cobrança Cartão"): o número digitado na tokenização define o resultado.
+  const CARD_OUTCOMES = {
+    '4111111111111111': null,
+    '4000000000000002': 'card_declined',
+    '4000000000000004': 'insufficient_funds',
+    '4000000000000006': 'expired_card',
+    '4000000000000008': 'invalid_cvv',
+    '4000000000000010': 'fraud_suspected',
+  };
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  function mintCardToken(number) {
+    const digits = String(number ?? '').replace(/\D/g, '');
+    const token = `ctk_${randomUUID().replace(/-/g, '')}`;
+    state.cardTokens.set(token, {
+      outcome: Object.hasOwn(CARD_OUTCOMES, digits) ? CARD_OUTCOMES[digits] : null,
+      last4: digits.slice(-4),
+      brand: digits.startsWith('4') ? 'VISA' : 'MASTERCARD',
+      createdAt: Date.now(),
+      used: false,
+      expired: false,
+    });
+    return token;
+  }
+
   const server = http.createServer(async (rawReq, res) => {
     const url = new URL(rawReq.url, 'http://fake');
     const chunks = [];
@@ -83,6 +127,8 @@ export function startFakeValidaPay() {
           mode: state.mode,
           calls: state.calls,
           charges: [...state.charges.values()],
+          cardChargeCount: state.cardChargeCount,
+          cardTokens: [...state.cardTokens.entries()].map(([token, t]) => ({ token, ...t })),
           proposals: [...state.proposals.values()],
           subaccounts: state.subaccounts,
           masterCredits: state.masterCredits,
@@ -94,7 +140,13 @@ export function startFakeValidaPay() {
         return send(res, 200, {});
       }
       if (req.path === '/__fake/reset') {
-        Object.assign(state.mode, { createFail: null, authFail: false, statusFail: false, cancelFail: false, subHeaderOnRead: 'any', proposal: null, listFail: false, paidBetweenLookupAndCancel: null });
+        Object.assign(state.mode, {
+          createFail: null, authFail: false, statusFail: false, cancelFail: false, subHeaderOnRead: 'any', proposal: null, listFail: false, paidBetweenLookupAndCancel: null,
+          card: null, cardFeePct: 5.37, cardFeeFixed: 0.37, cardFeeReport: 'rates', cardPaidDelta: 0, phoneRequired: false, cardSub: 'any',
+        });
+        state.cardTokens.clear();
+        state.externalIds.clear();
+        state.cardChargeCount = 0;
         state.charges.clear();
         state.proposals.clear();
         state.masterCredits.length = 0;
@@ -106,12 +158,12 @@ export function startFakeValidaPay() {
       if (req.path === '/__fake/pay') {
         const charge = state.charges.get(body.chargeId);
         if (!charge) return send(res, 404, { error: 'sem cobrança' });
-        if (charge.status !== 'PENDING') return send(res, 409, { error: `cobrança está ${charge.status}` });
+        if (!['PENDING', 'PROCESSING'].includes(charge.status)) return send(res, 409, { error: `cobrança está ${charge.status}` });
         charge.status = 'PAID';
         charge.paidAt = new Date().toISOString();
         charge.paidAmount = body.paidAmount ?? charge.amount;
-        charge.fee = body.fee ?? 0.99;
-        charge.endToEndId = `E${String(Date.now()).padEnd(31, '0')}`.slice(0, 32);
+        charge.fee = body.fee ?? (charge.card ? cardFeeOf(charge.amount) : 0.99);
+        charge.endToEndId = charge.card ? null : `E${String(Date.now()).padEnd(31, '0')}`.slice(0, 32);
         return send(res, 200, charge);
       }
       // Cria direto no servidor falso uma cobrança que a loja NÃO conhece (como a que a ValidaPay criou mas cuja resposta se perdeu).
@@ -135,6 +187,17 @@ export function startFakeValidaPay() {
         };
         state.charges.set(id, charge);
         return send(res, 200, charge);
+      }
+      // Gera um cardToken como o SDK faria (o teste de API não tem navegador). `number` define o resultado, como no sandbox.
+      if (req.path === '/__fake/token') {
+        const cardToken = mintCardToken(body.number ?? '4111111111111111');
+        return send(res, 200, { cardToken, deviceId: randomUUID() });
+      }
+      if (req.path === '/__fake/token/expire') {
+        const token = state.cardTokens.get(body.cardToken);
+        if (!token) return send(res, 404, {});
+        token.expired = true;
+        return send(res, 200, {});
       }
       if (req.path === '/__fake/set-status') {
         const charge = state.charges.get(body.chargeId);
@@ -172,6 +235,28 @@ export function startFakeValidaPay() {
       const token = `tok.${scope}.${++state.seq}`;
       state.tokens.set(token, scope);
       return send(res, 200, { access_token: token, expires_in: 3600, token_type: 'Bearer' });
+    }
+
+    // ---- SDK de tokenização (navegador): sem token OAuth, identificado pelo Id Público ----
+    if (req.method === 'POST' && req.path === '/v1/payment-sessions') {
+      log(req);
+      if (req.body?.publicId !== FAKE.publicId) return fail(res, 404, 'PUBLIC_ID_NOT_FOUND', 'Id público desconhecido');
+      return send(res, 200, { fingerprint: { orgId: 'fakeorg', merchantId: 'fakemerchant', dfpId: randomUUID() } });
+    }
+    if (req.method === 'POST' && req.path === '/v1/payment-sessions/payment-methods') {
+      const b = req.body ?? {};
+      // O registro de chamadas NUNCA guarda número, CVV nem validade do cartão (nem os de teste): só o que a loja precisa conferir.
+      log(req, { body: { publicId: b.publicId ?? null, hasCard: Boolean(b.number), last4: String(b.number ?? '').replace(/\D/g, '').slice(-4), customer: { name: b.customer?.name ?? null, email: b.customer?.email ?? null } } });
+      if (b.publicId !== FAKE.publicId) return fail(res, 404, 'PUBLIC_ID_NOT_FOUND', 'Id público desconhecido');
+      const digits = String(b.number ?? '').replace(/\D/g, '');
+      if (!/^\d{13,19}$/.test(digits)) return fail(res, 400, 'INVALID_CARD', 'Número do cartão inválido');
+      if (!/^\d{3,4}$/.test(String(b.cvv ?? ''))) return fail(res, 400, 'INVALID_CARD', 'CVV inválido');
+      if (!/^(0[1-9]|1[0-2])\/\d{4}$/.test(String(b.expiration ?? ''))) return fail(res, 400, 'INVALID_CARD', 'Validade inválida (use MM/AAAA)');
+      if (typeof b.cardHolderName !== 'string' || !b.cardHolderName.trim()) return fail(res, 400, 'INVALID_CARD', 'Nome do titular obrigatório');
+      if (!/^(\d{11}|\d{14})$/.test(String(b.customer?.document ?? '')) || !b.customer?.name || !b.customer?.email) return fail(res, 400, 'INVALID_CARD', 'Dados do comprador inválidos');
+      const cardToken = mintCardToken(digits);
+      const t = state.cardTokens.get(cardToken);
+      return send(res, 200, { cardToken, cardTokenExpiresAt: new Date(Date.now() + 5 * 60_000).toISOString(), cardBrand: t.brand, cardLastFour: t.last4 });
     }
 
     // ---- as demais rotas exigem token do escopo certo ----
@@ -232,6 +317,71 @@ export function startFakeValidaPay() {
       return send(res, 200, { chargeId: id, emv: charge.emv, qrCode: 'data:image/png;base64,iVBORw0KGgo=', metadata: charge.metadata });
     }
 
+    // POST /v1/charges (cartão de crédito à vista)
+    if (req.method === 'POST' && req.path === '/v1/charges') {
+      if (!need('charges/write')) return;
+      if (state.mode.card === 'forbidden') return fail(res, 403, 'FORBIDDEN', 'sem permissão');
+      if (state.mode.card === 'down') return fail(res, 500, 'INTERNAL', 'erro interno');
+      const body = req.body ?? {};
+      if (body.paymentMethod !== 'creditcard') return fail(res, 400, 'INVALID_DATA', 'esta rota é usada pela loja só para cartão');
+      const c = body.customer;
+      if (!c || typeof c.name !== 'string' || !c.name.trim() || !/^\S+@\S+\.\S+$/.test(c.email ?? '') || !/^(\d{11}|\d{14})$/.test(c.documentNumber ?? '')) return fail(res, 400, 'INVALID_DATA', 'customer.name, customer.email e customer.documentNumber (11 ou 14 dígitos) são obrigatórios');
+      if (c.phone !== undefined && !/^\+55\d{10,11}$/.test(c.phone)) return fail(res, 400, 'INVALID_DATA', 'telefone fora do formato E.164');
+      if (state.mode.phoneRequired && !c.phone) return fail(res, 400, 'CUSTOMER_PHONE_REQUIRED', 'telefone obrigatório para cobrança no cartão');
+      if (typeof body.cardToken !== 'string' || !body.cardToken) return fail(res, 400, 'MISSING_CARD_DATA', 'cardToken é obrigatório na cobrança com cartão; gere um com o SDK @validapay/tokenize');
+      if (typeof body.deviceId !== 'string' || !UUID.test(body.deviceId)) return fail(res, 400, 'INVALID_DATA', 'deviceId deve estar no formato uuid');
+      if (body.items !== undefined) return fail(res, 400, 'INVALID_DATA', 'envie items OU amount, nunca os dois');
+      if (typeof body.amount !== 'number' || body.amount < 0.01 || !reais(body.amount)) return fail(res, 400, 'INVALID_DATA', 'amount deve ser um valor em reais com duas casas (mín. 0.01)');
+      if (body.installments !== undefined && !(Number.isInteger(body.installments) && body.installments >= 1 && body.installments <= 12)) return fail(res, 400, 'INVALID_DATA', 'installments inválido');
+      if (state.mode.cardSub === 'forbidden' && sub) return fail(res, 400, 'INVALID_DATA', 'X-Sub-Account não é aceito nesta rota');
+      if (sub && !state.subaccounts.some((a) => a.accountNumber === sub && a.status === 'CONFIRMED')) return fail(res, 404, 'ACCOUNT_NOT_FOUND', 'subconta desconhecida');
+      // Token: de uso único, vale 5 minutos, existente (não é de outra conta).
+      const token = state.cardTokens.get(body.cardToken);
+      if (!token || token.used) return fail(res, 404, 'CARD_TOKEN_NOT_FOUND', 'cardToken inexistente ou de outra conta');
+      if (token.expired || Date.now() - token.createdAt > 5 * 60_000) return fail(res, 400, 'CARD_TOKEN_EXPIRED', 'cardToken expirado: gere outro na página');
+      // Idempotência: o mesmo externalId NUNCA cobra duas vezes. A resposta traz o chargeId da cobrança original (e o token novo não é gasto).
+      if (typeof body.externalId === 'string' && state.externalIds.has(body.externalId)) {
+        return send(res, 409, { error: { message: 'externalId já utilizado', code: 'DUPLICATE_CHARGE', details: { chargeId: state.externalIds.get(body.externalId) }, timestamp: new Date().toISOString() } });
+      }
+      token.used = true;
+      const id = `cha_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+      const approved = token.outcome === null;
+      const charge = {
+        id,
+        amount: body.amount,
+        split: null,
+        sub,
+        metadata: null, // documentado: metadata NÃO é gravado na cobrança no cartão
+        externalId: body.externalId ?? null,
+        externalTxid: body.externalTxid ?? null,
+        card: { last4: token.last4, brand: token.brand },
+        customerDocument: c.documentNumber,
+        installments: body.installments ?? 1,
+        status: approved ? (state.mode.card === 'processing' ? 'PROCESSING' : 'PAID') : 'FAILED',
+        failureReason: approved ? null : token.outcome,
+        createdAt: new Date().toISOString(),
+        expiresAt: null,
+        emv: null,
+        paidAt: null,
+        paidAmount: null,
+        fee: null,
+        endToEndId: null,
+      };
+      if (charge.status === 'PAID') {
+        charge.paidAt = new Date().toISOString();
+        charge.paidAmount = Number((body.amount + state.mode.cardPaidDelta).toFixed(2));
+        charge.fee = cardFeeOf(body.amount);
+      }
+      state.charges.set(id, charge);
+      if (body.externalId) state.externalIds.set(body.externalId, id);
+      state.cardChargeCount += 1;
+      if (state.mode.card === 'lose') return void rawReq.socket.destroy();
+      if (state.mode.card === 'hang') return;
+      if (state.mode.card === 'down_after') return fail(res, 500, 'INTERNAL', 'erro interno');
+      if (!approved) return send(res, 402, { success: false, chargeId: id, status: 'failed', error: token.outcome });
+      return send(res, 200, { success: true, chargeId: id, customerId: `cus_${state.seq}`, status: charge.status === 'PAID' ? 'paid' : 'processing' });
+    }
+
     // GET /v1/charges/{id}/status e GET /v1/charges/{id}
     const readMatch = /^\/v1\/charges\/([^/]+?)(\/status)?$/.exec(req.path);
     if (req.method === 'GET' && readMatch) {
@@ -246,9 +396,9 @@ export function startFakeValidaPay() {
           chargeId: charge.id,
           status: chargeStatus(charge),
           amount: charge.amount,
-          paymentType: 'PIX',
+          paymentType: charge.card ? 'CREDIT_CARD' : 'PIX',
           emv: charge.emv,
-          qrCode: 'data:image/png;base64,iVBORw0KGgo=',
+          qrCode: charge.emv ? 'data:image/png;base64,iVBORw0KGgo=' : null,
           paidAt: charge.paidAt,
           createdAt: charge.createdAt,
           expiresAt: charge.expiresAt,
@@ -259,18 +409,25 @@ export function startFakeValidaPay() {
         status: chargeStatus(charge),
         amount: charge.amount,
         currency: 'BRL',
-        paymentType: 'PIX',
+        paymentType: charge.card ? 'CREDIT_CARD' : 'PIX',
         saleType: 'ONE_TIME',
         paidAt: charge.paidAt,
         expiresAt: charge.expiresAt,
         endToEndId: charge.endToEndId,
         externalTxid: charge.externalTxid,
         grossAmount: charge.amount,
-        netAmount: charge.fee === null ? null : Number((charge.amount - charge.fee).toFixed(2)),
+        failureReason: charge.failureReason ?? null,
+        netAmount: charge.fee === null || (charge.card && state.mode.cardFeeReport === 'none') ? null : Number((charge.amount - charge.fee).toFixed(2)),
         paidAmount: charge.paidAmount,
-        fee: charge.fee === null ? null : { amount: charge.fee, percentageRate: 0, percentage: 0, fixed: charge.fee },
+        fee:
+          charge.fee === null || (charge.card && state.mode.cardFeeReport === 'none')
+            ? null
+            : charge.card
+              ? { amount: charge.fee, percentageRate: state.mode.cardFeePct / 100, percentage: state.mode.cardFeePct, fixed: state.mode.cardFeeFixed }
+              : { amount: charge.fee, percentageRate: 0, percentage: 0, fixed: charge.fee },
         payer: charge.paidAt ? { name: 'Pagador Teste', document: '12345678909' } : null,
-        pix: { emv: charge.emv, qrCode: 'data:image/png;base64,iVBORw0KGgo=', dueDate: null, discount: null },
+        pix: charge.card ? null : { emv: charge.emv, qrCode: 'data:image/png;base64,iVBORw0KGgo=', dueDate: null, discount: null },
+        card: charge.card ? { brand: charge.card.brand, lastFour: charge.card.last4, installments: charge.installments } : null,
       });
     }
 
@@ -407,5 +564,9 @@ export const paymentSuccess = (charge, extra = {}) => ({
   payer: { name: 'Pagador Teste', taxId: '12345678909' },
   ...extra,
 });
+
+// payment.success de uma cobrança avulsa no cartão (a loja só usa chargeId, status e valor; o resto é conferido na consulta à ValidaPay).
+export const paymentSuccessCard = (charge, extra = {}) =>
+  paymentSuccess(charge, { paymentType: 'CREDIT_CARD', paymentMethod: 'CREDIT_CARD', paymentId: null, metadata: null, payer: { name: 'Pagador Teste', taxId: charge.customerDocument ?? '12345678909' }, ...extra });
 
 export const sleep = wait;

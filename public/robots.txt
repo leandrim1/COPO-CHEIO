@@ -1,5 +1,6 @@
 User-agent: *
 Disallow: /api/
 Disallow: /pedido/
+Disallow: /pagar/
 Disallow: /acompanhar-pedido/
 Disallow: /conta

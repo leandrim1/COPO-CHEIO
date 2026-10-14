@@ -1,11 +1,13 @@
 # Pagamento online (Pix) com a ValidaPay — o que existe, o que falta e como ligar
 
+> **Cartão de crédito online (com a taxa do cartão repassada ao cliente): veja [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md).** Este arquivo continua sendo o guia do **Pix**.
+>
 > **Estado: o Pix online com a ValidaPay está escrito e testado, mas NUNCA foi testado de verdade contra a ValidaPay.**
 > O adaptador (`server/payments/validapay.ts`) foi escrito **só** a partir da documentação oficial da ValidaPay (lida pelo servidor MCP da
 > própria ValidaPay em 11/10/2026). Os testes automáticos usam um **servidor ValidaPay FALSO** (`tests/validapay-fake.mjs`) que segue essa
 > documentação e recusa o que foge dela; ele prova a lógica da loja e do adaptador, **não** que a ValidaPay de verdade responde assim.
 > **Nenhuma cobrança, subconta, transferência ou chamada à ValidaPay (sandbox ou produção) foi feita.** O próximo passo é um teste no
-> **sandbox** da ValidaPay (veja "Ligar" abaixo). **Cartão online NÃO existe** (veja "Cartão").
+> **sandbox** da ValidaPay (veja "Ligar" abaixo). O cartão online existe à parte (migration 0020) e também **nunca** foi testado na ValidaPay de verdade.
 
 ## Resumo
 
@@ -19,8 +21,8 @@
 
 ## O que NÃO existe
 
-- **Cartão de crédito online** (SDK de tokenização, 3DS, cobrança): não há tela nem rota, **por decisão do dono da loja: o cartão continua sendo pago na
-  entrega/retirada**. A documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão. Veja "Cartão".
+- **3DS** no cartão online (`@validapay/3ds`) e **parcelamento**: o cartão online é só à vista e sem 3DS (veja [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md)). A
+  documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão, então não há comissão de 2% no cartão online.
 - **Estorno/devolução pela API**: o sistema **registra** a devolução que a ValidaPay informar (consulta de `GET /v1/wallet/refunds` e avisos
   `refund.*`); devolver o dinheiro continua manual, pelo painel da ValidaPay (o adaptador nunca pede o escopo `wallet/write`).
 - **Teste no sandbox ou na produção da ValidaPay**: nunca foi feito. Tudo que depende de como a ValidaPay realmente se comporta está listado em
@@ -159,15 +161,14 @@ Regras (nada acontece sozinho):
 
 Cada um desses pontos precisa ser conferido no **sandbox**: se algum comportamento for outro, é uma mudança pequena e localizada em `validapay.ts`.
 
-## Cartão: fica na entrega
+## Cartão
 
-**Decisão do dono da loja: o cartão continua sendo pago na entrega ou na retirada** (maquininha), como já era. Nenhum cartão online foi construído nem será ligado.
-O checkout oferece "Cartão — na entrega/retirada" como antes, sem passar pela ValidaPay e sem comissão automática (a comissão de 2% vale só para o Pix online).
+A forma "Cartão" (maquininha) continua sendo **paga na entrega ou na retirada**, como sempre foi: não passa pela ValidaPay e não tem taxa nem comissão automática
+(a comissão de 2% vale só para o Pix online).
 
-Para registro: a documentação do cartão da ValidaPay (`POST /v1/charges`, SDK `@validapay/tokenize`, `@validapay/3ds`) **não traz o campo `split`**; a divisão está
-documentada **só para o Pix** (`POST /v1/charges/pix`). Se um dia o cartão online for desejado, será uma mudança à parte: perguntar à ValidaPay (suporte) se
-`POST /v1/charges` aceita `split` com `X-Sub-Account`, incluir o SDK no navegador (3DS pede telefone e endereço completo do pagador), liberar os endereços do SDK
-na CSP só em `/checkout` e coletar CPF/CNPJ do pagador.
+O **cartão de crédito online** (o cliente paga pelo site e a taxa do cartão é repassada a ele) é outra forma de pagamento, `card_online`, que nasce **desligada** e
+está descrita em [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md). Ele **não** tem comissão: a documentação do cartão da ValidaPay (`POST /v1/charges`) **não traz o campo
+`split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`).
 
 ## Ligar (passo a passo, começando pelo SANDBOX)
 

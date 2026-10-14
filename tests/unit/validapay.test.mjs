@@ -30,7 +30,12 @@ function fakeFetch(routes) {
       return ok({ access_token: `tok-${form.get('scope')}-${calls.length}`, expires_in: 3600, token_type: 'Bearer' });
     }
     for (const [method, pattern, handler] of routes) {
-      if (method === call.method && pattern.test(url.pathname)) return handler(call);
+      if (method === call.method && pattern.test(url.pathname)) {
+        const reply = handler(call);
+        // Como o fetch de verdade: se o prazo (AbortSignal) estoura, a chamada falha, mesmo que a resposta nunca chegue.
+        if (!init.signal) return reply;
+        return Promise.race([reply, new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason ?? new Error('abortado')), { once: true }))]);
+      }
     }
     return ok({ error: { code: 'NOT_FOUND', message: 'rota' } }, 404);
   };
@@ -127,7 +132,17 @@ test('createPixCharge: o token é pedido uma vez por escopo e reaproveitado; 401
   await assert.rejects(p.createPixCharge(createInput), (error) => error.kind === 'rejected' && error.httpStatus === 401);
   unauthorized = false;
   await p.createPixCharge(createInput);
-  assert.equal(f.calls.filter((c) => c.path === '/auth/token').length, 2, 'depois do 401 pede um token novo');
+  // 1 (primeiro uso) + 1 (o 401 derrubou o token e a loja pediu outro para repetir UMA vez, que também deu 401) + 1 (depois, token novo).
+  assert.equal(f.calls.filter((c) => c.path === '/auth/token').length, 3, 'depois do 401 pede um token novo');
+});
+
+test('401 uma vez só (token revogado antes da hora): a loja pede outro token e repete a chamada UMA vez, sem erro para o cliente', async () => {
+  let first = true;
+  const { p, f } = provider([['POST', /\/v1\/charges\/pix$/, () => (first ? ((first = false), ok({ error: { code: 'UNAUTHORIZED' } }, 401)) : ok({ chargeId: 'cha_4', emv: '000201' }))]]);
+  const created = await p.createPixCharge(createInput);
+  assert.equal(created.providerChargeId, 'cha_4');
+  assert.equal(f.calls.filter((c) => c.path === '/auth/token').length, 2);
+  assert.equal(f.api().length, 2);
 });
 
 test('createPixCharge: erros viram "rejected" (definitivo) ou "unavailable" (ambíguo), sem vazar segredos', async () => {
@@ -548,4 +563,146 @@ test('cadastro: formulário inválido lista TODOS os campos com erro e nunca vir
   const tomorrow = new Date(Date.UTC(today.getUTCFullYear() - 18, today.getUTCMonth(), today.getUTCDate() + 1)).toISOString().slice(0, 10);
   assert.doesNotThrow(() => merchantMod.buildProposalBody('pf', { ...pfForm(), birthDate: adult }));
   assert.throws(() => merchantMod.buildProposalBody('pf', { ...pfForm(), birthDate: tomorrow }));
+});
+
+
+// ---- cartão de crédito ------------------------------------------------------------------------------------------------------------------
+
+const TOKEN = 'ctk_9f8s7d6f5g4h3j2k1l0';
+const DEVICE = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const cardInput = {
+  paymentId: '0b6f7a1e-3c58-4d0e-9a3a-5f1d2c4e8b11',
+  orderNumber: 1007,
+  amountCents: 10607,
+  cardToken: TOKEN,
+  deviceId: DEVICE,
+  customer: { name: 'Maria Silva', email: 'maria@exemplo.com', document: '529.982.247-25', phone: '(34) 99999-0000' },
+  merchantAccountId: '4960589',
+  description: 'Pedido #1007',
+};
+const cardRoute = (handler) => [['POST', /^\/v1\/charges$/, handler]];
+
+test('cartão: sem o Id Público não há cartão; com ele, o navegador recebe só o Id Público e o ambiente', () => {
+  const without = provider([]).p;
+  assert.equal(without.createCardCharge, undefined);
+  assert.equal(without.cardCheckout, undefined);
+  const withId = provider([], { publicId: 'pub_teste_0001' }).p;
+  assert.equal(typeof withId.createCardCharge, 'function');
+  assert.deepEqual(withId.cardCheckout, { publicId: 'pub_teste_0001', environment: 'sandbox' });
+  assert.equal(provider([], { publicId: 'tem espaço' }).p.cardCheckout, undefined, 'Id Público com caracteres estranhos não liga o cartão');
+  const fromEnv = mod.validaPayFromEnv({ VALIDAPAY_ENV: 'sandbox', VALIDAPAY_CLIENT_ID: 'a', VALIDAPAY_CLIENT_SECRET: 'b', VALIDAPAY_WEBHOOK_SECRET: 'c', VALIDAPAY_PUBLIC_ID: 'pub_x1234' });
+  assert.deepEqual(fromEnv.provider.cardCheckout, { publicId: 'pub_x1234', environment: 'sandbox' });
+});
+
+test('createCardCharge: corpo exatamente como a documentação manda (creditcard, reais, externalId = idempotência, cardToken, deviceId, à vista, sem repassar tarifas)', async () => {
+  const { p, f } = provider(cardRoute(() => ok({ success: true, chargeId: 'cha_card_1', customerId: 'cus_1', status: 'paid' })), { publicId: 'pub_teste_0001' });
+  const result = await p.createCardCharge(cardInput);
+  assert.deepEqual(result, { providerChargeId: 'cha_card_1', outcome: 'paid', providerStatus: 'PAID' });
+  assert.equal(f.calls[0].form.scope, 'charges/write');
+  const [call] = f.api();
+  assert.equal(call.method, 'POST');
+  assert.equal(call.path, '/v1/charges');
+  assert.equal(call.headers['x-sub-account'], '4960589');
+  const body = JSON.parse(call.body);
+  assert.equal(body.paymentMethod, 'creditcard');
+  assert.equal(body.amount, 106.07, 'valor TOTAL em reais (itens + entrega + taxa do cartão)');
+  assert.equal(body.externalId, cardInput.paymentId, 'idempotência: o id da tentativa da loja');
+  assert.equal(body.cardToken, TOKEN);
+  assert.equal(body.deviceId, DEVICE);
+  assert.equal(body.installments, 1, 'só à vista');
+  assert.equal(body.passFeesToCustomer, false, 'a taxa do cliente é a da loja; a opção da operadora (só parcelamento) não é usada');
+  assert.deepEqual(body.customer, { name: 'Maria Silva', email: 'maria@exemplo.com', documentNumber: '52998224725', phone: '+5534999990000' });
+  assert.equal('items' in body, false, 'items OU amount, nunca os dois');
+  assert.equal('metadata' in body, false, 'a rota do cartão não grava metadata');
+  assert.equal('number' in body || 'cvv' in body, false, 'o cartão nunca passa pela loja');
+});
+
+test('createCardCharge: conta master não leva X-Sub-Account; telefone 55 já incluído ou inválido', async () => {
+  const { p, f } = provider(cardRoute(() => ok({ success: true, chargeId: 'cha_card_2', status: 'paid' })), { publicId: 'pub_teste_0001', cardAccount: 'master' });
+  await p.createCardCharge(cardInput);
+  await p.createCardCharge({ ...cardInput, customer: { ...cardInput.customer, phone: '5534999990000' } });
+  await p.createCardCharge({ ...cardInput, customer: { ...cardInput.customer, phone: '123' } });
+  const calls = f.api();
+  assert.equal(calls[0].headers['x-sub-account'], undefined);
+  assert.equal(JSON.parse(calls[1].body).customer.phone, '+5534999990000');
+  assert.equal('phone' in JSON.parse(calls[2].body).customer, false, 'telefone fora do padrão não é enviado');
+});
+
+test('createCardCharge: 402 = recusado (definitivo, com o código da cobrança); 409 DUPLICATE_CHARGE = cobrança original adotada; 200 sem "paid" = em processamento', async () => {
+  const replies = [
+    ok({ success: false, chargeId: 'cha_declined', status: 'failed', error: 'card_declined' }, 402),
+    ok({ error: { code: 'DUPLICATE_CHARGE', message: 'externalId já utilizado', details: { chargeId: 'cha_original' } } }, 409),
+    ok({ success: true, chargeId: 'cha_proc', status: 'processing' }),
+  ];
+  const { p } = provider(cardRoute(() => replies.shift()), { publicId: 'pub_teste_0001' });
+  assert.deepEqual(await p.createCardCharge(cardInput), { providerChargeId: 'cha_declined', outcome: 'declined', providerStatus: 'FAILED', reason: 'card_declined' });
+  assert.deepEqual(await p.createCardCharge(cardInput), { providerChargeId: 'cha_original', outcome: 'duplicate', providerStatus: null });
+  assert.deepEqual(await p.createCardCharge(cardInput), { providerChargeId: 'cha_proc', outcome: 'processing', providerStatus: 'PROCESSING' });
+});
+
+test('createCardCharge: erros definitivos viram "rejected" com o código; falhas sem desfecho viram "unavailable" (a loja NÃO presume que nada foi cobrado)', async () => {
+  const definitive = [
+    [400, { error: { code: 'CARD_TOKEN_EXPIRED', message: 'expirado' } }, 'CARD_TOKEN_EXPIRED'],
+    [404, { error: { code: 'CARD_TOKEN_NOT_FOUND' } }, 'CARD_TOKEN_NOT_FOUND'],
+    [400, { error: { code: 'MISSING_CARD_DATA' } }, 'MISSING_CARD_DATA'],
+    [400, { error: { code: 'CUSTOMER_PHONE_REQUIRED' } }, 'CUSTOMER_PHONE_REQUIRED'],
+    [403, { error: { code: 'FORBIDDEN' } }, 'FORBIDDEN'],
+  ];
+  for (const [status, body, code] of definitive) {
+    const { p } = provider(cardRoute(() => ok(body, status)), { publicId: 'pub_teste_0001' });
+    await assert.rejects(p.createCardCharge(cardInput), (error) => error.kind === 'rejected' && error.code === code && !/csecret|cid|Bearer/.test(error.message), `${status} ${code}`);
+  }
+  const ambiguous = [
+    ok({ error: { code: 'INTERNAL' } }, 500),
+    ok({ error: { code: 'BAD_GATEWAY' } }, 502),
+    ok({ error: { code: 'RATE_LIMIT' } }, 429),
+    ok({ success: true }, 200), // aceita, mas sem o código da cobrança: o cartão PODE ter sido cobrado
+    new Response('não é json', { status: 200 }), // resposta ilegível
+    ok({ error: { code: 'DUPLICATE_CHARGE', details: {} } }, 409), // duplicada sem o código original
+  ];
+  for (const reply of ambiguous) {
+    const { p } = provider(cardRoute(() => reply), { publicId: 'pub_teste_0001' });
+    await assert.rejects(p.createCardCharge(cardInput), (error) => error.kind === 'unavailable');
+  }
+  const { p: slow } = provider(cardRoute(() => new Promise(() => {})), { publicId: 'pub_teste_0001', cardTimeoutMs: 80 });
+  const keepAlive = setTimeout(() => {}, 5000); // o prazo (AbortSignal.timeout) não segura o processo de teste; uma conexão de verdade seguraria
+  await assert.rejects(slow.createCardCharge(cardInput), (error) => error.kind === 'unavailable' && error.code === 'NO_RESPONSE', 'sem resposta no prazo: ambíguo, nunca "recusado"');
+  clearTimeout(keepAlive);
+  const { p: dropped } = provider([['POST', /^\/v1\/charges$/, () => { throw new TypeError('socket hang up'); }]], { publicId: 'pub_teste_0001' });
+  await assert.rejects(dropped.createCardCharge(cardInput), (error) => error.kind === 'unavailable');
+});
+
+test('createCardCharge: dados inválidos nem chegam à operadora', async () => {
+  const { p, f } = provider(cardRoute(() => ok({ success: true, chargeId: 'x1y2z3', status: 'paid' })), { publicId: 'pub_teste_0001' });
+  const bad = [
+    { ...cardInput, amountCents: 0 },
+    { ...cardInput, amountCents: 10.5 },
+    { ...cardInput, cardToken: 'curto' },
+    { ...cardInput, cardToken: '4111 1111 1111 1111' },
+    { ...cardInput, deviceId: 'a b' },
+    { ...cardInput, customer: { ...cardInput.customer, document: '123' } },
+    { ...cardInput, merchantAccountId: 'conta; drop' },
+  ];
+  for (const input of bad) await assert.rejects(p.createCardCharge(input), (error) => error.kind === 'rejected');
+  assert.equal(f.calls.length, 0, 'nada foi enviado');
+});
+
+test('getCharge de cartão: PROCESSING fica pendente; PAID traz tarifa e líquido; FAILED e o valor realmente pago', async () => {
+  const status = { v: 'PROCESSING' };
+  const { p } = provider([
+    ['GET', /\/status$/, () => ok({ chargeId: 'cha_c1', status: status.v, amount: 106.07, paymentType: 'CREDIT_CARD', paidAt: status.v === 'PAID' ? '2026-10-14T12:00:00Z' : null })],
+    ['GET', /\/v1\/charges\/cha_c1$/, () => ok({ chargeId: 'cha_c1', status: 'PAID', amount: 106.07, grossAmount: 106.07, paidAmount: 106.07, netAmount: 100, paymentType: 'CREDIT_CARD', fee: { amount: 6.07, percentageRate: 0.0537, percentage: 5.37, fixed: 0.37 } })],
+  ], { publicId: 'pub_teste_0001' });
+  const pending = await p.getCharge('cha_c1', { merchantAccountId: '4960589', commissionCents: 0 });
+  assert.equal(pending.status, 'pending');
+  assert.equal(pending.amountCents, 10607);
+  status.v = 'PAID';
+  const paid = await p.getCharge('cha_c1', { merchantAccountId: '4960589', commissionCents: 0 });
+  assert.equal(paid.status, 'paid');
+  assert.equal(paid.feeCents, 607);
+  assert.equal(paid.netCents, 10000);
+  assert.equal(paid.amountCents, 10607);
+  assert.equal(paid.split, null, 'sem comissão no cartão: nenhuma conferência de repasse');
+  status.v = 'FAILED';
+  assert.equal((await p.getCharge('cha_c1', { merchantAccountId: '4960589', commissionCents: 0 })).status, 'failed');
 });

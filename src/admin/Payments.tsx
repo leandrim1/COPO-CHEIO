@@ -5,6 +5,7 @@ import { percentFromBps, taxaWording } from '../lib/format';
 import type { MerchantAccount, PaymentState, PaymentsOverview } from '../lib/types';
 import { LinkAccountModal, NewAccountModal } from './AccountSetup';
 import { useAdmin, useLiveOrders } from './AdminApp';
+import { CardFeeCard } from './CardFee';
 import { CommissionBadge, PAYMENT_STATE_LABEL, PaymentActions, PaymentStateBadge, cents, when } from './OnlinePayment';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Switch, cx, useToast } from './ui';
 
@@ -124,7 +125,7 @@ export default function PaymentsPage() {
     <>
       <PageHeader
         title="Pagamentos online"
-        description="Pix pelo site: o cliente paga e a operadora de pagamento confirma. Aqui você acompanha as cobranças e a taxa."
+        description="Pix e cartão de crédito pelo site: o cliente paga e a operadora de pagamento confirma. Aqui você acompanha as cobranças e as taxas."
         actions={
           <Button variant="secondary" loading={busy === 'sweep'} icon={<Landmark className="h-4 w-4" aria-hidden="true" />} onClick={() => void sweep()}>
             Conferir agora
@@ -241,6 +242,7 @@ export default function PaymentsPage() {
               </dd>
             </dl>
           </Card>
+          <CardFeeCard overview={data} onChanged={() => void load()} />
           <LinkAccountModal open={dialog === 'link'} onClose={() => setDialog(null)} environment={data.provider.environment} onDone={() => void load()} />
           <NewAccountModal
             open={dialog === 'new'}
@@ -291,7 +293,7 @@ export default function PaymentsPage() {
                 <EmptyState
                   icon={<Wallet className="h-6 w-6" aria-hidden="true" />}
                   title={attention || status !== 'all' ? 'Nenhuma cobrança nesse filtro' : 'Nenhuma cobrança ainda'}
-                  description={attention || status !== 'all' ? 'Tente outro filtro.' : 'Quando um cliente pagar um pedido com Pix online, a cobrança aparece aqui.'}
+                  description={attention || status !== 'all' ? 'Tente outro filtro.' : 'Quando um cliente pagar um pedido com Pix ou cartão online, a cobrança aparece aqui.'}
                 />
               </Card>
             ) : (
@@ -313,13 +315,19 @@ export default function PaymentsPage() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-base font-black tabular-nums text-white">{cents(p.amount_cents)}</span>
-                        <PaymentStateBadge status={p.status} />
+                        <PaymentStateBadge status={p.status} method={p.method} />
                       </div>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/65">
-                      <span className="inline-flex items-center gap-1.5">
-                        Taxa {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
-                      </span>
+                      {p.method === 'card' ? (
+                        <span className="inline-flex items-center gap-1.5" data-payment-method="card">
+                          <Badge tone="blue">Cartão</Badge> Taxa do cartão (cliente) {cents(p.customer_fee_cents ?? 0)}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5">
+                          Taxa {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
+                        </span>
+                      )}
                       <span>Tarifa {p.fee_cents === null || p.fee_cents === undefined ? '—' : cents(p.fee_cents)}</span>
                       <span>Líquido {p.net_cents === null || p.net_cents === undefined ? '—' : cents(p.net_cents)}</span>
                     </div>

@@ -1,4 +1,5 @@
 import { AccountPage, MyOrderPage, MyOrdersPage, RecoverPage, ResetPage, VerifyLinkPage } from './Account';
+import { CardPaymentPage } from './CardPayment';
 import { EmailPreferencesPage } from './EmailPreferences';
 import { NotFoundPage, PrivacyPage } from './Privacy';
 import { LookupPage, TrackingPage } from './Tracking';
@@ -6,6 +7,7 @@ import { LookupPage, TrackingPage } from './Tracking';
 // Páginas do cliente (acompanhamento e conta). Ficam num pacote à parte: a página inicial não carrega nada disso.
 export type CustomerPage =
   | { name: 'pedido'; token: string }
+  | { name: 'pagar'; token: string }
   | { name: 'acompanhar'; token: string | null }
   | { name: 'conta' }
   | { name: 'conta-pedidos' }
@@ -22,6 +24,8 @@ export default function CustomerPages({ page }: { page: CustomerPage }) {
     case 'pedido':
       // key: trocar de pedido recomeça o acompanhamento do zero
       return <TrackingPage key={page.token} token={page.token} confirmation />;
+    case 'pagar':
+      return <CardPaymentPage key={page.token} token={page.token} />;
     case 'acompanhar':
       return page.token ? <TrackingPage key={page.token} token={page.token} confirmation={false} /> : <LookupPage />;
     case 'conta':

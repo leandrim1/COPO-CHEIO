@@ -2,7 +2,7 @@
 // Sem isso a loja só descobriria pelo cliente reclamando. Nada de dados pessoais: endereços com código de acompanhamento ou de
 // redefinição de senha saem mascarados, e o servidor ainda limita quantos relatórios aceita por minuto.
 
-const SECRET_PATHS = /(\/(?:pedido|acompanhar-pedido|conta\/redefinir|conta\/verificar)\/)[^/?#\s]+/g;
+const SECRET_PATHS = /(\/(?:pedido|pagar|acompanhar-pedido|conta\/redefinir|conta\/verificar)\/)[^/?#\s]+/g;
 
 export const maskPath = (value: string) => value.replace(SECRET_PATHS, '$1:codigo');
 

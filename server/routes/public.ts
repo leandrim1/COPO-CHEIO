@@ -67,7 +67,14 @@ export function registerPublic(r: Router) {
            from banners where active and placement = 'cover' order by position, created_at`,
       ],
       ['select id, name, fee, position, active from delivery_zones where active order by position, name'],
-      ['select code, label, details from payment_methods where enabled order by position'],
+      // O cartão online leva a taxa (percentual e tarifa fixa) só para a tela mostrar o resumo enquanto a pessoa mexe no pedido; quem cobra de verdade é o banco.
+      [
+        `select m.code, m.label, m.details,
+                case when m.code = 'card_online' then jsonb_build_object('bps', f.card_fee_bps, 'fixed_cents', f.card_fee_fixed_cents) end as card_fee
+           from payment_methods m cross join payment_fee_settings f
+          where m.enabled and (m.code <> 'card_online' or f.confirmed_at is not null)
+          order by m.position`,
+      ],
     ]);
     if (!store[0] || !site[0] || !hero[0]) {
       throw new HttpError(503, 'O banco ainda não tem o conteúdo inicial. Rode as migrations (npm run db:migrate).');

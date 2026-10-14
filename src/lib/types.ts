@@ -123,8 +123,9 @@ export type DeliveryZone = {
 
 // awaiting_payment: pedido de pagamento online que ainda não foi pago. A loja só o vê como "novo" depois que o pagamento é confirmado.
 export type OrderStatus = 'awaiting_payment' | 'new' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
-// pix_online: o cliente paga pelo site (QR Code ou copia e cola) e a operadora confirma; os outros três são pagos na entrega/retirada.
-export type PaymentMethod = 'pix' | 'cash' | 'card' | 'pix_online';
+// pix_online e card_online: o cliente paga pelo site (Pix por QR Code/copia e cola, ou cartão de crédito) e a operadora confirma; os outros três são
+// pagos na entrega/retirada. Só o card_online leva a taxa de processamento do cartão (repassada ao cliente).
+export type PaymentMethod = 'pix' | 'cash' | 'card' | 'pix_online' | 'card_online';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
 export type DeliveryType = 'delivery' | 'pickup';
 
@@ -146,6 +147,11 @@ export type Order = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
+  // Cartão online: a taxa de processamento cobrada do cliente (já dentro do total) e os valores com que foi calculada (percentual em pontos-base e
+  // tarifa fixa em reais; o atendente não recebe estes dois, só o owner).
+  payment_fee: number;
+  payment_fee_bps?: number | null;
+  payment_fee_fixed?: number | null;
   total: number;
   payment_method: PaymentMethod;
   change_for: number | null;
@@ -183,6 +189,8 @@ export type PaymentOption = {
   // PIX: a chave que o cliente vê depois do pedido.
   details: string | null;
   enabled?: boolean;
+  // Só no cartão online: percentual (pontos-base, 537 = 5,37%) e tarifa fixa (centavos) para o resumo na tela. Quem cobra de verdade é o servidor.
+  card_fee?: { bps: number; fixed_cents: number } | null;
 };
 
 export type AdminAccount = {
@@ -244,6 +252,8 @@ export type PublicOrder = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
+  // Taxa de processamento do cartão repassada ao cliente (0 nas outras formas de pagamento); já está dentro do total.
+  payment_fee: number;
   total: number;
   created_at: string;
   updated_at: string;
@@ -255,7 +265,7 @@ export type PublicOrder = {
   items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null; swap_to_product_id?: string | null }[];
   history: { status: OrderStatus; at: string }[];
   // Resumo do pagamento online (só existe quando já houve uma cobrança). Os detalhes vêm de /api/tracking/:código/payment.
-  payment?: { method: 'pix'; status: PaymentState; expires_at: string | null; paid_at: string | null; attempt: number };
+  payment?: { method: 'pix' | 'card'; status: PaymentState; expires_at: string | null; paid_at: string | null; attempt: number };
 };
 
 // ---- Pagamento online (Pix) -----------------------------------------------------------------------------------------------------
@@ -267,7 +277,7 @@ export type PaymentState = 'creating' | 'pending' | 'paid' | 'expired' | 'cancel
 export type PaymentView = {
   id: string;
   status: PaymentState;
-  method: 'pix';
+  method: 'pix' | 'card';
   amount: number;
   attempt: number;
   expires_at: string | null;
@@ -278,7 +288,14 @@ export type PaymentView = {
   message: string | null;
 };
 
-export type CustomerPayment = { payment: PaymentView | null; order_status: OrderStatus; payment_status: PaymentStatus };
+// card_checkout: o que o navegador precisa para trocar o cartão por um token (só no cartão online que espera pagamento): o Id Público da conta
+// (não é segredo) e o ambiente. O cartão nunca passa pela loja.
+export type CustomerPayment = {
+  payment: PaymentView | null;
+  order_status: OrderStatus;
+  payment_status: PaymentStatus;
+  card_checkout?: { public_id: string; environment: 'sandbox' | 'production' } | null;
+};
 
 // Painel: uma cobrança. Todo administrador vê a situação; só o owner recebe comissão, tarifas e códigos da operadora (os campos opcionais).
 // calculated: só calculada · confirmed: a operadora confirmou o repasse · failed: o repasse falhou · not_applicable: sem divisão
@@ -288,7 +305,7 @@ export type AdminPayment = {
   order_id: string;
   order_number: number;
   attempt: number;
-  method: 'pix';
+  method: 'pix' | 'card';
   status: PaymentState;
   amount_cents: number;
   expires_at: string | null;
@@ -306,6 +323,9 @@ export type AdminPayment = {
   fee_cents?: number | null;
   net_cents?: number | null;
   refunded_cents?: number;
+  // Cartão: a taxa que o cliente pagou (já dentro de amount_cents) e quantas vezes a tentativa foi enviada à operadora.
+  customer_fee_cents?: number;
+  card_attempts?: number;
   checked_at?: string | null;
   closed_at?: string | null;
   last_error?: string | null;
@@ -355,11 +375,33 @@ export type PaymentsOverview = {
     missing: string[];
     note: string | null;
     manages_accounts: boolean;
+    // O cartão online precisa também do Id Público da conta (VALIDAPAY_PUBLIC_ID): sem ele o navegador não consegue gerar o token do cartão.
+    card_ready: boolean;
   };
   // Tarifa de criação de uma conta nova, em centavos (0 no sandbox; null: a operadora não informa).
   account_fee_cents: number | null;
   readiness: { provider: string | null; merchant: string | null; ready: boolean };
   method: { code: 'pix_online'; label: string; enabled: boolean } | null;
+  // Cartão de crédito online: a forma de pagamento, a taxa repassada ao cliente (do contrato com a operadora) e o que falta para ligar.
+  card: {
+    method: { code: 'card_online'; label: string; enabled: boolean } | null;
+    fee: { card_fee_bps: number; card_fee_fixed_cents: number; confirmed_at: string | null; confirmed_by_name: string | null; updated_at: string } | null;
+    readiness: CardReadiness;
+  };
+};
+
+// Só os NOMES do que falta (nunca valores).
+export type CardReadiness = { ready: boolean; missing: string[] };
+
+// GET/PATCH /api/admin/payment-fees/card (só o owner).
+export type CardFeeSettings = {
+  bps: number;
+  fixed_cents: number;
+  confirmed_at: string | null;
+  confirmed_by_name: string | null;
+  updated_at: string | null;
+  examples: { base_cents: number; fee_cents: number; total_cents: number }[];
+  readiness: CardReadiness;
 };
 
 // Conta do cliente (opcional).

@@ -6,7 +6,7 @@ import { batch, insertRow, one, query, updateRow } from '../db.js';
 import type { Row } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
-import { onlineReadiness } from '../payments/service.js';
+import { cardReadiness, onlineReadiness } from '../payments/service.js';
 import {
   bool,
   digits,
@@ -227,6 +227,17 @@ export function registerContent(r: Router) {
             provider: ready.provider,
             merchant: ready.merchant,
           });
+        }
+      }
+    }
+    // Cartão online: as mesmas travas do Pix online, mais a taxa conferida e o identificador público da conta para o SDK do navegador.
+    if (code === 'card_online') {
+      if (ctx.admin!.role !== 'owner') throw new HttpError(403, 'Só o owner pode ligar ou desligar o pagamento online.');
+      if (values.details !== undefined && values.details !== null) throw new HttpError(400, 'O pagamento online não usa chave PIX.');
+      if (values.enabled === true) {
+        const ready = await cardReadiness();
+        if (!ready.ready) {
+          throw new HttpError(409, `Para ligar o cartão online falta: ${ready.missing.join(', ')}. Veja o status em Pagamentos online.`, { code: 'payments_not_ready', missing: ready.missing });
         }
       }
     }

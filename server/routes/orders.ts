@@ -8,6 +8,13 @@ import { sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken } from '../tracking.js';
 import { paymentsOfOrder } from './payments.js';
 
+// A taxa do cartão (alíquota e tarifa fixa) é da área do owner; o atendente vê só o valor cobrado do cliente (payment_fee).
+const hideRates = (row: Record<string, unknown>, owner: boolean): Record<string, unknown> => {
+  if (owner) return row;
+  const { payment_fee_bps: _bps, payment_fee_fixed: _fixed, ...rest } = row;
+  return rest;
+};
+
 const STATUSES = ['awaiting_payment', 'new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] as const;
 const PAYMENT_STATUSES = ['pending', 'paid', 'refunded'] as const;
 
@@ -21,7 +28,7 @@ export function registerOrders(r: Router) {
       ["select * from orders where order_status <> 'awaiting_payment' order by created_at desc limit 8"],
       ["select count(*) as n from privacy_requests where status = 'open'"],
     ]);
-    return json({ ...dash[0].dashboard, recent, privacy_open: privacy[0]?.n ?? 0 });
+    return json({ ...dash[0].dashboard, recent: recent.map((row) => hideRates(row, ctx.admin!.role === 'owner')), privacy_open: privacy[0]?.n ?? 0 });
   });
 
   // Lista com filtro de status, busca (número, nome ou telefone) e contagem por status.
@@ -76,7 +83,7 @@ export function registerOrders(r: Router) {
     ]);
     const byStatus: Record<string, number> = {};
     for (const row of counts) byStatus[row.order_status] = row.n;
-    return json({ orders: rows.slice(0, limit), has_more: rows.length > limit, counts: byStatus });
+    return json({ orders: rows.slice(0, limit).map((row) => hideRates(row, ctx.admin!.role === 'owner')), has_more: rows.length > limit, counts: byStatus });
   });
 
   r.get('/api/admin/orders/:number', 'admin', async (ctx) => {
@@ -98,7 +105,7 @@ export function registerOrders(r: Router) {
     ]);
     const retention = await one<{ days: number }>('select tracking_retention_days as days from store_settings where id = 1');
     const payments = await paymentsOfOrder(order.id, ctx.admin!.role === 'owner');
-    return json({ order, items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180, payments });
+    return json({ order: hideRates(order, ctx.admin!.role === 'owner'), items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180, payments });
   });
 
   // Gera um link novo de acompanhamento para mandar ao cliente. O código só aparece nesta resposta (no banco

@@ -446,7 +446,8 @@ function PaymentTab({ payments, onSaved }: { payments: PaymentOption[]; onSaved:
       <Card title="Formas de pagamento" description="O cliente escolhe no checkout. O pagamento online ainda não está ligado: PIX é enviado pelo cliente; dinheiro e cartão são pagos na entrega/retirada.">
         <div className="space-y-4">
           {/* O Pix online (o cliente paga pelo site) é ligado e conferido na página Pagamentos, que mostra se a operadora e a conta estão prontas. */}
-          {payments.filter((p) => p.code !== 'pix_online').map((p) => (
+          {/* O cartão online também: ele leva a taxa do cartão e só liga com a taxa conferida (ver Pagamentos). */}
+          {payments.filter((p) => p.code !== 'pix_online' && p.code !== 'card_online').map((p) => (
             <Switch
               key={p.code}
               checked={enabled[p.code]}

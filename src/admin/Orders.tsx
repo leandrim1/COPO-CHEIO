@@ -660,6 +660,12 @@ export function OrderDetailPage({ number }: { number: string }) {
                 <dt>Desconto</dt>
                 <dd className="tabular-nums">{Number(order.discount) > 0 ? `− ${money(Number(order.discount))}` : money(0)}</dd>
               </div>
+              {Number(order.payment_fee) > 0 && (
+                <div className="flex justify-between text-white/60">
+                  <dt>Taxa do cartão (paga pelo cliente)</dt>
+                  <dd className="tabular-nums">{money(Number(order.payment_fee))}</dd>
+                </div>
+              )}
               <div className="flex items-baseline justify-between pt-2">
                 <dt className="text-base font-black text-white">TOTAL</dt>
                 <dd className="text-2xl font-black tabular-nums text-white">{money(Number(order.total))}</dd>
@@ -751,7 +757,7 @@ export function OrderDetailPage({ number }: { number: string }) {
               <p className="text-sm text-white/70">O cliente vai retirar na loja.</p>
             )}
           </Card>
-          {order.payment_method === 'pix_online' ? (
+          {order.payment_method === 'pix_online' || order.payment_method === 'card_online' ? (
             <OnlinePaymentCard order={order} payments={payments} owner={user.role === 'owner'} onChanged={() => void load()} />
           ) : (
             <Card title="Pagamento">
@@ -822,6 +828,12 @@ export function OrderDetailPage({ number }: { number: string }) {
           <p className="flex justify-between">
             <span>Desconto</span>
             <span>− {money(Number(order.discount))}</span>
+          </p>
+        )}
+        {Number(order.payment_fee) > 0 && (
+          <p className="flex justify-between">
+            <span>Taxa do cartão</span>
+            <span>{money(Number(order.payment_fee))}</span>
           </p>
         )}
         <p className="flex justify-between text-base font-bold">

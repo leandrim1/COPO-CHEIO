@@ -15,12 +15,14 @@ test('em produção, sem as variáveis da ValidaPay não há operadora: nada é 
     missing: ['VALIDAPAY_ENV', 'VALIDAPAY_CLIENT_ID', 'VALIDAPAY_CLIENT_SECRET', 'VALIDAPAY_WEBHOOK_SECRET'],
     note: null,
     manages_accounts: false,
+    card_ready: false,
   });
 });
 
-test('só "pix_online" é pagamento online (os outros são pagos na entrega/retirada)', () => {
+test('só "pix_online" e "card_online" são pagamento online (os outros são pagos na entrega/retirada)', () => {
   assert.equal(provider.isOnlineMethod('pix_online'), true);
-  for (const other of ['pix', 'cash', 'card', '', 'PIX_ONLINE', 'pix_online ', null, undefined, 5, {}]) assert.equal(provider.isOnlineMethod(other), false, String(other));
+  assert.equal(provider.isOnlineMethod('card_online'), true);
+  for (const other of ['pix', 'cash', 'card', '', 'PIX_ONLINE', 'CARD_ONLINE', 'pix_online ', 'card_online ', null, undefined, 5, {}]) assert.equal(provider.isOnlineMethod(other), false, String(other));
 });
 
 test('toObservation: status desconhecido não vira observação', () => {

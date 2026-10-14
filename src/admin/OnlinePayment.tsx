@@ -29,8 +29,10 @@ const STATE_TONE: Record<PaymentState, 'blue' | 'green' | 'amber' | 'red' | 'gra
   refunded: 'red',
 };
 
-export function PaymentStateBadge({ status }: { status: PaymentState }) {
-  return <Badge tone={STATE_TONE[status]}>{PAYMENT_STATE_LABEL[status]}</Badge>;
+export function PaymentStateBadge({ status, method }: { status: PaymentState; method?: 'pix' | 'card' }) {
+  // "creating" no cartão é a cobrança em andamento (ou sem resposta da operadora): não é "gerando o Pix".
+  const label = status === 'creating' && method === 'card' ? 'Processando o cartão' : status === 'pending' && method === 'card' ? 'Aguardando o banco' : PAYMENT_STATE_LABEL[status];
+  return <Badge tone={STATE_TONE[status]}>{label}</Badge>;
 }
 
 // A taxa (comissão) só é "efetivada" quando a operadora confirma o valor repassado; antes disso é só uma conta.
@@ -89,16 +91,61 @@ export function PaymentActions({ payment, onChanged }: { payment: AdminPayment; 
 }
 
 // Detalhe de um pedido de pagamento online: situação, tentativas e (para o owner) comissão e tarifas.
-export function OnlinePaymentCard({ order, payments, owner, onChanged }: { order: Pick<Order, 'order_status' | 'payment_status' | 'total'>; payments: AdminPayment[]; owner: boolean; onChanged: () => void }) {
+export function OnlinePaymentCard({
+  order,
+  payments,
+  owner,
+  onChanged,
+}: {
+  order: Pick<Order, 'order_status' | 'payment_status' | 'total' | 'payment_method' | 'payment_fee' | 'payment_fee_bps' | 'payment_fee_fixed' | 'subtotal' | 'delivery_fee' | 'discount'>;
+  payments: AdminPayment[];
+  owner: boolean;
+  onChanged: () => void;
+}) {
   const last = payments[payments.length - 1];
+  const card = order.payment_method === 'card_online';
   return (
-    <Card title="Pagamento online (Pix)">
+    <Card title={card ? 'Pagamento online (cartão de crédito)' : 'Pagamento online (Pix)'}>
       <p className="text-sm text-white/75">
-        O cliente paga pelo site e a operadora de pagamento confirma. O status não pode ser alterado à mão: use “Atualizar pagamento” para consultar a operadora.
+        {card ? 'O cliente paga no cartão pelo site (o cartão passa direto pela operadora, nunca pela loja) e a operadora confirma. ' : 'O cliente paga pelo site e a operadora de pagamento confirma. '}O status não pode ser alterado à mão: use “Atualizar pagamento” para
+        consultar a operadora.
       </p>
+      {card && (
+        <dl data-card-breakdown className="mt-3 space-y-1 rounded-xl border border-white/[0.08] bg-white/[0.02] p-3 text-xs">
+          <div className="flex justify-between text-white/65">
+            <dt>Subtotal</dt>
+            <dd className="tabular-nums">{money(Number(order.subtotal))}</dd>
+          </div>
+          <div className="flex justify-between text-white/65">
+            <dt>Entrega</dt>
+            <dd className="tabular-nums">{money(Number(order.delivery_fee))}</dd>
+          </div>
+          {Number(order.discount) > 0 && (
+            <div className="flex justify-between text-white/65">
+              <dt>Desconto</dt>
+              <dd className="tabular-nums">− {money(Number(order.discount))}</dd>
+            </div>
+          )}
+          <div className="flex justify-between text-white/85">
+            <dt>
+              Taxa do cartão (paga pelo cliente)
+              {owner && order.payment_fee_bps !== null && order.payment_fee_bps !== undefined && (
+                <span className="ml-1 text-white/50">
+                  · {percentFromBps(order.payment_fee_bps)} + {money(Number(order.payment_fee_fixed ?? 0))} usados no cálculo
+                </span>
+              )}
+            </dt>
+            <dd className="tabular-nums">{money(Number(order.payment_fee))}</dd>
+          </div>
+          <div className="flex justify-between border-t border-white/[0.08] pt-1 font-bold text-white">
+            <dt>Total cobrado no cartão</dt>
+            <dd className="tabular-nums">{money(Number(order.total))}</dd>
+          </div>
+        </dl>
+      )}
       {!last ? (
         <p className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-sm text-white/65">
-          {order.order_status === 'awaiting_payment' ? 'O cliente ainda não gerou o Pix.' : 'Nenhuma cobrança foi criada para este pedido.'}
+          {order.order_status === 'awaiting_payment' ? (card ? 'O cliente ainda não pagou com o cartão.' : 'O cliente ainda não gerou o Pix.') : 'Nenhuma cobrança foi criada para este pedido.'}
         </p>
       ) : (
         <ul className="mt-3 space-y-3" aria-label="Cobranças do pedido">
@@ -108,7 +155,7 @@ export function OnlinePaymentCard({ order, payments, owner, onChanged }: { order
                 <p className="text-sm font-bold text-white">
                   Tentativa {p.attempt} · {cents(p.amount_cents)}
                 </p>
-                <PaymentStateBadge status={p.status} />
+                <PaymentStateBadge status={p.status} method={p.method} />
               </div>
               <p className="mt-1 text-xs text-white/55">
                 Criada {formatDateTime(p.created_at)}
@@ -122,12 +169,25 @@ export function OnlinePaymentCard({ order, payments, owner, onChanged }: { order
               )}
               {owner && (
                 <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-                  <dt className="text-white/50">Taxa ({percentFromBps(p.commission_bps)})</dt>
-                  <dd className="text-white/85">
-                    {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
-                    {p.commission_state === 'confirmed' && <span className="ml-1 text-white/55">({cents(p.commission_confirmed_cents)} repassados)</span>}
-                  </dd>
-                  <dt className="text-white/50">Tarifas</dt>
+                  {p.method === 'card' ? (
+                    <>
+                      <dt className="text-white/50">Valor cobrado</dt>
+                      <dd className="text-white/85">{cents(p.amount_cents)}</dd>
+                      <dt className="text-white/50">Taxa do cartão (cliente)</dt>
+                      <dd className="text-white/85">{cents(p.customer_fee_cents ?? 0)}</dd>
+                      <dt className="text-white/50">Envios à operadora</dt>
+                      <dd className="text-white/85">{p.card_attempts ?? 1}</dd>
+                    </>
+                  ) : (
+                    <>
+                      <dt className="text-white/50">Taxa ({percentFromBps(p.commission_bps)})</dt>
+                      <dd className="text-white/85">
+                        {cents(p.commission_cents)} <CommissionBadge state={p.commission_state ?? 'calculated'} />
+                        {p.commission_state === 'confirmed' && <span className="ml-1 text-white/55">({cents(p.commission_confirmed_cents)} repassados)</span>}
+                      </dd>
+                    </>
+                  )}
+                  <dt className="text-white/50">{p.method === 'card' ? 'Tarifa da operadora' : 'Tarifas'}</dt>
                   <dd className="text-white/85">{p.fee_cents === null || p.fee_cents === undefined ? 'a operadora ainda não informou' : cents(p.fee_cents)}</dd>
                   <dt className="text-white/50">Líquido</dt>
                   <dd className="text-white/85">{p.net_cents === null || p.net_cents === undefined ? '—' : cents(p.net_cents)}</dd>

@@ -83,7 +83,7 @@ export function statusMoveProblem(from: OrderStatus, to: OrderStatus): string | 
 // Regras do pagamento (admin_set_payment_status): cancelado não vira "pago"; só se reembolsa o que estava pago.
 export function paymentMoveProblem(order: { order_status: OrderStatus; payment_status: PaymentStatus; payment_method?: PaymentMethod }, to: PaymentStatus): string | null {
   if (order.payment_status === to) return null;
-  if (order.payment_method === 'pix_online') return 'O pagamento deste pedido é online: quem confirma é a operadora de pagamento, então não dá para alterar à mão.';
+  if (order.payment_method === 'pix_online' || order.payment_method === 'card_online') return 'O pagamento deste pedido é online: quem confirma é a operadora de pagamento, então não dá para alterar à mão.';
   if (to === 'paid' && order.order_status === 'cancelled') return 'Pedido cancelado não pode ser marcado como pago. Se houve pagamento, marque como reembolsado.';
   if (to === 'refunded' && order.payment_status !== 'paid') return 'Só dá para reembolsar um pedido que estava marcado como pago.';
   return null;
@@ -148,7 +148,7 @@ export function stepLabel(status: OrderStatus, delivery: DeliveryType): string {
   return { awaiting_payment: 'Aguardando pagamento', new: 'Novo', confirmed: 'Confirmado', preparing: 'Em preparo', cancelled: 'Cancelado' }[status];
 }
 
-export const PAYMENT_LABEL: Record<PaymentMethod, string> = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', pix_online: 'Pix online' };
+export const PAYMENT_LABEL: Record<PaymentMethod, string> = { pix: 'PIX', cash: 'Dinheiro', card: 'Cartão', pix_online: 'Pix online', card_online: 'Cartão online' };
 export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = {
   pending: 'Aguardando pagamento',
   paid: 'Pago',

@@ -1850,6 +1850,9 @@ function pageOf(pathname: string): Page {
   if (pathname === '/checkout') return { name: 'checkout' };
   let m = new RegExp(`^/pedido/(${CODE})$`).exec(pathname);
   if (m) return { name: 'pedido', token: m[1] };
+  // Tela do cartão de crédito: página à parte (carregada do zero, com regras de segurança próprias no vercel.json).
+  m = new RegExp(`^/pagar/(${CODE})$`).exec(pathname);
+  if (m) return { name: 'pagar', token: m[1] };
   if (pathname === '/acompanhar-pedido') return { name: 'acompanhar', token: null };
   m = new RegExp(`^/acompanhar-pedido/(${CODE})$`).exec(pathname);
   if (m) return { name: 'acompanhar', token: m[1] };
@@ -1874,6 +1877,7 @@ const PAGE_TITLE: Record<Page['name'], string> = {
   bebidas: 'Bebidas',
   checkout: 'Finalizar pedido',
   pedido: 'Seu pedido',
+  pagar: 'Pagamento do pedido',
   acompanhar: 'Acompanhar pedido',
   conta: 'Minha conta',
   'conta-pedidos': 'Meus pedidos',
@@ -1888,7 +1892,7 @@ const PAGE_TITLE: Record<Page['name'], string> = {
 
 // Páginas que não devem aparecer no Google (pessoais, de passagem ou inexistentes). Reforça o que o servidor já manda para os robôs.
 // (/pedido e /acompanhar-pedido ficam de fora: a própria página de acompanhamento já põe o noindex e o referrer.)
-const NOINDEX = new Set<Page['name']>(['checkout', 'conta', 'conta-pedidos', 'conta-pedido', 'recuperar', 'redefinir', 'verificar', 'emails', 'notfound']);
+const NOINDEX = new Set<Page['name']>(['checkout', 'pagar', 'conta', 'conta-pedidos', 'conta-pedido', 'recuperar', 'redefinir', 'verificar', 'emails', 'notfound']);
 
 function CustomerLoading() {
   return (

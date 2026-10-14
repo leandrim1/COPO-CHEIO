@@ -237,6 +237,12 @@ produto e envie a foto.
     master (a cobrança nasce na **subconta** do estabelecimento); só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança.
   - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
     pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
+  - **Cartão de crédito online** (`card_online`, nasce **desligado**; também **nunca testado na ValidaPay de verdade**): o cliente paga pelo site e a **taxa do cartão é
+    repassada a ele** (total = (pedido + tarifa fixa) ÷ (1 − percentual), em centavos, calculado no **banco**; Pix e pagamento na entrega não têm taxa). O resumo
+    mostra subtotal, entrega, **taxa do cartão** e total em tempo real, o cartão é trocado por um token **direto no navegador** (a loja nunca vê número nem CVV), a
+    cobrança usa o total gravado no pedido e uma chave de idempotência, e só a **consulta à ValidaPay** libera o pedido. A taxa (valores de referência 5,37% + R$ 0,37)
+    é configurada pelo owner e **precisa ser conferida com o contrato da ValidaPay** antes de ligar. Guia completo, procedimento de teste no sandbox, ativação em
+    produção e limitações: [`docs/CARTAO-ONLINE.md`](docs/CARTAO-ONLINE.md).
   - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
     autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
     só entra com a confirmação oficial. Os dados pessoais vão direto para a ValidaPay e não ficam guardados aqui.

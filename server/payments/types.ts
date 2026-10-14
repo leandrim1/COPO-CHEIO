@@ -45,6 +45,34 @@ export type CreatePixInput = {
   description: string;
 };
 
+// Cobrança no cartão de crédito. O cartão NUNCA passa por aqui: o navegador troca o cartão por um `cardToken` (SDK da operadora) e é o token que chega.
+export type CreateCardInput = {
+  // Identificador desta tentativa na loja. Vai à operadora como chave de idempotência: a MESMA tentativa nunca cobra duas vezes.
+  paymentId: string;
+  orderNumber: number;
+  // Valor TOTAL a cobrar (itens + entrega + taxa do cartão), em centavos, calculado no banco.
+  amountCents: number;
+  cardToken: string;
+  deviceId: string;
+  customer: { name: string; email: string; document: string; phone: string };
+  // Conta (subconta) do estabelecimento, para operadoras/configurações que cobram nela.
+  merchantAccountId: string | null;
+  description: string;
+};
+
+export type CardChargeResult = {
+  providerChargeId: string;
+  // paid: aprovada · declined: recusada pelo banco/operadora (definitivo) · duplicate: a operadora já tinha esta tentativa (a cobrança original é adotada)
+  // · processing: a operadora ainda não decidiu (a loja consulta e espera o aviso)
+  outcome: 'paid' | 'declined' | 'duplicate' | 'processing';
+  providerStatus?: string | null;
+  // Motivo da recusa, em texto curto e sem dado do cartão.
+  reason?: string | null;
+};
+
+// O que o navegador precisa para trocar o cartão por um token (o identificador público da conta não é segredo).
+export type CardCheckoutConfig = { publicId: string; environment: 'sandbox' | 'production' };
+
 export type CreatedPix = {
   providerChargeId: string;
   // Pix "copia e cola"; o QR Code é desenhado a partir dele.
@@ -139,6 +167,9 @@ export interface PaymentProvider {
   // false: só os avisos verificados valem.
   readonly canLookup: boolean;
   createPixCharge(input: CreatePixInput): Promise<CreatedPix>;
+  // Cobrança no cartão (só as operadoras que a oferecem). Sem isto, o cartão online não existe para esta operadora.
+  createCardCharge?(input: CreateCardInput): Promise<CardChargeResult>;
+  readonly cardCheckout?: CardCheckoutConfig | null;
   getCharge(providerChargeId: string, ctx?: ProviderContext): Promise<ChargeSnapshot>;
   // Cancela uma cobrança em aberto na operadora (o QR Code deixa de aceitar pagamento). Sem isto, o Pix vence só quando a operadora quiser.
   cancelCharge?(providerChargeId: string, ctx?: ProviderContext): Promise<CancelResult>;
