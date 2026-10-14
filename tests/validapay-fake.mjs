@@ -333,6 +333,8 @@ export function startFakeValidaPay() {
       if (body.items !== undefined) return fail(res, 400, 'INVALID_DATA', 'envie items OU amount, nunca os dois');
       if (typeof body.amount !== 'number' || body.amount < 0.01 || !reais(body.amount)) return fail(res, 400, 'INVALID_DATA', 'amount deve ser um valor em reais com duas casas (mín. 0.01)');
       if (body.installments !== undefined && !(Number.isInteger(body.installments) && body.installments >= 1 && body.installments <= 12)) return fail(res, 400, 'INVALID_DATA', 'installments inválido');
+      // A documentação não traz divisão (split) para o cartão: quem a mandar é recusado, para o teste pegar o desvio.
+      if (body.split !== undefined) return fail(res, 400, 'INVALID_DATA', 'split não existe na cobrança no cartão');
       if (state.mode.cardSub === 'forbidden' && sub) return fail(res, 400, 'INVALID_DATA', 'X-Sub-Account não é aceito nesta rota');
       if (sub && !state.subaccounts.some((a) => a.accountNumber === sub && a.status === 'CONFIRMED')) return fail(res, 404, 'ACCOUNT_NOT_FOUND', 'subconta desconhecida');
       // Token: de uso único, vale 5 minutos, existente (não é de outra conta).

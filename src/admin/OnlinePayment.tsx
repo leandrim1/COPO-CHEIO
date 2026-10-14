@@ -107,7 +107,9 @@ export function OnlinePaymentCard({
   return (
     <Card title={card ? 'Pagamento online (cartão de crédito)' : 'Pagamento online (Pix)'}>
       <p className="text-sm text-white/75">
-        {card ? 'O cliente paga no cartão pelo site (o cartão passa direto pela operadora, nunca pela loja) e a operadora confirma. ' : 'O cliente paga pelo site e a operadora de pagamento confirma. '}O status não pode ser alterado à mão: use “Atualizar pagamento” para
+        {card
+          ? 'O cliente paga no cartão pelo site (o cartão passa direto pela operadora, nunca pela loja), cobrado na conta principal, sem divisão com a subconta, e a operadora confirma. '
+          : 'O cliente paga pelo site e a operadora de pagamento confirma. '}O status não pode ser alterado à mão: use “Atualizar pagamento” para
         consultar a operadora.
       </p>
       {card && (

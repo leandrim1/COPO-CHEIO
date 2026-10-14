@@ -17,7 +17,6 @@ export function createProvider(): PaymentProvider | null {
     requestTimeoutMs: Number(process.env.FAKE_VALIDAPAY_TIMEOUT_MS ?? 2500),
     // Cartão: identificador público de mentira (o SDK do navegador o usa) e, nos testes, um prazo curto para a cobrança no cartão.
     publicId: process.env.FAKE_VALIDAPAY_PUBLIC_ID === undefined ? 'pub_teste_0001' : process.env.FAKE_VALIDAPAY_PUBLIC_ID || null,
-    cardAccount: process.env.FAKE_VALIDAPAY_CARD_ACCOUNT === 'master' ? 'master' : 'merchant',
     cardTimeoutMs: Number(process.env.FAKE_VALIDAPAY_CARD_TIMEOUT_MS ?? 2500),
   });
 }

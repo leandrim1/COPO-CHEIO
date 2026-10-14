@@ -168,7 +168,7 @@ A forma "Cartão" (maquininha) continua sendo **paga na entrega ou na retirada**
 
 O **cartão de crédito online** (o cliente paga pelo site e a taxa do cartão é repassada a ele) é outra forma de pagamento, `card_online`, que nasce **desligada** e
 está descrita em [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md). Ele **não** tem comissão: a documentação do cartão da ValidaPay (`POST /v1/charges`) **não traz o campo
-`split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`).
+`split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`). Os dois fluxos são **separados**: o Pix continua com a subconta e a divisão de 2% (este guia); o cartão é cobrado na conta principal, sem divisão.
 
 ## Ligar (passo a passo, começando pelo SANDBOX)
 

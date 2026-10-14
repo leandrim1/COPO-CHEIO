@@ -315,11 +315,8 @@ export async function startCardPayment(orderId: string, input: CardInput): Promi
   const email = typeof order.customer_email === 'string' ? order.customer_email : '';
   if (!email) throw new HttpError(400, 'Este pedido não tem e-mail. Fale com a loja.', { code: 'email_required' });
 
-  const begun = await one<{ r: { created: boolean; busy: boolean; retry: boolean; payment: Row; order_number: number; merchant_account: string | null } }>(
-    'select payment_begin_card($1::uuid, $2) as r',
-    [orderId, provider.name],
-  );
-  const { created, busy, retry, payment: began, merchant_account: merchant } = begun!.r;
+  const begun = await one<{ r: { created: boolean; busy: boolean; retry: boolean; payment: Row; order_number: number } }>('select payment_begin_card($1::uuid, $2) as r', [orderId, provider.name]);
+  const { created, busy, retry, payment: began } = begun!.r;
   if (busy) throw new HttpError(409, 'Seu pagamento está sendo processado. Aguarde alguns segundos e não pague de novo.', { code: 'payment_in_progress' });
   const paymentId = String(began.id);
 
@@ -339,7 +336,6 @@ export async function startCardPayment(orderId: string, input: CardInput): Promi
         cardToken: input.cardToken,
         deviceId: input.deviceId,
         customer: { name: String(order.customer_name), email, document: input.document, phone: String(order.customer_phone) },
-        merchantAccountId: merchant ?? null,
         description: `Pedido #${order.order_number}`,
       }),
       CARD_TIMEOUT_MS,
@@ -724,18 +720,16 @@ export async function sweep(opts: { lookups?: boolean; force?: boolean; limit?: 
 
 export type Readiness = { provider: string | null; merchant: string | null; ready: boolean };
 
-// O cartão online está pronto para ser ligado? Além do que o Pix pede (operadora e conta aprovada), precisa do identificador público para o
-// SDK do navegador e da taxa do cartão conferida pelo dono. `missing` diz o que falta, sem valores.
+// O cartão online está pronto para ser ligado? Precisa da operadora conectada, do identificador público para o SDK do navegador e da taxa do
+// cartão conferida pelo dono (NÃO precisa da conta do estabelecimento, que é do Pix). `missing` diz o que falta, sem valores.
 export type CardReadiness = { ready: boolean; missing: string[] };
 
 export async function cardReadiness(): Promise<CardReadiness> {
-  const base = await onlineReadiness();
   const provider = getProvider();
   const missing: string[] = [];
+  // O cartão é cobrado na conta PRINCIPAL da operadora, sem divisão: não depende da subconta do estabelecimento (que é só do Pix).
   if (!provider) missing.push('operadora');
   else if (!provider.createCardCharge || !provider.cardCheckout) missing.push('VALIDAPAY_PUBLIC_ID');
-  if (provider && base.merchant !== 'approved') missing.push('conta aprovada');
-  else if (provider && !base.ready) missing.push('ciência das tarifas');
   const fee = await one<{ confirmed: boolean }>('select confirmed_at is not null as confirmed from payment_fee_settings where id = 1');
   if (!fee?.confirmed) missing.push('taxa do cartão conferida');
   return { ready: missing.length === 0, missing };

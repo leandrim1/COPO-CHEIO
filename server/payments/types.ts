@@ -55,8 +55,6 @@ export type CreateCardInput = {
   cardToken: string;
   deviceId: string;
   customer: { name: string; email: string; document: string; phone: string };
-  // Conta (subconta) do estabelecimento, para operadoras/configurações que cobram nela.
-  merchantAccountId: string | null;
   description: string;
 };
 

@@ -22,9 +22,9 @@
 //    DUPLICATE_CHARGE com o chargeId original em error.details.chargeId, e o cartão não é cobrado de novo). A resposta é imediata: 200
 //    (status "paid") ou 402 (recusado). `metadata` NÃO é gravado nesta rota (só o Pix grava), então a ligação com o pedido é o chargeId e o
 //    externalId. `installments: 1` e `passFeesToCustomer: false`: o campo documentado repassa a taxa de PARCELAMENTO, e a taxa do cartão à vista é
-//    repassada pela própria loja (o preço já chega somado), sem cobrança em duplicidade. NÃO CONFIRMADO: se a cobrança no cartão aceita
-//    X-Sub-Account (VALIDAPAY_CARD_ACCOUNT=merchant manda o cabeçalho; =master cobra na conta das credenciais) e se o token gerado com o
-//    publicId (VALIDAPAY_PUBLIC_ID) vale para a subconta.
+//    repassada pela própria loja (o preço já chega somado), sem cobrança em duplicidade.
+//    O CARTÃO É UM FLUXO SEPARADO DO PIX: é cobrado na conta PRINCIPAL (a das credenciais, que é também a dona do publicId), SEM o cabeçalho
+//    X-Sub-Account e SEM `split` (a documentação não traz divisão para o cartão). O Pix continua com a subconta e a divisão de valor fixo para a master.
 //  • NÃO CONFIRMADO: se a consulta de uma cobrança criada na subconta exige o cabeçalho X-Sub-Account (a loja envia e, se a ValidaPay
 //    responder 404, tenta de novo sem ele); se o repasse da comissão aparece no extrato da master (GET /v1/wallet/transactions) com o
 //    chargeId da cobrança (a loja só marca a comissão como efetivada se achar esse crédito; senão ela fica "calculada"); como a ValidaPay
@@ -69,10 +69,9 @@ export type ValidaPayConfig = {
   webhookSecret: string;
   // Token estático opcional (cabeçalho x-access-token), se configurado no cadastro do webhook da ValidaPay.
   webhookToken?: string | null;
-  // Cartão: identificador PÚBLICO da conta (painel → Gerenciamento → Minha Conta → Id Público; não é segredo) que o SDK do navegador usa, e em que
-  // conta a cobrança nasce. Sem o publicId o cartão online não existe.
+  // Cartão: identificador PÚBLICO da conta principal (painel → Gerenciamento → Minha Conta → Id Público; não é segredo) que o SDK do navegador usa.
+  // Sem o publicId o cartão online não existe.
   publicId?: string | null;
-  cardAccount?: 'merchant' | 'master';
   // Só os testes trocam estes quatro: nunca vêm do ambiente de produção.
   apiUrl?: string;
   authUrl?: string;
@@ -313,7 +312,6 @@ export function createValidaPayProvider(config: ValidaPayConfig): PaymentProvide
   const DEVICE_ID = /^[A-Za-z0-9_-]{8,100}$/;
   // O banco do cliente pode demorar para autorizar: prazo maior que o das outras chamadas (e a loja espera um pouco mais que ele).
   const CARD_TIMEOUT_MS = config.cardTimeoutMs ?? 25_000;
-  const cardAccount = config.cardAccount ?? 'merchant';
 
   // O telefone do pedido (só dígitos, com ou sem o 55) no formato internacional que a operadora aceita.
   const e164 = (digits: string): string | null => {
@@ -324,7 +322,6 @@ export function createValidaPayProvider(config: ValidaPayConfig): PaymentProvide
   async function createCardCharge(input: CreateCardInput): Promise<CardChargeResult> {
     if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) throw new ProviderError('rejected', 'valor inválido', 'AMOUNT');
     if (!CARD_TOKEN.test(input.cardToken) || !DEVICE_ID.test(input.deviceId)) throw new ProviderError('rejected', 'dados do cartão inválidos', 'CARD_DATA');
-    if (input.merchantAccountId !== null && !ACCOUNT_NUMBER.test(input.merchantAccountId)) throw new ProviderError('rejected', 'conta do estabelecimento inválida', 'MERCHANT_ACCOUNT');
     const document = input.customer.document.replace(/\D/g, '');
     const phone = e164(input.customer.phone.replace(/\D/g, ''));
     if (!/^(\d{11}|\d{14})$/.test(document)) throw new ProviderError('rejected', 'CPF/CNPJ inválido', 'DOCUMENT');
@@ -347,7 +344,8 @@ export function createValidaPayProvider(config: ValidaPayConfig): PaymentProvide
       path: '/v1/charges',
       scope: 'charges/write',
       body,
-      subAccount: cardAccount === 'merchant' ? input.merchantAccountId : null,
+      // Conta principal: nunca o cabeçalho da subconta (que é só do Pix).
+      subAccount: null,
       timeoutMs: CARD_TIMEOUT_MS,
     });
     const data = isObject(reply.data) ? reply.data : {};
@@ -629,7 +627,6 @@ export function validaPayFromEnv(env: Record<string, string | undefined>): Valid
     webhookSecret: value('VALIDAPAY_WEBHOOK_SECRET'),
     webhookToken: value('VALIDAPAY_WEBHOOK_TOKEN') || null,
     publicId: value('VALIDAPAY_PUBLIC_ID') || null,
-    cardAccount: value('VALIDAPAY_CARD_ACCOUNT').toLowerCase() === 'master' ? 'master' : 'merchant',
   });
   return { provider, environment, missing: [], note: null };
 }

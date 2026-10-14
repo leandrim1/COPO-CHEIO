@@ -120,7 +120,7 @@ async function fillCard(page, { number = PAN, holder = 'MARIA TESTE', expiry = '
 const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o where payment_method = 'card_online' order by order_number desc limit 1`));
 
 (async () => {
-  const { startFakeValidaPay, FAKE, postWebhook, paymentSuccessCard } = await import(path.join(ROOT, 'tests/validapay-fake.mjs'));
+  const { startFakeValidaPay, FAKE, postWebhook, paymentSuccess, paymentSuccessCard } = await import(path.join(ROOT, 'tests/validapay-fake.mjs'));
   fake = await startFakeValidaPay();
   execSync(`bash ${ROOT}/tests/serve.sh`, { env: { ...process.env, PAYMENTS_SIM: 'validapay', FAKE_VALIDAPAY_URL: fake.url, FAKE_VALIDAPAY_WEBHOOK_SECRET: FAKE.webhookSecret, FAKE_VALIDAPAY_TIMEOUT_MS: '2500', FAKE_VALIDAPAY_CARD_TIMEOUT_MS: '2500' }, stdio: 'ignore' });
 
@@ -154,15 +154,16 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
   await admin.fill('#login-senha', 'senha-forte-123');
   await admin.click('button[type=submit]');
   await admin.waitForURL('**/admin/dashboard');
-  const link = await api('POST', '/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
-  ok(link.status === 201, 'conta do estabelecimento vinculada (sandbox falso)', link);
+  // De propósito, SEM vincular subconta: o cartão é cobrado na conta principal e não depende dela (a subconta é só do Pix; seção 12).
   await admin.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });
   {
     const body = await text(admin);
     ok(/Cartão de crédito online/.test(body) && /Taxa do cartão repassada ao cliente/.test(body), 'a página Pagamentos tem o bloco "Cartão de crédito online" com a taxa do cartão');
     ok(/Ainda NÃO conferida/.test(body), 'a taxa aparece como "Ainda NÃO conferida"');
     ok(await admin.getByRole('switch', { name: 'Oferecer cartão de crédito online no checkout' }).isDisabled(), 'o interruptor do cartão online fica desabilitado enquanto a taxa não for conferida');
-    ok(/taxa do cartão conferida/.test(body), 'a lista do que falta diz "taxa do cartão conferida"', body.match(/Indisponível[^.]*\./)?.[0]);
+    const missing = await admin.locator('[data-card-missing]').getAttribute('data-card-missing');
+    ok(missing === 'taxa do cartão conferida' && /taxa do cartão conferida/.test(body), 'o que falta para ligar o CARTÃO é só "taxa do cartão conferida" (nada de subconta; o Pix, ao lado, ainda pede conta aprovada)', missing);
+    ok(/Sem cadastro/.test(body), 'a conta do estabelecimento (subconta do Pix) continua sem cadastro e o cartão liga mesmo assim');
     ok(/Confira no painel ou no contrato da ValidaPay/.test(body), 'o aviso manda conferir 5,37% + R$ 0,37 no contrato da ValidaPay');
     const percent = await admin.getByLabel('Percentual (%)').inputValue();
     const fixed = await admin.getByLabel('Tarifa fixa por venda (R$)').inputValue();
@@ -452,6 +453,51 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     await staff.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });
     ok(/Só o dono da loja vê esta página/.test(await text(staff)) && !/Taxa do cartão repassada/.test(await text(staff)), 'a configuração da taxa do cartão é só do owner (o atendente vê o aviso, nenhum dado)');
     await sctx.close();
+  }
+
+  // ---- 12. Os dois fluxos no mesmo site: Pix (split na subconta) e cartão (conta principal, sem split) ----------------------------------------
+  console.log('# 12. Pix com split e cartão sem split, de ponta a ponta, no mesmo site');
+  {
+    const link = await api('POST', '/api/admin/payments/account/link', { account_number: '4960589', authorized: true });
+    ok(link.status === 201, 'a subconta do Pix é vinculada (o fluxo do Pix de sempre)', link);
+    const on = await api('PATCH', '/api/admin/payments/pix_online', { enabled: true });
+    ok(on.status === 200 && on.data.payment.enabled === true, 'o Pix online liga (e o cartão online segue ligado)', on);
+    const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
+    await fake.control('calls/clear', {});
+    await toCheckout(page);
+    await page.getByLabel('Nome *').fill('Cliente Pix Split');
+    await page.getByLabel('Telefone / WhatsApp *').fill(nextPhone());
+    await page.getByText('Retirar na loja', { exact: true }).click();
+    await page.locator('label').filter({ hasText: /Pix online/ }).first().click();
+    await page.waitForTimeout(150);
+    const pixSummary = await text(summary(page));
+    ok(!/Taxa do cartão/.test(pixSummary) && /Total R\$ 100,00/.test(pixSummary), 'Pix online: valor original do pedido (R$ 100,00), sem taxa de cartão', pixSummary);
+    await page.getByRole('button', { name: /^Finalizar e pagar com Pix/ }).click();
+    await page.waitForURL('**/pedido/**', { timeout: 15000 });
+    ok(await page.locator('[data-pix-qr] svg').first().waitFor({ timeout: 10000 }).then(() => true, () => false), 'a tela do Pix mostra o QR Code (fluxo do Pix)');
+    const pixCall = fake.state.calls.find((c) => c.method === 'POST' && c.path === '/v1/charges/pix');
+    ok(!!pixCall && pixCall.body.amount === 100 && pixCall.subAccount === '4960589' && JSON.stringify(pixCall.body.split) === JSON.stringify([{ type: 'fixed', amount: 2 }]), 'Pix: R$ 100,00 na SUBCONTA, com a divisão de 2% para a master', pixCall && { a: pixCall.body.amount, s: pixCall.subAccount, sp: pixCall.body.split });
+    ok(fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges').length === 0, '...e nenhuma cobrança de cartão foi chamada para o Pix');
+    const pixOrderNumber = Number((await page.innerText('body')).match(/pedido #(\d+)/i)?.[1]);
+    const pixCharge = psql(`select p.provider_charge_id from payments p join orders o on o.id = p.order_id where o.order_number = ${pixOrderNumber}`);
+    await fake.control('pay', { chargeId: pixCharge });
+    const whPix = await postWebhook(BASE, paymentSuccess(fake.state.charges.get(pixCharge)), { id: 'wh-e2e-fluxos-pix' });
+    ok(whPix.status === 200 && (await until(async () => /Pagamento confirmado!/.test(await text(page)), 20000)), 'o aviso do Pix confirma o pagamento e a tela muda sozinha para "Pagamento confirmado!"');
+    ok(psql(`select p.method || '/' || p.commission_cents || '/' || p.customer_fee_cents from payments p join orders o on o.id = p.order_id where o.order_number = ${pixOrderNumber}`) === 'pix/200/0', 'no banco: pagamento Pix, comissão de R$ 2,00, sem taxa de cartão');
+    await ctx.close();
+
+    await fake.control('calls/clear', {});
+    const { ctx: cctx, page: cardPage } = await newCtx(browser, { width: 390, height: 844 });
+    await orderToCardPage(cardPage, { name: 'Cliente Cartão Depois' });
+    await fillCard(cardPage);
+    await cardPage.getByRole('button', { name: /^Pagar R\$/ }).click();
+    ok(await until(async () => /Pagamento aprovado!/.test(await text(cardPage)), 20000), 'cartão: "Pagamento aprovado!" (fluxo do cartão)');
+    const cardCall = fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges').at(-1);
+    ok(!!cardCall && cardCall.body.amount === 106.07 && cardCall.subAccount === null && !('split' in cardCall.body) && cardCall.body.paymentMethod === 'creditcard', 'cartão: R$ 106,07 (subtotal + taxa) na conta PRINCIPAL, sem split', cardCall && { a: cardCall.body.amount, s: cardCall.subAccount, sp: cardCall.body.split });
+    ok(fake.state.calls.filter((c) => c.method === 'POST' && c.path === '/v1/charges/pix').length === 0, '...e nenhuma cobrança de Pix foi chamada para o cartão');
+    const cardOrderNumber = lastOrder().order_number;
+    ok(psql(`select p.method || '/' || p.commission_state || '/' || p.customer_fee_cents || '/' || coalesce(p.merchant_account_id::text, 'sem-subconta') from payments p join orders o on o.id = p.order_id where o.order_number = ${cardOrderNumber}`) === 'card/not_applicable/607/sem-subconta', 'no banco: pagamento de cartão, sem comissão, taxa de R$ 6,07 e sem subconta');
+    await cctx.close();
   }
 
   // ---- 11. O que sobrou ---------------------------------------------------------------------------------------------------------------------------

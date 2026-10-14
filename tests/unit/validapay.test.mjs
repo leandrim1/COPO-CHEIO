@@ -577,7 +577,6 @@ const cardInput = {
   cardToken: TOKEN,
   deviceId: DEVICE,
   customer: { name: 'Maria Silva', email: 'maria@exemplo.com', document: '529.982.247-25', phone: '(34) 99999-0000' },
-  merchantAccountId: '4960589',
   description: 'Pedido #1007',
 };
 const cardRoute = (handler) => [['POST', /^\/v1\/charges$/, handler]];
@@ -602,8 +601,9 @@ test('createCardCharge: corpo exatamente como a documentação manda (creditcard
   const [call] = f.api();
   assert.equal(call.method, 'POST');
   assert.equal(call.path, '/v1/charges');
-  assert.equal(call.headers['x-sub-account'], '4960589');
+  assert.equal(call.headers['x-sub-account'], undefined, 'o cartão é cobrado na conta PRINCIPAL: nunca o cabeçalho da subconta');
   const body = JSON.parse(call.body);
+  assert.equal('split' in body, false, 'o cartão nunca leva divisão (split)');
   assert.equal(body.paymentMethod, 'creditcard');
   assert.equal(body.amount, 106.07, 'valor TOTAL em reais (itens + entrega + taxa do cartão)');
   assert.equal(body.externalId, cardInput.paymentId, 'idempotência: o id da tentativa da loja');
@@ -617,8 +617,8 @@ test('createCardCharge: corpo exatamente como a documentação manda (creditcard
   assert.equal('number' in body || 'cvv' in body, false, 'o cartão nunca passa pela loja');
 });
 
-test('createCardCharge: conta master não leva X-Sub-Account; telefone 55 já incluído ou inválido', async () => {
-  const { p, f } = provider(cardRoute(() => ok({ success: true, chargeId: 'cha_card_2', status: 'paid' })), { publicId: 'pub_teste_0001', cardAccount: 'master' });
+test('createCardCharge: telefone com 55 já incluído ou inválido', async () => {
+  const { p, f } = provider(cardRoute(() => ok({ success: true, chargeId: 'cha_card_2', status: 'paid' })), { publicId: 'pub_teste_0001' });
   await p.createCardCharge(cardInput);
   await p.createCardCharge({ ...cardInput, customer: { ...cardInput.customer, phone: '5534999990000' } });
   await p.createCardCharge({ ...cardInput, customer: { ...cardInput.customer, phone: '123' } });
@@ -681,7 +681,6 @@ test('createCardCharge: dados inválidos nem chegam à operadora', async () => {
     { ...cardInput, cardToken: '4111 1111 1111 1111' },
     { ...cardInput, deviceId: 'a b' },
     { ...cardInput, customer: { ...cardInput.customer, document: '123' } },
-    { ...cardInput, merchantAccountId: 'conta; drop' },
   ];
   for (const input of bad) await assert.rejects(p.createCardCharge(input), (error) => error.kind === 'rejected');
   assert.equal(f.calls.length, 0, 'nada foi enviado');
@@ -705,4 +704,29 @@ test('getCharge de cartão: PROCESSING fica pendente; PAID traz tarifa e líquid
   assert.equal(paid.split, null, 'sem comissão no cartão: nenhuma conferência de repasse');
   status.v = 'FAILED';
   assert.equal((await p.getCharge('cha_c1', { merchantAccountId: '4960589', commissionCents: 0 })).status, 'failed');
+});
+
+test('Pix e cartão são fluxos SEPARADOS no mesmo adaptador: Pix com subconta e divisão, cartão na conta principal e sem divisão', async () => {
+  const { p, f } = provider(
+    [
+      ['POST', /^\/v1\/charges\/pix$/, () => ok({ chargeId: 'cha_pix_sep', emv: '000201' })],
+      ['POST', /^\/v1\/charges$/, () => ok({ success: true, chargeId: 'cha_card_sep', status: 'paid' })],
+    ],
+    { publicId: 'pub_teste_0001' },
+  );
+  await p.createPixCharge({ ...createInput, amountCents: 10000, commissionCents: 200 });
+  await p.createCardCharge({ ...cardInput, amountCents: 10607 });
+  const [pix, card] = f.api();
+  assert.equal(pix.path, '/v1/charges/pix');
+  assert.equal(pix.headers['x-sub-account'], '4960589', 'Pix: a cobrança nasce na subconta');
+  assert.deepEqual(JSON.parse(pix.body).split, [{ type: 'fixed', amount: 2 }], 'Pix: a divisão para a master continua');
+  assert.equal(JSON.parse(pix.body).amount, 100, 'Pix: o valor original do pedido, sem taxa de cartão');
+  assert.equal(card.path, '/v1/charges');
+  assert.equal(card.headers['x-sub-account'], undefined, 'cartão: conta principal');
+  assert.equal('split' in JSON.parse(card.body), false, 'cartão: sem divisão');
+  assert.equal(JSON.parse(card.body).amount, 106.07, 'cartão: subtotal + taxa');
+  assert.equal(JSON.parse(card.body).paymentMethod, 'creditcard');
+  assert.equal(JSON.parse(pix.body).paymentMethod, 'pix');
+  // O Pix nunca sai sem subconta: sem ela, nada é enviado (e o cartão nunca vira Pix: cada um tem o seu método).
+  await assert.rejects(p.createPixCharge({ ...createInput, merchantAccountId: '' }), (error) => error.kind === 'rejected');
 });
