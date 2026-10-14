@@ -563,7 +563,9 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   console.log('# server-side session');
   const gone = Number(psql("with d as (delete from admin_sessions where admin_id = (select id from admins where email='dono@copocheio.local') returning 1) select count(*) from d"));
   ok(gone >= 1, 'sessions of the owner removed from Neon (' + gone + ')');
-  await a.getByRole('link', { name: 'Produtos' }).first().click();
+  // The panel asks the server every 8 s whether the session is still valid. If that question lands before the click, it already sends the owner to the login;
+  // otherwise the click does. Either way the server decides (the session is gone from the database), so what matters is where the owner ends up.
+  await a.getByRole('link', { name: 'Produtos' }).first().click({ timeout: 4000 }).catch(() => {});
   await a.waitForURL('**/admin/login', { timeout: 15000 });
   ok(true, 'revoked session: the next panel action sends the owner back to the login (server decides, not the browser)');
   await a.fill('#login-email', 'dono@copocheio.local');

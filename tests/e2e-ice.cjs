@@ -130,7 +130,7 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
     await page.waitForTimeout(350); // a borda muda com uma transição de 200 ms
     const selected = await border('normal');
     const other = await border('flavored');
-    ok(selected === 'rgb(37, 99, 255)' && other !== selected && other.startsWith('rgba(255, 255, 255'), `${label}: a opção escolhida tem destaque (borda azul da marca) e a outra fica discreta`, { selected, other });
+    ok(/^rgba?\(37, 99, 255(, 1)?\)$/.test(selected) && other !== selected && other.startsWith('rgba(255, 255, 255'), `${label}: a opção escolhida tem destaque (borda azul da marca) e a outra fica discreta`, { selected, other });
     await dialog(page).locator('label[data-ice=flavored]').click();
     ok(JSON.stringify(await radioState(page)) === '[false,true]', `${label}: dá para trocar a escolha antes de adicionar (agora "Gelo de sabor")`, await radioState(page));
     ok(!Object.keys(await cartOf(page)).some((k) => k.startsWith(m1.id)), `${label}: trocar de ideia não adiciona nada`);
