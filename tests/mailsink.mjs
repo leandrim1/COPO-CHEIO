@@ -2,6 +2,16 @@
 import { SMTPServer } from 'smtp-server';
 import { simpleParser } from 'mailparser';
 
+// Texto de cada cabeçalho como chegou (nome em minúsculas; linhas dobradas juntadas; repetidos separados por quebra de linha).
+function rawHeaders(lines = []) {
+  const out = {};
+  for (const { key, line } of lines) {
+    const value = String(line).slice(String(line).indexOf(':') + 1).replace(/\r?\n\s+/g, ' ').trim();
+    out[key] = key in out ? `${out[key]}\n${value}` : value;
+  }
+  return out;
+}
+
 export async function startMailSink(port = 0) {
   const messages = [];
   // failure: 'rcpt' | 'auth' | 'down' | 'temp' (451 em todo destinatário) | 'data' (554 5.7.1 depois do conteúdo) | null
@@ -58,7 +68,8 @@ export async function startMailSink(port = 0) {
             subject: m.subject,
             text: m.text,
             html: m.html || '',
-            headers: Object.fromEntries(m.headers),
+            // O mailparser agrupa os cabeçalhos "List-*" num objeto "list": os testes precisam do texto de cada cabeçalho como foi enviado.
+            headers: { ...Object.fromEntries(m.headers), ...rawHeaders(m.headerLines) },
             at: Date.now(),
           });
           cb();

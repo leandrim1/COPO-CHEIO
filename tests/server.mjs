@@ -8,7 +8,7 @@ import { extname, join, normalize } from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { startNeonProxy } from './neon-proxy.mjs';
-import { installDnsMock } from './dnsmock.mjs';
+import { CNAME, MX_OF, TXT, installDnsMock, resetRecords } from './dnsmock.mjs';
 import { startMailSink } from './mailsink.mjs';
 import { describeState, signBody, sim, updateCharge } from './payments-sim.mjs';
 
@@ -198,6 +198,20 @@ const server = http.createServer(async (req, res) => {
     sink.mode.failure = body.failure ?? null;
     sink.mode.delayMs = body.delayMs ?? 0;
     return res.writeHead(200).end('{}');
+  }
+  // Só para os testes: muda os registros de DNS (TXT, CNAME, MX) que o painel de e-mails confere. body: { reset: true } | { type: 'txt'|'cname'|'mx', name, value | null }
+  if (url.pathname === '/__dns' && req.method === 'POST') {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+    if (body.reset) resetRecords();
+    else {
+      const table = { txt: TXT, cname: CNAME, mx: MX_OF }[body.type];
+      if (!table) return res.writeHead(400).end('{}');
+      if (body.value === null) delete table[body.name];
+      else table[body.name] = body.value;
+    }
+    return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
   }
   // Só para os testes: controla o simulador de operadora de pagamento e dispara "avisos" (webhooks) assinados para a rota real.
   if (url.pathname.startsWith('/__pay/')) {

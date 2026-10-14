@@ -7,11 +7,15 @@
 import { timingSafeEqual } from 'node:crypto';
 import { reserve } from '../auth.js';
 import { requireCustomer } from '../customer.js';
-import { query } from '../db.js';
-import { HttpError, json, readJson } from '../http.js';
+import { one, query } from '../db.js';
+import { HttpError, json, readBytes, readJson } from '../http.js';
 import type { Ctx, Router } from '../http.js';
 import { maskEmail } from '../emailAddress.js';
+import { transportName } from '../email/config.js';
+import { recordWebhook } from '../email/ledger.js';
 import { processQueue } from '../email/service.js';
+import { verifySvix } from '../email/svix.js';
+import { normalizeResend } from '../email/webhooks.js';
 import { CONSENT_TEXT, getPreferences, isVerifiedCustomerEmail, preferencesByToken, setMarketing, setNotifyOrders } from '../email/preferences.js';
 import type { Preferences } from '../email/preferences.js';
 
@@ -48,6 +52,53 @@ export function registerEmailPublic(r: Router) {
     const queue = await processQueue({ req: ctx.req, limit: 25, budgetMs: 8000 });
     await query('select purge_expired_data()');
     return json({ ok: true, queue });
+  });
+
+  // ---- Avisos do provedor (Resend, transporte opcional) ----
+  //
+  // Só existe com EMAIL_PROVIDER=resend E RESEND_WEBHOOK_SECRET: sem isso a rota nem aparece (404). Cada aviso vem assinado (Svix); sem
+  // assinatura válida e recente, nada é lido nem gravado. O mesmo aviso reenviado vale uma vez só (chave = svix-id).
+  r.post('/api/email/webhook/resend', 'public', async (ctx) => {
+    const secret = (process.env.RESEND_WEBHOOK_SECRET ?? '').trim();
+    if (!secret || transportName() !== 'resend') throw new HttpError(404, 'Rota não encontrada.');
+    const raw = new TextDecoder().decode(await readBytes(ctx.req, 256 * 1024));
+    const h = ctx.req.headers;
+    const svixId = h.get('svix-id');
+    if (!verifySvix(secret, { id: svixId, timestamp: h.get('svix-timestamp'), signature: h.get('svix-signature') }, raw)) {
+      await recordWebhook('resend', false, 'assinatura inválida ou vencida').catch(() => undefined);
+      throw new HttpError(401, 'Assinatura inválida.');
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      await recordWebhook('resend', false, 'corpo que não é JSON').catch(() => undefined);
+      throw new HttpError(400, 'Corpo inválido.');
+    }
+    const event = normalizeResend(payload);
+    // Tipo de aviso que não usamos (ex.: "enviado", "agendado"): confirma o recebimento e pronto.
+    if (!event) {
+      await recordWebhook('resend', true).catch(() => undefined);
+      return json({ ok: true, ignored: true });
+    }
+    const message = await one<{ id: string }>('select id from email_messages where provider_id = $1', [event.providerId]);
+    // O aviso pode chegar antes de o envio anotar o id: pede para o provedor tentar de novo logo. Aviso antigo de mensagem que não é
+    // nossa (outro sistema na mesma conta) é só ignorado.
+    if (!message && Date.now() - event.occurredAt.getTime() < 5 * 60_000) {
+      await recordWebhook('resend', false, 'mensagem ainda não registrada').catch(() => undefined);
+      throw new HttpError(503, 'Tente de novo em instantes.');
+    }
+    const applied = await one<{ r: { outcome: string } }>('select email_apply_event($1::uuid, $2, $3, $4, $5::timestamptz, $6::jsonb, $7) as r', [
+      message?.id ?? null,
+      'resend',
+      svixId,
+      event.type,
+      event.occurredAt.toISOString(),
+      JSON.stringify(event.detail),
+      event.recipient,
+    ]);
+    await recordWebhook('resend', true).catch(() => undefined);
+    return json({ ok: true, outcome: applied?.r.outcome ?? 'applied' });
   });
 
   // ---- Pelo link do e-mail ----

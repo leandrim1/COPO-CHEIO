@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { adminFromRequest } from './auth.js';
 import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
-import { kickQueue, rememberRequest } from './email/service.js';
+import { runAlerts } from './email/alerts.js';
+import { kickQueue, onQueueRun, rememberRequest } from './email/service.js';
 import { mailConfigured, mailMissing } from './mail.js';
 import { siteUrl } from './mailBrand.js';
 import { onlineReadiness } from './payments/service.js';
@@ -88,6 +89,8 @@ registerCustomers(router);
 registerMailAdmin(router);
 registerEmailAdmin(router);
 registerEmailPublic(router);
+// Depois que a fila de e-mails roda, confere os alertas de entregabilidade (no máximo a cada 10 minutos por instância).
+onQueueRun((req) => runAlerts(req));
 registerAudit(router);
 registerPrivacy(router);
 registerSeo(router);

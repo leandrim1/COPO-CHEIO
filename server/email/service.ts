@@ -282,6 +282,13 @@ export const rememberRequest = (req: Request): void => {
 let running: Promise<void> | null = null;
 let rerun = false;
 
+// Trabalho a fazer depois que a fila rodou (hoje: avaliar os alertas de entregabilidade). Registrado por server/index.ts, para este
+// arquivo não precisar importar quem depende dele.
+let afterRun: ((req: Request) => Promise<unknown>) | null = null;
+export const onQueueRun = (fn: (req: Request) => Promise<unknown>): void => {
+  afterRun = fn;
+};
+
 // Dispara o processamento da fila SEM esperar (o cliente já recebeu a resposta). Na Vercel, `waitUntil` mantém a função viva até
 // terminar; fora dela (teste, computador do desenvolvedor) o trabalho simplesmente segue em paralelo. `minGapMs`: intervalo mínimo
 // entre disparos nesta instância. O padrão (0) vale para quem sabe que acabou de enfileirar algo (pedido, pagamento); as telas que
@@ -303,6 +310,7 @@ export function kickQueue(req?: Request, opts: { limit?: number; minGapMs?: numb
       const result = await processQueue({ req: request, limit, budgetMs: 6000 });
       if (!rerun && result.processed < limit) break;
     }
+    if (afterRun) await afterRun(request).catch((e) => log('trabalho depois da fila falhou', { error: String((e as Error).message).slice(0, 120) }));
   })()
     .catch((e) => log('fila em segundo plano falhou', { error: String((e as Error).message).slice(0, 120) }))
     .finally(() => {

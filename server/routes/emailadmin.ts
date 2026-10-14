@@ -9,12 +9,16 @@ import { batch, one, query } from '../db.js';
 import type { Row } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
-import { promoDailyLimit, sendsFromFreemail } from '../email/config.js';
+import { describeAlert } from '../email/alertText.js';
+import { runAlerts } from '../email/alerts.js';
+import { FREEMAIL_DOMAINS, fromAddress, promoDailyLimit, sendsFromFreemail } from '../email/config.js';
+import { checkDomainDns } from '../email/dns.js';
 import { BLOCK_LABEL, cancel, deliver, failureText, kickQueue, normalizeAddress, processQueue, requeue } from '../email/service.js';
 import type { BlockReason } from '../email/service.js';
 import { KINDS, isKind } from '../email/kinds.js';
 import * as ledger from '../email/ledger.js';
 import { renderMessage } from '../email/render.js';
+import { overview } from '../email/stats.js';
 import { parse, text } from '../validate.js';
 import type { Spec } from '../validate.js';
 
@@ -33,6 +37,41 @@ const withLabel = (row: Row): Row => ({
 });
 
 export function registerEmailAdmin(r: Router) {
+  // Visão geral: totais, taxas (o que o provedor informa e o que não), fila, teto diário, supressões, avisos do provedor e alertas.
+  // `refresh=1` (botão "Atualizar" do painel) reavalia os alertas na hora; sem isso eles são reavaliados no máximo a cada 10 minutos.
+  r.get('/api/admin/emails/overview', 'admin', async (ctx) => {
+    const days = Math.min(Math.max(Number(ctx.url.searchParams.get('days') ?? 7) || 7, 1), 90);
+    const refresh = ctx.url.searchParams.get('refresh') === '1';
+    if (refresh) await reserve('email-overview-refresh', ctx.admin!.id, 60, 20, 'Muitas atualizações seguidas. Aguarde um pouco.');
+    await runAlerts(ctx.req, { force: refresh }).catch(() => []);
+    const [data, alerts] = await Promise.all([
+      overview(days),
+      query<{ code: string; severity: 'info' | 'warning' | 'critical'; opened_at: string; last_seen_at: string; last_notified_at: string | null; detail: Record<string, unknown> | null }>(
+        `select code, severity, opened_at, last_seen_at, last_notified_at, detail from email_alerts where resolved_at is null
+          order by case severity when 'critical' then 0 when 'warning' then 1 else 2 end, opened_at`,
+      ),
+    ]);
+    return json({
+      ...data,
+      // Cada alerta com o texto pronto em português: título, o que aconteceu (`detail`) e o que fazer (`hint`). `data` são os números crus.
+      alerts: alerts.map(({ detail: data, ...a }) => ({ ...a, ...describeAlert(a.code, data ?? {}), data })),
+    });
+  });
+
+  // Confere SPF, DKIM e DMARC do domínio do remetente (só lê o DNS público). Para remetente de e-mail gratuito (Gmail, Outlook...) não há
+  // domínio da loja para conferir.
+  r.get('/api/admin/emails/dns', 'admin', async (ctx) => {
+    const from = fromAddress();
+    if (!from) throw new HttpError(409, 'O remetente ainda não está configurado (SMTP_USER / MAIL_FROM).', { code: 'no_sender' });
+    if (FREEMAIL_DOMAINS.has(from.domain)) {
+      return json({ applicable: false, domain: from.domain, reason: `O remetente usa ${from.domain}, um provedor de e-mail gratuito: o SPF, o DKIM e o DMARC desse domínio são do provedor, não da sua loja, e você não consegue alterá-los. Para autenticar o seu próprio domínio, é preciso um domínio da loja (veja "Como melhorar").` });
+    }
+    await reserve('email-dns', ctx.admin!.id, 600, 10, 'Muitas verificações seguidas. Aguarde alguns minutos.');
+    const selector = (ctx.url.searchParams.get('selector') ?? '').trim().toLowerCase();
+    if (selector && !/^[a-z0-9][a-z0-9_-]{0,62}$/.test(selector)) throw new HttpError(400, 'Nome da chave (seletor) inválido.');
+    return json({ applicable: true, ...(await checkDomainDns(from.domain, { selectors: selector ? [selector] : undefined })) });
+  });
+
   // Lista de mensagens com filtros (status, tipo, categoria, período, busca por e-mail ou número do pedido).
   r.get('/api/admin/emails/messages', 'admin', async (ctx) => {
     const q = ctx.url.searchParams;
@@ -201,10 +240,10 @@ export function registerEmailAdmin(r: Router) {
   // Quantas mensagens de cada campanha estão em cada estado.
   const CAMPAIGN_LIST = `
     select c.id, c.created_at, c.created_by_name, c.name, c.subject, c.status, c.audience_total, c.started_at, c.finished_at,
-           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.status in ('queued', 'sending')) as pending,
-           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.status in ('accepted', 'delivered', 'delayed')) as sent,
-           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.status in ('failed', 'bounced', 'complained')) as failed,
-           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.status in ('blocked', 'cancelled')) as skipped
+           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.kind = 'campaign' and m.status in ('queued', 'sending')) as pending,
+           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.kind = 'campaign' and m.status in ('accepted', 'delivered', 'delayed')) as sent,
+           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.kind = 'campaign' and m.status in ('failed', 'bounced', 'complained')) as failed,
+           (select count(*)::int from email_messages m where m.campaign_id = c.id and m.kind = 'campaign' and m.status in ('blocked', 'cancelled')) as skipped
       from email_campaigns c`;
 
   r.get('/api/admin/emails/campaigns', 'admin', async () => {

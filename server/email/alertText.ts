@@ -10,6 +10,13 @@ const num = (value: unknown, digits = 0): string => (typeof value === 'number' ?
 export function describeAlert(code: string, detail: Detail = {}): { title: string; detail: string; hint: string } {
   switch (code) {
     case 'smtp_auth':
+      if (detail.transport === 'resend') {
+        return {
+          title: 'A Resend recusou a chave de API ou o domínio do remetente',
+          detail: 'Enquanto isso, códigos de confirmação e avisos não saem (os avisos ficam na fila).',
+          hint: 'Confira RESEND_API_KEY e MAIL_FROM na Vercel (o domínio do remetente precisa estar verificado na Resend) e faça um novo deploy.',
+        };
+      }
       return {
         title: 'O servidor de e-mail recusou o usuário ou a senha',
         detail: 'Enquanto isso, códigos de confirmação e avisos não saem (os avisos ficam na fila).',

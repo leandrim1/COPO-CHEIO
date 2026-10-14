@@ -130,6 +130,10 @@ create index email_messages_order_idx on email_messages (order_id) where order_i
 create index email_messages_campaign_idx on email_messages (campaign_id) where campaign_id is not null;
 -- statement-breakpoint
 
+-- Os avisos do provedor (webhook) chegam com o id que ele deu à mensagem.
+create index email_messages_provider_idx on email_messages (provider_id) where provider_id is not null;
+-- statement-breakpoint
+
 -- ---------------------------------------------------------------------------------------------
 -- Eventos (linha do tempo de cada mensagem). Um por (provedor, chave): o mesmo evento nunca vale duas vezes.
 -- ---------------------------------------------------------------------------------------------
@@ -429,7 +433,8 @@ begin
   if v is null then
     return 0;
   end if;
-  update email_messages set recipient_email = null, spec = null where recipient_email = v;
+  -- A chave de unicidade das campanhas leva o endereço ("campaign:<id>:<e-mail>"): sai junto.
+  update email_messages set recipient_email = null, spec = null, dedupe_key = null where recipient_email = v;
   get diagnostics n = row_count;
   delete from email_preferences where email = v;
   delete from email_suppressions where email = v;

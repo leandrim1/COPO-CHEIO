@@ -202,6 +202,22 @@ export async function finishCampaigns(): Promise<void> {
   await query(
     `update email_campaigns c set status = 'done', finished_at = now()
       where c.status = 'sending'
-        and not exists (select 1 from email_messages m where m.campaign_id = c.id and m.status in ('queued', 'sending'))`,
+        and not exists (select 1 from email_messages m where m.campaign_id = c.id and m.kind = 'campaign' and m.status in ('queued', 'sending'))`,
+  );
+}
+
+// ---- Avisos do provedor (webhook): o painel mostra se estão chegando ----
+
+export async function recordWebhook(provider: string, ok: boolean, error?: string): Promise<void> {
+  await query(
+    `insert into email_webhook_state (provider, last_ok_at, last_error_at, last_error, ok_count, error_count)
+     values ($1, case when $2 then now() end, case when $2 then null else now() end, case when $2 then null else left($3, 200) end, case when $2 then 1 else 0 end, case when $2 then 0 else 1 end)
+     on conflict (provider) do update set
+       last_ok_at = case when $2 then now() else email_webhook_state.last_ok_at end,
+       last_error_at = case when $2 then email_webhook_state.last_error_at else now() end,
+       last_error = case when $2 then email_webhook_state.last_error else left($3, 200) end,
+       ok_count = email_webhook_state.ok_count + case when $2 then 1 else 0 end,
+       error_count = email_webhook_state.error_count + case when $2 then 0 else 1 end`,
+    [provider, ok, error ?? null],
   );
 }
