@@ -6,7 +6,7 @@
 //  • Entregues / devolvidas / spam / abertas / clicadas: SÓ existem quando o provedor avisa (webhook). Com SMTP comum ficam em "não informado".
 //  • Bloqueadas: nem foram tentadas (endereço suprimido, sem consentimento, teto por endereço, domínio inválido...).
 import { one, query } from '../db.js';
-import { dailyLimit, fromAddress, promoDailyLimit, sendsFromFreemail, transportName } from './config.js';
+import { dailyLimit, fromAddress, orderNoticesPaused, promoDailyLimit, sendsFromFreemail, transportName } from './config.js';
 import { KINDS, isKind } from './kinds.js';
 import * as ledger from './ledger.js';
 import { mailStatus } from '../mail.js';
@@ -105,6 +105,7 @@ export async function overview(days: number) {
       from_email: from?.email ?? null,
       from_domain: from?.domain ?? null,
       free_sender: sendsFromFreemail(),
+      order_notices_paused: orderNoticesPaused(),
     },
     totals,
     by_category: Object.fromEntries(byCategory.map(({ category, ...rest }) => [category, rest])),

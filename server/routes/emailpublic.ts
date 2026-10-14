@@ -16,7 +16,7 @@ import { recordWebhook } from '../email/ledger.js';
 import { processQueue } from '../email/service.js';
 import { verifySvix } from '../email/svix.js';
 import { normalizeResend } from '../email/webhooks.js';
-import { CONSENT_TEXT, getPreferences, isVerifiedCustomerEmail, preferencesByToken, setMarketing, setNotifyOrders } from '../email/preferences.js';
+import { CONSENT_TEXT, getPreferences, isVerifiedCustomerEmail, preferenceToken, preferencesByToken, setMarketing, setNotifyOrders } from '../email/preferences.js';
 import type { Preferences } from '../email/preferences.js';
 
 const NO_STORE = { 'x-robots-tag': 'noindex, nofollow' };
@@ -136,6 +136,13 @@ export function registerEmailPublic(r: Router) {
     if (marketing !== undefined && marketing !== current.marketing) current = await setMarketing(current.email, marketing, marketing ? { consent: 'link' } : { unsubscribe: 'link' });
     if (orders !== undefined && orders !== current.notify_orders) current = await setNotifyOrders(current.email, orders);
     return json(view(current, eligible), 200, NO_STORE);
+  });
+
+  // Quem abre o endereço do descadastro num navegador (leitores de e-mail antigos fazem GET em vez do POST do RFC 8058) vai para a página de preferências.
+  // O GET nunca muda nada: programas de segurança e leitores de link "abrem" endereços sozinhos.
+  r.get('/api/email/unsubscribe/:token', 'public', async (ctx) => {
+    const prefs = await byToken(ctx);
+    return new Response(null, { status: 302, headers: { location: `/conta/emails/${preferenceToken(prefs)}`, 'cache-control': 'no-store', 'x-robots-tag': 'noindex, nofollow', 'referrer-policy': 'no-referrer' } });
   });
 
   // Cancelar com um clique (RFC 8058): quem manda este POST é o provedor de caixa de entrada (Gmail, Yahoo...), sem cookies, sem login,

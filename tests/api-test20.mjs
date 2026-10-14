@@ -220,4 +220,56 @@ section('4. Teto diário de envio (EMAIL_DAILY_LIMIT) e remetente de e-mail grat
   serve();
 }
 
+// ------------------------------------------------------------------------------------------------
+section('5. "Enviar exemplos para mim": um exemplo de cada modelo, só para o owner, marcado como teste');
+{
+  const o = new Client(undefined, '198.51.100.55');
+  await o.login();
+  const s = new Client(undefined, '198.51.100.56');
+  await s.login('comum20@copocheio.local', STRONG);
+  wipe();
+  await clearMail();
+  const OWNER = 'dono@copocheio.local';
+  const testRows = () => JSON.parse(psql(`select coalesce(json_agg(m order by m.created_at, m.id), '[]') from email_messages m where m.kind in ('template_test', 'campaign_test')`));
+  check('sem login: 401', (await new Client().post('/api/admin/emails/samples')).status === 401);
+  check('administrador comum não envia os exemplos (403): só o owner', (await s.post('/api/admin/emails/samples')).status === 403);
+  check('e nada foi enviado nem registrado', testRows().length === 0 && !(await mailsTo('comum20@copocheio.local')).some((m) => m.subject.startsWith('[Teste]')));
+
+  const r = await o.post('/api/admin/emails/samples');
+  check('o owner recebe os 7 exemplos (confirmação, nova senha, pedido, pagamento, entrega, cancelamento e promoção)', r.status === 200 && r.data.to === OWNER && r.data.sent === 7 && r.data.total === 7 && r.data.results.length === 7 && r.data.results.every((x) => x.ok === true && x.detail === null), r.data);
+  const got = (await mailsTo(OWNER)).filter((m) => m.subject.startsWith('[Teste] '));
+  const subjects = got.map((m) => m.subject);
+  check('chegaram 7 e-mails de teste, todos com "[Teste]" no assunto e para o e-mail de quem pediu', got.length === 7, subjects);
+  check('um de cada modelo', [/código de confirmação/, /Redefinir sua senha/, /Pedido .* recebido/, /Pagamento do pedido .* confirmado/, /saiu para entrega/, /Pedido .* cancelado/, /Novidades da Copo Cheio \(exemplo\)/].every((re) => subjects.some((x) => re.test(x))), subjects);
+  check('todos avisam, no topo, que são mensagens de teste do painel (texto e HTML)', got.every((m) => /Mensagem de teste enviada pelo painel/.test(m.text) && /Mensagem de teste enviada pelo painel/.test(m.html)), got.map((m) => m.text.slice(0, 100)));
+  check('nenhum exemplo traz link de confirmação, de nova senha ou de acompanhamento que funcione (o código é o fixo 123456)', got.every((m) => !/\/conta\/(verificar|redefinir)\/[A-Za-z0-9_-]{8,}/.test(m.html) && !/\/acompanhar-pedido\/[A-Za-z0-9_-]{8,}/.test(m.html)), got.map((m) => [m.subject, m.html.match(/https?:\/\/[^"' <]+/g)?.slice(0, 4)]));
+  const promo = got.find((m) => /Novidades da Copo Cheio/.test(m.subject));
+  const rest = got.filter((m) => m !== promo);
+  check('a promoção de exemplo chega com os cabeçalhos de promoção (descadastro de um clique) e sem "e-mail automático"', Boolean(promo) && /\/api\/email\/unsubscribe\//.test(String(promo.headers['list-unsubscribe'])) && promo.headers['list-unsubscribe-post'] === 'List-Unsubscribe=One-Click' && !promo.headers['auto-submitted'], promo?.headers);
+  check('os outros seis chegam como e-mail automático de conta ou pedido (Auto-Submitted) e sem descadastro de promoção', rest.length === 6 && rest.every((m) => m.headers['auto-submitted'] === 'auto-generated' && !m.headers['list-unsubscribe']), rest.map((m) => [m.subject, m.headers['auto-submitted'], m.headers['list-unsubscribe']]));
+  const rows = testRows();
+  check('7 registros: 6 "exemplo de modelo" e 1 "teste de campanha", todos aceitos, transacionais e só para o owner', rows.length === 7 && rows.filter((x) => x.kind === 'template_test').length === 6 && rows.filter((x) => x.kind === 'campaign_test').length === 1 && rows.every((x) => x.status === 'accepted' && x.category === 'transactional' && x.audience === 'staff' && x.recipient_email === OWNER), rows.map((x) => [x.kind, x.status, x.category, x.audience]));
+  const list = await o.get('/api/admin/emails/messages?kind=template_test');
+  check('o painel lista os exemplos com o nome do tipo em português', list.status === 200 && list.data.messages.length === 6 && list.data.messages.every((x) => x.kind_label === 'Exemplo de modelo de e-mail (painel)'), list.data.messages?.map((x) => x.kind_label));
+  check('o histórico de atividades registra quem mandou os exemplos', Number(psql(`select count(*) from audit_log where action = 'email.samples'`)) === 1);
+
+  // No máximo 4 vezes por hora (cada clique manda 7 e-mails de verdade para o servidor de e-mail).
+  for (let i = 0; i < 3; i++) await o.post('/api/admin/emails/samples');
+  const fifth = await o.post('/api/admin/emails/samples');
+  check('o 5º clique na mesma hora: 429 e nada novo é enviado', fifth.status === 429 && testRows().length === 28, [fifth.status, testRows().length]);
+
+  // Os testes do painel (28 agora) não contam no teto geral de 40 por endereço: alguns cliques não podem bloquear os avisos de verdade ao dono.
+  const real = (n) =>
+    psql(`insert into email_messages (kind, category, audience, recipient_email, recipient_domain, status, accepted_at, transport, attempts)
+          select 'order_delivered', 'transactional', 'customer', '${OWNER}', 'copocheio.local', 'accepted', now(), 'smtp', 1 from generate_series(1, ${n})`);
+  const lastNotice = () => JSON.parse(psql(`select coalesce((select row_to_json(x) from (select status, block_reason from email_messages where kind = 'admin_new_login' and recipient_email = '${OWNER}' order by created_at desc limit 1) x), 'null'::json)`));
+  real(30);
+  await new Client(undefined, '198.51.100.57').login();
+  check('com 28 exemplos + 30 e-mails de verdade para o dono, o aviso "novo acesso ao painel" AINDA sai (exemplos não entram no teto de 40)', await until(() => lastNotice()?.status === 'accepted'), lastNotice());
+  real(10);
+  await new Client(undefined, '198.51.100.58').login();
+  check('e com 40 e-mails de verdade o teto geral continua valendo (o aviso é barrado)', await until(() => lastNotice()?.status === 'blocked' && lastNotice()?.block_reason === 'recipient_limit'), lastNotice());
+  wipe();
+}
+
 summary();

@@ -437,6 +437,7 @@ export type EmailOverview = {
     from_email: string | null;
     from_domain: string | null;
     free_sender: boolean;
+    order_notices_paused: boolean;
   };
   totals: EmailCounts;
   by_category: Partial<Record<EmailCategory, Omit<EmailCounts, never>>>;

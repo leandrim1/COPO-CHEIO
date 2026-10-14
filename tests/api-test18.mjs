@@ -1,12 +1,13 @@
 // E-mails de pedido e pagamento: o banco enfileira o aviso sozinho (gatilhos), o servidor monta a mensagem na hora de enviar, e as travas
 // (endereço digitado no pedido pode não ser do cliente) protegem terceiros. API real contra Postgres local + SMTP de mentira.
 // usage: bash tests/fresh.sh && node tests/api-test18.mjs
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { Client, check, clearMail, mailMode, mailStats, mailsTo, registerVerified, section, summary } from './lib.mjs';
 
 const P = ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-v', 'ON_ERROR_STOP=1'];
 const psql = (sql) => execFileSync('psql', [...P, '-c', sql], { encoding: 'utf8' }).trim();
 const lit = (v) => `'${String(v).replace(/'/g, "''")}'`;
+const serve = (env = {}) => execSync(`bash ${new URL('./serve.sh', import.meta.url).pathname}`, { env: { ...process.env, ...env }, stdio: 'ignore' });
 const BASE = process.env.BASE ?? 'http://127.0.0.1:4180';
 const STRONG = 'Caixa#Segura-2026';
 const PASS = 'senha-antiga-123';
@@ -372,6 +373,44 @@ section('10. Falha do gatilho nunca derruba o pedido');
   }
   check('o pedido entra mesmo com o registro de e-mails quebrado', Boolean(r?.number) && orderRow(r.number).order_status === 'new', r);
   check('...e nada foi enfileirado para ele', msgs(r.number).length === 0);
+}
+
+// ------------------------------------------------------------------------------------------------
+section('11. Interruptor de segurança: EMAIL_ORDER_NOTICES=off pausa SÓ os e-mails de pedido e pagamento');
+{
+  serve({ EMAIL_ORDER_NOTICES: 'off' });
+  const o = new Client(undefined, '198.51.100.38');
+  await o.login();
+  await clearMail();
+  const quiet = fresh('pausa');
+  const P1 = await placeOrder({ customer_email: quiet });
+  check('o pedido é criado normalmente', P1.status === 201 && Boolean(P1.number), P1.status);
+  const held = await until(() => msgs(P1.number, 'order_received')[0]?.status === 'blocked');
+  check('o aviso de pedido fica bloqueado com o motivo "pausado" e nada sai', Boolean(held) && msgs(P1.number, 'order_received')[0].block_reason === 'paused' && (await mailsTo(quiet)).length === 0, msgs(P1.number));
+  const paid = await patchStatus(P1.id, 'confirmed');
+  check('mudar o status do pedido também não envia nada enquanto estiver pausado', paid.status === 200 && (await until(() => msgs(P1.number, 'order_confirmed')[0]?.status === 'blocked')) && (await mailsTo(quiet)).length === 0, msgs(P1.number).map((m) => [m.kind, m.status]));
+  const ov = await o.get('/api/admin/emails/overview');
+  check('a visão geral avisa que os e-mails de pedido estão pausados', ov.status === 200 && ov.data.transport.order_notices_paused === true, ov.data.transport);
+  const list = await o.get(`/api/admin/emails/messages?q=${P1.number}`);
+  check('o histórico mostra o motivo em português', list.status === 200 && list.data.messages.some((m) => /pausados pela loja/.test(m.block_label ?? '')), list.data.messages?.map((m) => m.block_label));
+  // O que NÃO é pedido segue normal: o código de confirmação da conta sai.
+  await clearMail();
+  const who = fresh('conta');
+  const reg = await new Client().post('/api/account/register', { name: 'Conta Nova', email: who, phone: nextPhone(), password: PASS });
+  check('o código de confirmação de conta continua saindo', reg.status === 202 && (await mailsTo(who)).length === 1, reg.status);
+
+  // Desligou o interruptor: os pedidos novos voltam a avisar; o que foi bloqueado antes NÃO é reenviado.
+  serve();
+  const o2 = new Client(undefined, '198.51.100.39');
+  await o2.login();
+  await clearMail();
+  const back = fresh('volta');
+  const P2 = await placeOrder({ customer_email: back });
+  check('sem a variável, o pedido novo volta a avisar por e-mail', (await arrive(back)).length === 1, msgs(P2.number));
+  await o2.post('/api/admin/emails/process');
+  check('o que foi bloqueado durante a pausa continua bloqueado (não sai atrasado)', msgs(P1.number).every((m) => m.status === 'blocked') && (await mailsTo(quiet)).length === 0, msgs(P1.number).map((m) => [m.kind, m.status]));
+  const ov2 = await o2.get('/api/admin/emails/overview');
+  check('e a visão geral não avisa mais de pausa', ov2.data.transport.order_notices_paused === false);
 }
 
 summary();

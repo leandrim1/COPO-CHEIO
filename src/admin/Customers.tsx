@@ -247,9 +247,14 @@ export default function CustomersPage() {
                     {c.last_login_at ? `último acesso ${timeAgo(c.last_login_at)}` : 'nunca entrou depois do cadastro'}
                   </p>
                 </div>
-                <a href={`/admin/pedidos?q=${encodeURIComponent(c.email)}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8FB1FF] hover:text-white">
-                  {c.orders} {c.orders === 1 ? 'pedido' : 'pedidos'} <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                </a>
+                <div className="flex flex-col items-end gap-1">
+                  <a href={`/admin/pedidos?q=${encodeURIComponent(c.email)}`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#8FB1FF] hover:text-white">
+                    {c.orders} {c.orders === 1 ? 'pedido' : 'pedidos'} <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                  </a>
+                  <a href={`/admin/emails?aba=mensagens&q=${encodeURIComponent(c.email)}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8FB1FF] hover:text-white">
+                    <Mail className="h-3.5 w-3.5" aria-hidden="true" /> E-mails enviados
+                  </a>
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {user.role === 'owner' && c.status !== 'pending_verification' && (

@@ -8,6 +8,9 @@
 //                            40% do teto diário, ou 300 quando não há teto.
 //   MAIL_REPLY_TO            endereço de resposta (Reply-To). Sem ela, não é enviado.
 //   EMAIL_PROVIDER           "smtp" (padrão) ou "resend" (API + avisos de entrega; precisa de RESEND_API_KEY e de um domínio verificado).
+//   EMAIL_ORDER_NOTICES      "off" PAUSA os e-mails de pedido e de pagamento (interruptor de segurança): nada novo sai e cada um fica no
+//                            histórico como "bloqueado: pausado". Não afeta códigos de confirmação, nova senha, avisos de segurança nem promoções.
+//                            Sem ela, ou com qualquer outro valor: ligados.
 import { mailConfig } from '../mail.js';
 
 const env = (name: string): string => (process.env[name] ?? '').trim();
@@ -61,6 +64,9 @@ export const replyTo = (): string | undefined => {
   const value = env('MAIL_REPLY_TO');
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) ? value : undefined;
 };
+
+// Interruptor de segurança: com EMAIL_ORDER_NOTICES=off (ou false, 0, no, pause, paused) os e-mails de pedido e pagamento não saem.
+export const orderNoticesPaused = (): boolean => /^(off|false|0|no|pause|paused)$/i.test(env('EMAIL_ORDER_NOTICES'));
 
 export type TransportName = 'smtp' | 'resend';
 export const transportName = (): TransportName => (env('EMAIL_PROVIDER').toLowerCase() === 'resend' ? 'resend' : 'smtp');

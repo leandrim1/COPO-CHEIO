@@ -162,6 +162,7 @@ section('4. Teste de envio: vai SÓ para o e-mail de quem pediu, marcado como te
   const got = await mailsTo('dono@copocheio.local');
   const m = got.find((x) => /^\[Teste\]/.test(x.subject));
   check('chegou com [Teste] no assunto e o aviso de que ninguém mais recebeu', Boolean(m) && /Ninguém mais recebeu/.test(m.text), got.map((x) => x.subject));
+  check('o teste de uma promoção chega com os cabeçalhos de PROMOÇÃO (descadastro de um clique) e sem "e-mail automático", como o cliente vai receber', Boolean(m) && /\/api\/email\/unsubscribe\//.test(String(m.headers['list-unsubscribe'])) && m.headers['list-unsubscribe-post'] === 'List-Unsubscribe=One-Click' && !m.headers['auto-submitted'] && !m.headers['x-auto-response-suppress'], m?.headers);
   check('o teste é registrado como "teste de campanha" (transacional), não como envio da campanha', messages(`kind = 'campaign_test'`).length === 1 && messages(`kind = 'campaign'`).length === 0);
   check('administrador comum não testa (403)', (await staff.post(`/api/admin/emails/campaigns/${C1}/test`)).status === 403);
 }
@@ -234,6 +235,11 @@ section('7. Descadastro com um clique (RFC 8058), sem login e sem cookie');
   const token = prefsToken(yes);
   const url = `/api/email/unsubscribe/${token}`;
   const bare = new Client();
+  // Quem abre o endereço num navegador (leitores de e-mail antigos fazem GET em vez do POST do RFC 8058) vai para a página de preferências.
+  // O GET nunca muda nada: programas de segurança "abrem" os links dos e-mails sozinhos.
+  const peek = await fetch(`${BASE}${url}`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } });
+  check('GET no endereço do descadastro: leva à página de preferências (302), sem cache, e NÃO descadastra', peek.status === 302 && peek.headers.get('location') === `/conta/emails/${token}` && peek.headers.get('cache-control') === 'no-store' && prefs(yes).marketing === true && prefs(yes).marketing_unsubscribed_at === null, [peek.status, peek.headers.get('location'), prefs(yes)]);
+  check('GET com link adulterado ou inventado: 404, igual ao POST', (await fetch(`${BASE}${url.slice(0, -1)}0`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404 && (await fetch(`${BASE}/api/email/unsubscribe/abc`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404);
   const r = await bare.req('POST', url, 'List-Unsubscribe=One-Click', { raw: true, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   check('o POST do provedor de caixa de entrada (form, sem cookie) cancela as promoções', r.status === 200 && r.data.ok === true && prefs(yes).marketing === false && prefs(yes).marketing_unsubscribed_via === 'one_click' && prefs(yes).marketing_unsubscribed_at !== null, [r.status, prefs(yes)]);
   check('repetir o clique é inofensivo (200)', (await bare.req('POST', url, 'List-Unsubscribe=One-Click', { raw: true, headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status === 200);

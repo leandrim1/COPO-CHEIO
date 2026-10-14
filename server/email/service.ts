@@ -14,7 +14,7 @@ import { waitUntil } from '@vercel/functions';
 import { MissingConfig } from '../env.js';
 import type { Message } from '../mail.js';
 import { checkMailDomain } from '../mailDomain.js';
-import { dailyLimit, promoDailyLimit } from './config.js';
+import { dailyLimit, orderNoticesPaused, promoDailyLimit } from './config.js';
 import { classifyFailure, retryDelayMs } from './errors.js';
 import { GROUP_DAY, KINDS, RECIPIENT_HARD_DAY, isKind } from './kinds.js';
 import type { KindDef, KindName } from './kinds.js';
@@ -24,7 +24,7 @@ import { renderMessage } from './render.js';
 import { getTransport } from './transport.js';
 import type { MessageRow, SendFailure } from './types.js';
 
-export type BlockReason = 'suppressed' | 'no_consent' | 'order_notices_off' | 'recipient_limit' | 'bad_domain' | 'no_recipient';
+export type BlockReason = 'suppressed' | 'no_consent' | 'order_notices_off' | 'recipient_limit' | 'bad_domain' | 'no_recipient' | 'paused';
 
 // Frase curta em português para o painel.
 export const BLOCK_LABEL: Record<BlockReason, string> = {
@@ -34,6 +34,7 @@ export const BLOCK_LABEL: Record<BlockReason, string> = {
   recipient_limit: 'Teto de mensagens por endereço em 24 h atingido',
   bad_domain: 'Domínio do e-mail inexistente, descartável ou que não recebe e-mail',
   no_recipient: 'Sem destinatário válido',
+  paused: 'Avisos de pedido pausados pela loja (EMAIL_ORDER_NOTICES=off)',
 };
 
 // Por que o envio falhou, em português e sem dado sensível (as mesmas frases de sempre para o painel).
@@ -87,6 +88,8 @@ const log = (msg: string, extra: Record<string, unknown> = {}) => console.error(
 
 async function verdict(kind: KindName, def: KindDef, to: string | null, excludeId?: string): Promise<BlockReason | null> {
   if (!to) return 'no_recipient';
+  // Interruptor de segurança da loja: pedido e pagamento não saem (código de login, senha, avisos de segurança e promoções seguem as suas regras).
+  if (def.group === 'order' && orderNoticesPaused()) return 'paused';
   if (await ledger.suppressionOf(to)) return 'suppressed';
   if (def.category === 'promotional' || (def.respectsOrderPref && !def.userInitiated)) {
     const prefs = await getPreferences(to);
@@ -102,14 +105,16 @@ async function verdict(kind: KindName, def: KindDef, to: string | null, excludeI
     const kinds = (Object.keys(KINDS) as KindName[]).filter((k) => KINDS[k].group === def.group);
     if ((await ledger.countRecent(to, 24, { kinds, excludeId })) >= GROUP_DAY[def.group]) return 'recipient_limit';
   }
-  if ((await ledger.countRecent(to, 24, { excludeId })) >= RECIPIENT_HARD_DAY) return 'recipient_limit';
+  // Os testes do painel (sempre para o e-mail de quem pediu) não entram nesta conta: não podem bloquear os avisos de verdade.
+  const real = (Object.keys(KINDS) as KindName[]).filter((k) => !KINDS[k].test);
+  if ((await ledger.countRecent(to, 24, { kinds: real, excludeId })) >= RECIPIENT_HARD_DAY) return 'recipient_limit';
   return null;
 }
 
 // Cabeçalhos por categoria. Transacional: e-mail automático (não responder com "fora do escritório"). Promocional: NUNCA leva estes
 // cabeçalhos; o descadastro com um clique (RFC 8058) vem da própria mensagem (message.headers).
 function headersFor(def: KindDef, message: Message): Record<string, string> {
-  const base: Record<string, string> = def.category === 'transactional' ? { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'All' } : {};
+  const base: Record<string, string> = (def.headerCategory ?? def.category) === 'transactional' ? { 'Auto-Submitted': 'auto-generated', 'X-Auto-Response-Suppress': 'All' } : {};
   return { ...base, ...(message.headers ?? {}) };
 }
 

@@ -229,6 +229,11 @@ export default function OverviewTab({
         <p className="mt-4 rounded-xl bg-white/[0.04] p-3 text-xs leading-relaxed text-white/65">
           <span className="font-semibold text-white/80">Importante:</span> “aceito pelo servidor” <strong>não</strong> é “chegou na caixa de entrada”. Nenhum sistema consegue dizer em qual pasta (Entrada, Promoções ou Spam) o e-mail caiu; isso só se confere abrindo uma mensagem real no Gmail e no Outlook (veja a aba Autenticação).
         </p>
+        {data.transport.order_notices_paused && (
+          <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] p-3 text-xs leading-relaxed text-amber-100">
+            Os e-mails de <strong>pedido e pagamento estão pausados</strong> (<code>EMAIL_ORDER_NOTICES=off</code> na Vercel): nada novo sai, e cada um aparece em Mensagens como “bloqueado”. Para voltar, apague a variável (ou troque o valor) e faça um novo deploy. Códigos de confirmação, nova senha e promoções não são afetados.
+          </p>
+        )}
         {data.transport.free_sender && (
           <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] p-3 text-xs leading-relaxed text-amber-100">
             O remetente é um e-mail gratuito (<code>@{data.transport.from_domain}</code>). Não existe domínio da loja para autenticar com SPF, DKIM e DMARC.{' '}

@@ -1,8 +1,9 @@
-import { CheckCircle2, CircleAlert, Info, ShieldCheck, TriangleAlert, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleAlert, Info, Send, ShieldCheck, TriangleAlert, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { api, friendlyError } from '../../lib/api';
 import { formatDateTime } from '../../lib/format';
 import type { DnsFinding, DnsReport, EmailOverview } from '../../lib/types';
+import { useAdmin } from '../AdminApp';
 import { Badge, Button, Card, INPUT, cx, useToast } from '../ui';
 
 const LEVEL = {
@@ -140,6 +141,58 @@ function Guide({ overview }: { overview: EmailOverview }) {
   );
 }
 
+// Manda para a caixa do owner um exemplo de cada modelo de e-mail, para conferir de verdade no Gmail e no Outlook (guia logo abaixo).
+function SamplesCard() {
+  const { user } = useAdmin();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ to: string; results: { label: string; ok: boolean; detail: string | null }[] } | null>(null);
+  const owner = user.role === 'owner';
+
+  const send = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post<{ to: string; sent: number; total: number; results: { label: string; ok: boolean; detail: string | null }[] }>('/api/admin/emails/samples', {});
+      setResult({ to: r.to, results: r.results });
+      if (r.sent === r.total) toast.success(`${r.sent} exemplos enviados para ${r.to}.`, 'Abra no Gmail e no Outlook e siga o guia abaixo (Mostrar original).');
+      else toast.error(`${r.sent} de ${r.total} exemplos enviados.`, 'Veja quais falharam na lista e o motivo em Mensagens.');
+    } catch (err) {
+      toast.error('Não foi possível enviar os exemplos.', friendlyError(err, ''));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card title="Conferir os e-mails de verdade" description="Manda para a sua caixa de entrada um exemplo de cada modelo: confirmação de conta, nova senha, pedido recebido, pagamento confirmado, saiu para entrega, cancelado e promoção.">
+      <p className="text-sm text-white/70">
+        Todos chegam marcados “[Teste]”, com dados inventados: nenhum cliente recebe nada e nenhum pedido é criado. Use-os para ver, no Gmail e no Outlook, como cada modelo aparece, em que pasta cai e se SPF, DKIM e DMARC estão em PASS.
+      </p>
+      {owner ? (
+        <Button className="mt-4" loading={busy} icon={<Send className="h-4 w-4" aria-hidden="true" />} onClick={() => void send()}>
+          Enviar exemplos para mim
+        </Button>
+      ) : (
+        <p className="mt-3 text-xs text-white/55">Só o owner envia os exemplos (eles vão para o e-mail de quem pede).</p>
+      )}
+      {result && (
+        <ul className="mt-4 space-y-1.5 text-sm" aria-live="polite">
+          {result.results.map((r) => (
+            <li key={r.label} className="flex items-start gap-2 text-white/80">
+              {r.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" aria-hidden="true" />}
+              <span className="min-w-0">
+                {r.label}
+                <span className="sr-only">{r.ok ? ' (enviado)' : ' (falhou)'}</span>
+                {!r.ok && r.detail && <span className="text-white/55"> — {r.detail}</span>}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
 export default function AuthenticationTab({ overview }: { overview: EmailOverview }) {
   const toast = useToast();
   const [report, setReport] = useState<DnsReport | null>(null);
@@ -213,6 +266,7 @@ export default function AuthenticationTab({ overview }: { overview: EmailOvervie
           </div>
         )}
       </Card>
+      <SamplesCard />
       <Guide overview={overview} />
     </div>
   );

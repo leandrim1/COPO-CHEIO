@@ -18,9 +18,21 @@ import type { BlockReason } from '../email/service.js';
 import { KINDS, isKind } from '../email/kinds.js';
 import * as ledger from '../email/ledger.js';
 import { renderMessage } from '../email/render.js';
+import { ensurePreferences, preferenceToken } from '../email/preferences.js';
 import { overview } from '../email/stats.js';
+import { campaignMessage, orderMessage } from '../email/templates.js';
+import type { OrderKind, OrderMail } from '../email/templates.js';
+import { mailMissing } from '../mail.js';
+import type { Message } from '../mail.js';
+import { loadBrand } from '../mailBrand.js';
+import { passwordResetMessage, verificationMessage } from '../mailTemplates.js';
+import { RESET_MINUTES } from '../passwordReset.js';
+import { CODE_MINUTES, LINK_HOURS } from '../verification.js';
 import { parse, text } from '../validate.js';
 import type { Spec } from '../validate.js';
+
+// Tempo máximo (ms) para COMEÇAR a mandar exemplos: depois dele, o que falta fica marcado como não enviado (a função tem pouco tempo para responder).
+const SAMPLES_BUDGET_MS = 5000;
 
 const STATUSES = ['queued', 'sending', 'accepted', 'delivered', 'delayed', 'bounced', 'complained', 'failed', 'blocked', 'cancelled'];
 
@@ -193,6 +205,86 @@ export function registerEmailAdmin(r: Router) {
     if (!(await ledger.unsuppress(email))) throw new HttpError(404, 'Este endereço não está na lista de supressão.');
     await audit(ctx, { action: 'email.unsuppress', summary: 'Tirou um endereço da lista de supressão de e-mails', entity: 'email' });
     return json({ ok: true });
+  });
+
+  // Manda para o e-mail de quem está logado UM exemplo de cada modelo (confirmação, nova senha, pedido, pagamento, cancelamento e promoção), todos marcados
+  // "[Teste]". É o jeito de conferir no Gmail e no Outlook de verdade (Mostrar original → SPF/DKIM/DMARC e a pasta onde cai) sem criar conta nem pedido de mentira.
+  r.post('/api/admin/emails/samples', 'owner', async (ctx) => {
+    if (mailMissing().length) {
+      throw new HttpError(503, `O envio de e-mails ainda não está configurado. Faltam na Vercel: ${mailMissing().join(', ')}.`, { code: 'mail_not_configured', missing: mailMissing() });
+    }
+    await reserve('email-samples', ctx.admin!.id, 3600, 4, 'Muitos envios de exemplo seguidos. Aguarde um pouco.');
+    const brand = await loadBrand(ctx.req);
+    const to = ctx.admin!.email;
+    const name = ctx.admin!.name;
+    const prefs = await ensurePreferences(to.toLowerCase());
+    const token = preferenceToken(prefs);
+    const order = (kind: OrderKind, over: Partial<OrderMail> = {}): Message =>
+      orderMessage(brand, {
+        kind,
+        to,
+        name,
+        number: 1234,
+        lines: [
+          { qty: 2, name: 'Cerveja long neck (exemplo)', total: 17 },
+          { qty: 1, name: 'Água com gás (exemplo)', total: 4 },
+        ],
+        subtotal: 21,
+        deliveryFee: 5,
+        discount: 0,
+        total: 26,
+        delivery: 'delivery',
+        neighborhood: 'Centro',
+        paymentLabel: 'Pix online',
+        online: true,
+        paymentStatus: 'paid',
+        trackUrl: `${brand.siteUrl}/acompanhar-pedido`,
+        prefsUrl: `${brand.siteUrl}/conta/emails/${token}`,
+        sample: true,
+        ...over,
+      });
+    const list: { label: string; kind: 'template_test' | 'campaign_test'; message: Message }[] = [
+      { label: 'Confirmação de e-mail', kind: 'template_test', message: verificationMessage(brand, { to, name, code: '123456', link: `${brand.siteUrl}/conta`, codeMinutes: CODE_MINUTES, linkHours: LINK_HOURS, sample: true }) },
+      { label: 'Nova senha', kind: 'template_test', message: passwordResetMessage(brand, { to, name, link: `${brand.siteUrl}/conta/recuperar`, minutes: RESET_MINUTES, sample: true }) },
+      { label: 'Pedido recebido', kind: 'template_test', message: order('order_received', { online: false, paymentStatus: 'pending', paymentLabel: 'Dinheiro' }) },
+      { label: 'Pagamento confirmado', kind: 'template_test', message: order('payment_confirmed') },
+      { label: 'Pedido saiu para entrega', kind: 'template_test', message: order('order_out_for_delivery') },
+      { label: 'Pedido cancelado', kind: 'template_test', message: order('order_cancelled', { online: true, paymentStatus: 'pending' }) },
+      {
+        label: 'Promoção',
+        // Vai como "teste de campanha": chega com os cabeçalhos de uma promoção (descadastro de um clique, sem "e-mail automático").
+        kind: 'campaign_test',
+        message: campaignMessage(brand, {
+          to,
+          subject: 'Novidades da Copo Cheio (exemplo)',
+          preheader: 'Exemplo de como uma promoção chega na caixa de entrada.',
+          title: 'Exemplo de promoção',
+          body: 'Este é um exemplo de promoção, mandado pelo painel só para você conferir como ela chega.\n\nNenhum cliente recebeu esta mensagem.',
+          ctaLabel: 'Ver o cardápio',
+          ctaUrl: `${brand.siteUrl}/bebidas`,
+          preferencesUrl: `${brand.siteUrl}/conta/emails/${token}`,
+          oneClickUrl: `${brand.siteUrl}/api/email/unsubscribe/${token}`,
+          sample: true,
+        }),
+      },
+    ];
+    // Três de cada vez: o servidor de e-mail aceita mais de uma conexão, e mandar os sete em fila pode passar do tempo que a função tem para responder.
+    // O que não der tempo fica marcado como não enviado (basta clicar de novo).
+    const results: { label: string; ok: boolean; detail: string | null }[] = list.map((item) => ({ label: item.label, ok: false, detail: 'Não deu tempo de enviar este. Clique de novo.' }));
+    const startedAt = Date.now();
+    let next = 0;
+    const worker = async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= list.length || Date.now() - startedAt > SAMPLES_BUDGET_MS) return;
+        const sent = await deliver({ kind: list[i].kind, to, message: list[i].message, req: ctx.req }).catch(() => null);
+        results[i] = { label: list[i].label, ok: Boolean(sent?.ok), detail: sent?.ok ? null : sent ? failureText(sent) : 'Não foi possível enviar.' };
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, list.length) }, worker));
+    const ok = results.filter((r) => r.ok).length;
+    await audit(ctx, { action: 'email.samples', summary: `Mandou exemplos dos modelos de e-mail para o próprio e-mail (${ok} de ${results.length})`, entity: 'email' });
+    return json({ to, sent: ok, total: results.length, results });
   });
 
   // ---- Campanhas promocionais ----

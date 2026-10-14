@@ -32,6 +32,8 @@ export type OrderMail = {
   trackUrl: string;
   // Link das preferências deste endereço (parar de receber e-mails de pedidos).
   prefsUrl: string;
+  // Exemplo mandado pelo painel: "[Teste]" no assunto e a faixa de aviso (o pedido é inventado).
+  sample?: boolean;
 };
 
 const REASON = 'Você recebeu este e-mail porque este endereço foi informado num pedido feito na loja.';
@@ -61,8 +63,14 @@ export function orderMessage(brand: Brand, o: OrderMail): Message {
   const pickup = o.delivery === 'pickup';
   const n = `#${o.number}`;
   const track: Block = { kind: 'button', label: 'Acompanhar meu pedido', url: o.trackUrl };
-  const base = { to: o.to, greeting, reason: REASON, footerLinks: [{ label: 'Não quero e-mails sobre pedidos neste endereço', url: o.prefsUrl }] };
-  const subject = (text: string) => `${text} – ${brand.name}`;
+  const base = {
+    to: o.to,
+    greeting,
+    reason: REASON,
+    footerLinks: [{ label: 'Não quero e-mails sobre pedidos neste endereço', url: o.prefsUrl }],
+    ...(o.sample ? { banner: 'Mensagem de teste enviada pelo painel. O pedido é de exemplo: nada foi comprado.' } : {}),
+  };
+  const subject = (text: string) => `${o.sample ? '[Teste] ' : ''}${text} – ${brand.name}`;
 
   switch (o.kind) {
     case 'order_received':

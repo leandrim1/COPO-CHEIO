@@ -54,7 +54,7 @@ rota / gatilho do banco ──► deliver() ──► regras ──► registro 
 | ---- | --------- | ---- | ------- | ------------------------- |
 | Confirmação de e-mail (código) | transacional | síncrono | sim | 12 |
 | Redefinição de senha (link) | transacional | síncrono | sim | 12 |
-| E-mail de teste do painel / teste de campanha | transacional (equipe) | síncrono | — | 10 / 20 |
+| E-mail de teste do painel / teste de campanha / exemplo de modelo (botão “Enviar exemplos para mim”) | transacional (equipe); o teste de campanha leva os cabeçalhos de promoção | síncrono | — | 10 / 20 / 30 |
 | Aviso: você já tem uma conta | transacional | fila | não | 3 |
 | Aviso: senha alterada · a loja gerou link de nova senha | transacional | fila | não | 5 |
 | Aviso: novo acesso ao painel (equipe) | transacional | fila | não | 10 |
@@ -62,7 +62,8 @@ rota / gatilho do banco ──► deliver() ──► regras ──► registro 
 | Alerta de entregabilidade (dono) | transacional (equipe) | fila | não | 3 |
 | Campanha promocional | **promocional** | fila | não | **2** |
 
-Teto geral de último recurso: **40 mensagens por endereço em 24 h**, somando todos os tipos.
+Teto geral de último recurso: **40 mensagens por endereço em 24 h**, somando todos os tipos. Os **testes do painel** (e-mail de teste, teste de campanha e exemplos) vão sempre para o
+e-mail de quem pediu, têm teto próprio e **não entram nessa soma**: alguns cliques em “Enviar exemplos” não podem bloquear os avisos de verdade.
 
 ### Espera entre tentativas
 
@@ -85,6 +86,7 @@ locked`, com concessão de 5 minutos para o caso de a função morrer no meio).
 | **Lista de supressão** | endereço recusado de vez, que reclamou de spam, ou colocado pelo owner: nada mais é enviado a ele, de nenhum tipo | “Bloqueado: endereço na lista de supressão” |
 | **Consentimento** | promoção só para cliente **ativo, com e-mail confirmado e que aceitou** | “Sem consentimento” |
 | **Preferência de pedidos** | quem pediu “não quero e-mails de pedidos neste endereço” (link no fim de cada e-mail) não recebe os avisos seguintes | “Pediu para não receber e-mails de pedidos” |
+| **Interruptor dos e-mails de pedido** | `EMAIL_ORDER_NOTICES=off` na Vercel pausa **só** os e-mails de pedido e pagamento (para o caso de algo estranho aparecer); o que chegar durante a pausa fica registrado e **não** sai depois | “Bloqueado: avisos de pedido pausados pela loja” |
 | **Domínio do endereço** | e-mail digitado num pedido (que ninguém confirmou) com domínio inexistente, descartável ou sem MX não é tentado | “Domínio inexistente, descartável…” |
 | **Teto por endereço** | 4 por tipo, 12 no grupo pedido, 2 promoções, 40 no total, a cada 24 h | “Teto por endereço atingido” |
 | **Teto diário do provedor** | `EMAIL_DAILY_LIMIT` (padrão **450** com Gmail, sem teto nos demais); promoções usam só `EMAIL_PROMO_DAILY_LIMIT` (padrão 40% do teto, ou 300): o que não cabe **espera sem gastar tentativa** | “Esperando o teto diário” |
@@ -94,6 +96,11 @@ O **teto diário nunca segura um código de login** (o cliente está esperando n
 **E-mail de pedido para visitante (sem conta):** o endereço digitado pode não ser de quem pediu. Por isso o e-mail de pedido traz só o necessário (número, itens,
 valores, **bairro**, forma de pagamento e o link de acompanhamento — nunca telefone, endereço completo, troco ou observações), passa pelas proteções acima e termina
 com o link **“Não quero e-mails sobre pedidos neste endereço”**.
+
+> **Limite que você precisa conhecer:** o **link de acompanhamento** do e-mail abre a mesma página que o cliente vê depois de pedir, e essa página mostra nome, endereço de entrega e
+> observações do pedido. Se o cliente digitar por engano o e-mail de **outra pessoa que existe**, essa pessoa poderia abrir o link e ver esses dados. É o mesmo desenho de qualquer loja
+> que manda “acompanhe seu pedido” por e-mail, e o risco é baixo (e-mail digitado errado quase sempre nem existe, e o domínio é conferido), mas ele existe. Se preferir o caminho mais
+> restrito (e-mail de pedido **sem** o botão de acompanhamento para quem não tem conta), é uma mudança pequena em `server/email/render.ts` (`trackingUrl`).
 
 ## 4. Login, códigos de verificação e senhas
 
@@ -114,7 +121,7 @@ e-mail (não revela quem tem conta); cadastro preso ao navegador; nenhum segredo
 - **Quem recebe:** só cliente ativo, e-mail confirmado, `marketing = true`, fora da lista de supressão. O painel mostra o número exato e o **owner confirma esse
   número** antes de enviar (se a lista mudou, o servidor recusa com o número novo).
 - **Descadastro com um clique (RFC 8058):** toda promoção leva `List-Unsubscribe: <https://…/api/email/unsubscribe/<chave>>` e `List-Unsubscribe-Post:
-  List-Unsubscribe=One-Click`; o Gmail/Yahoo mostram “Cancelar inscrição” e fazem um `POST` sem login nem cookie. O rodapé também leva o link da página de
+  List-Unsubscribe=One-Click`; o Gmail/Yahoo mostram “Cancelar inscrição” e fazem um `POST` sem login nem cookie (quem abre esse endereço num navegador, com `GET`, é levado à página de preferências e **nada muda**: programas de segurança “abrem” links sozinhos). O rodapé também leva o link da página de
   **preferências** (`/conta/emails/<chave>`), onde dá para cancelar as promoções e/ou os avisos de pedido. A chave tem 128 bits aleatórios guardados no banco: não
   depende de variável de ambiente, então links antigos continuam valendo.
 - **Só promoções param.** Código, nova senha e avisos de pedido são transacionais: cancelar as promoções **não** bloqueia nenhum deles.
@@ -138,7 +145,7 @@ campanha). Tudo o que o owner faz entra no histórico de atividades. Nunca apare
 | **Mensagens** | histórico filtrável (estado, tipo, categoria, período, e-mail ou nº do pedido) com a linha do tempo de cada mensagem (tentativas, códigos SMTP, avisos do provedor) e o `Message-ID` para achá-la no Gmail/Outlook |
 | **Promoções** | campanhas, público atual, teste, envio, andamento (enviadas, na fila, falhas, puladas), parar |
 | **Supressões** | endereços que não recebem nada, motivo e origem; o owner coloca ou libera |
-| **Autenticação** | verificador de **SPF, DKIM, DMARC e MX** do domínio do remetente (lê o DNS público) + passo a passo + como conferir no Gmail/Outlook |
+| **Autenticação** | verificador de **SPF, DKIM, DMARC e MX** do domínio do remetente (lê o DNS público); botão **Enviar exemplos para mim** (owner): manda para o seu e-mail um exemplo de cada modelo, marcado “[Teste]”; passo a passo e como conferir no Gmail/Outlook |
 
 ### Alertas
 
@@ -171,6 +178,7 @@ Todas ficam **só no servidor**; marque as senhas e chaves como *Sensitive*. Nad
 | `EMAIL_DAILY_LIMIT` | teto de e-mails aceitos em 24 h (`0` = sem teto). Padrão: 450 com Gmail, sem teto nos outros | não |
 | `EMAIL_PROMO_DAILY_LIMIT` | parte desse teto que as promoções podem usar por dia. Padrão: 40% do teto, ou 300 sem teto | não |
 | `MAIL_REPLY_TO` | endereço de resposta (`Reply-To`); sem ela, não é enviado | não |
+| `EMAIL_ORDER_NOTICES` | `off` pausa os e-mails de pedido e pagamento (interruptor de segurança; não afeta códigos, senhas, avisos de segurança nem promoções). Sem ela: ligados | não |
 | `EMAIL_PROVIDER` | `smtp` (padrão) ou `resend` | não |
 | `RESEND_API_KEY` | chave de API **só de envio** (só com `EMAIL_PROVIDER=resend`) | só no modo Resend |
 | `RESEND_WEBHOOK_SECRET` | segredo `whsec_…` do webhook (só com `EMAIL_PROVIDER=resend`); sem ele a rota de avisos nem existe (404) | só no modo Resend |
@@ -192,7 +200,10 @@ pessoal, o limite diário é de uma conta pessoal (~500; o sistema usa 450) e pr
 3. **DMARC, começando só monitorando:** TXT em `_dmarc.seudominio.com.br` com `v=DMARC1; p=none; rua=mailto:alguem@seudominio.com.br`. `p=none` não bloqueia nada; só gera
    relatórios. Depois de algumas semanas sem e-mails legítimos reprovados, **você** decide se endurece (`quarantine`, depois `reject`).
 4. Na Vercel: `MAIL_FROM` = `Copo Cheio <loja@seudominio.com.br>` (domínio autenticado), `SITE_URL`, redeploy. Em **E-mails → Autenticação**, clique **Verificar agora**.
-5. **Teste em caixas reais:** peça uma confirmação de conta, uma nova senha, um pedido e o **Enviar teste** de uma promoção para um Gmail e um Outlook.com e confira o cabeçalho:
+5. **Teste em caixas reais:** em **E-mails → Autenticação**, clique em **Enviar exemplos para mim** (owner): chegam, no e-mail da conta com que você entrou no painel, **7 exemplos marcados
+   “[Teste]”** (confirmação de conta, nova senha, pedido recebido, pagamento confirmado, saiu para entrega, cancelado e promoção), com dados inventados e sem nenhum link de confirmação, de nova senha ou de acompanhamento que funcione (só os links de preferências e de “Cancelar inscrição” são de verdade, e são do seu próprio endereço: se clicar em “Cancelar inscrição” na promoção de exemplo, o seu endereço deixa de receber promoções).
+   Faça isso com um endereço **Gmail** e um **Outlook.com** (para ver nos dois, cadastre em **Configurações → Administradores** um segundo dono com o outro endereço e entre com ele).
+   **Não encaminhe** a mensagem para conferir: encaminhar apaga o resultado original de SPF/DKIM/DMARC. Confira o cabeçalho de cada uma:
 
    - **Gmail:** abra a mensagem → ⋮ → **Mostrar original**. No topo: **SPF: PASS**, **DKIM: PASS**, **DMARC: PASS** (com o domínio da loja ao lado).
    - **Outlook.com / Hotmail:** abra a mensagem → **…** → **Exibir** → **Exibir origem da mensagem**; procure `Authentication-Results:` com `spf=pass`, `dkim=pass`, `dmarc=pass`.
@@ -203,9 +214,14 @@ pessoal, o limite diário é de uma conta pessoal (~500; o sistema usa 450) e pr
    | Confirmação de conta | | | | |
    | Nova senha | | | | |
    | Pedido recebido | | | | |
-   | Promoção (teste) | | | | |
+   | Pagamento confirmado | | | | |
+   | Saiu para entrega | | | | |
+   | Pedido cancelado | | | | |
+   | Promoção (exemplo) | | | | |
 
 6. (Opcional, recomendado) Verifique o domínio no **Google Postmaster Tools** para acompanhar a reputação e a taxa de spam no Gmail.
+7. (Quando o volume de promoções crescer) Considere enviar e-mails de conta/pedido e promoções por **subdomínios diferentes** (por exemplo `contato.seudominio.com.br` e `novidades.seudominio.com.br`), para que a reputação de um
+   não afete o outro. Hoje o sistema usa **um único remetente** (`MAIL_FROM`) para tudo; separar exigiria um segundo remetente para as campanhas (não implementado).
 
 O verificador do painel **só lê o DNS público**; ele não cria registros. Sobre DKIM, ele tenta os nomes de chave mais comuns (`google`, `selector1`, `resend`, `s1`…) e **avisa
 que não achar não prova que não existe** (cada provedor escolhe o nome; informe o nome exato no campo “Nome da chave DKIM”).
@@ -245,11 +261,11 @@ O envio usa `Idempotency-Key` = id do registro: tentar de novo a mesma mensagem 
 | `tests/unit/email-deliverability.test.mjs` | assinatura Svix (**exemplo oficial**, adulteração, hora, várias assinaturas), leitura dos avisos, análise de SPF/DKIM/DMARC, decisão dos alertas |
 | `tests/unit/email-templates.test.mjs` | **compatibilidade dos templates**: HTML de tabelas, sem script/formulário/pixel, só https, texto = HTML, tamanho, assunto, escape de dados, cabeçalhos de descadastro só nas promoções |
 | `tests/api-test17.mjs` | registro de cada e-mail, endereço inexistente, falha temporária, fila, usuário/senha recusados, política, segredo fora do registro, painel e permissões |
-| `tests/api-test18.mjs` | e-mails de pedido e pagamento: gatilhos, sem duplicar, texto de entrega × retirada, Pix online, e-mail velho cancelado, travas contra abuso, preferências |
-| `tests/api-test19.mjs` | consentimento, descadastro de um clique, campanhas (público, número confirmado, teto, cancelar, descadastro no meio), LGPD, cron |
-| `tests/api-test20.mjs` | visão geral, DNS, alertas (abrem, avisam uma vez, se resolvem), teto diário, remetente gratuito |
+| `tests/api-test18.mjs` | e-mails de pedido e pagamento: gatilhos, sem duplicar, texto de entrega × retirada, Pix online, e-mail velho cancelado, travas contra abuso, preferências, interruptor `EMAIL_ORDER_NOTICES=off` |
+| `tests/api-test19.mjs` | consentimento, descadastro de um clique (e o `GET` que só leva às preferências), campanhas (público, número confirmado, teto, cancelar, descadastro no meio, cabeçalhos do teste), LGPD, cron |
+| `tests/api-test20.mjs` | visão geral, DNS, alertas (abrem, avisam uma vez, se resolvem), teto diário, remetente gratuito, “Enviar exemplos para mim” (7 modelos, cabeçalhos, limite por hora, fora do teto de 40 por endereço) |
 | `tests/api-test21.mjs` | provedor opcional (simulador): envio, chave de idempotência, erros da API, avisos assinados (autenticidade, repetição, ordem, supressão) |
-| `tests/e2e-emails.cjs` | navegador: caixa de promoções, Minha conta, página de preferências, painel no celular e no computador, campanha de ponta a ponta, administrador comum |
+| `tests/e2e-emails.cjs` | navegador: caixa de promoções, Minha conta, página de preferências, painel no celular e no computador, campanha de ponta a ponta, exemplos, atalhos em Clientes e no pedido, administrador comum |
 
 `bash tests/run-api.sh` roda todas as suítes de API; `npm run test:unit`, os unitários; `bash tests/run-e2e.sh e2e-emails`, o navegador (precisa de `npm run build`).
 Os testes usam um **servidor SMTP de mentira**, um **DNS de mentira** e um **simulador da API do provedor**: **nenhum e-mail real é enviado e nenhum domínio real é consultado**.
@@ -267,12 +283,15 @@ comportamento de cada leitor de e-mail com o seu layout.
 | “Recusas por política (5.7.x)” | Reputação ou autenticação do remetente: veja **Autenticação** e a seção 8 |
 | Cliente diz que não recebeu | Procure o e-mail dele em **Mensagens**: *Aceito* (peça para olhar o spam), *Bloqueado* (veja o motivo), *Falhou* (veja o motivo), ou nada (o endereço não chegou a ser usado) |
 | Endereço digitado errado por engano e suprimido | **Supressões → Liberar** (owner) |
+| Aparece na caixa do Gmail da loja um aviso “Mail Delivery Subsystem” / “Delivery Status Notification” | É uma **devolução depois do envio** (o servidor do destinatário recusou). O sistema **não lê** essa caixa (SMTP não avisa devolução): se o endereço não existe, coloque-o em **Supressões**. Com o provedor opcional (seção 9) isso é automático |
+| Apareceu algo estranho nos e-mails de pedido (texto errado, e-mails repetidos, reclamação de cliente) | **Pause** só os e-mails de pedido: cadastre `EMAIL_ORDER_NOTICES=off` na Vercel e faça um novo deploy. Códigos de login, nova senha e promoções continuam. Depois de corrigir, apague a variável |
 | Cron diário falhando com 401 | Falta `CRON_SECRET` na Vercel (o cron só liga com ele) |
 
 ## 13. Limites conhecidos e pendências
 
 - **Sem domínio próprio** não há SPF/DKIM/DMARC da loja: o painel diz isso e o verificador de DNS fica “não se aplica” enquanto o remetente for `@gmail.com`.
 - **SMTP não informa entrega, devolução nem spam**; só o provedor opcional informa (e ele ainda não foi exercitado contra o serviço real).
+- **O link de acompanhamento dos e-mails de pedido mostra nome, endereço e observações a quem recebe o e-mail**: se o cliente digitar o e-mail de outra pessoa que existe, ela os vê (seção 3).
 - **Abertura e clique não são medidos** (decisão de privacidade e reputação).
 - **Pasta de destino** (Entrada/Promoções/Spam) é desconhecida por qualquer sistema.
 - **Processamento sem agendador:** a fila anda por atividade e pelo cron **diário** (limite do plano gratuito da Vercel). Sem tráfego nem painel aberto, uma nova tentativa pode esperar até o cron.

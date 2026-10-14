@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Inbox, Link2, MessageCircle, Phone, Printer, Search, User, UserCheck } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Inbox, Link2, Mail, MessageCircle, Phone, Printer, Search, User, UserCheck } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import {
@@ -709,6 +709,13 @@ export function OrderDetailPage({ number }: { number: string }) {
                 </a>
               </p>
               {order.customer_email && <p className="pl-6 text-white/60">{order.customer_email}</p>}
+              {(order.customer_email || account) && (
+                <p className="pl-6">
+                  <a href={`/admin/emails?aba=mensagens&q=${order.order_number}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#8FB1FF] hover:text-white">
+                    <Mail className="h-3.5 w-3.5" aria-hidden="true" /> E-mails enviados deste pedido
+                  </a>
+                </p>
+              )}
               <p className="flex items-center gap-2 pt-1 text-xs text-white/55">
                 {account ? (
                   <>

@@ -22,7 +22,8 @@ export type KindName =
   | 'payment_refunded'
   | 'deliverability_alert'
   | 'campaign'
-  | 'campaign_test';
+  | 'campaign_test'
+  | 'template_test';
 
 export type KindDef = {
   category: Category;
@@ -46,6 +47,11 @@ export type KindDef = {
   respectsOrderPref?: boolean;
   // Confere se o domínio do endereço existe e não é descartável antes de enviar (endereço que ninguém confirmou, como o digitado no pedido).
   checkDomain?: boolean;
+  // Só para os cabeçalhos: o teste de uma promoção precisa chegar com os cabeçalhos de uma promoção (sem "e-mail automático"), senão o teste não mostra o que o cliente recebe.
+  headerCategory?: Category;
+  // Teste que o painel manda para o próprio e-mail de quem pediu (nunca para um terceiro): não conta no teto geral por endereço, para que alguns
+  // cliques em "Enviar exemplos" não bloqueiem os avisos de verdade (como o alerta de entregabilidade).
+  test?: boolean;
 };
 
 export const KINDS: Record<KindName, KindDef> = {
@@ -57,7 +63,7 @@ export const KINDS: Record<KindName, KindDef> = {
   admin_reset_notice: { category: 'transactional', audience: 'customer', label: 'Aviso: a loja gerou link de nova senha', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 5 },
   // ---- Painel (equipe da loja) ----
   admin_new_login: { category: 'transactional', audience: 'staff', label: 'Aviso: novo acesso ao painel', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 10 },
-  mail_test: { category: 'transactional', audience: 'staff', label: 'E-mail de teste do painel', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 10 },
+  mail_test: { category: 'transactional', audience: 'staff', label: 'E-mail de teste do painel', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 10, test: true },
   deliverability_alert: { category: 'transactional', audience: 'staff', label: 'Alerta de entregabilidade', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 4, perRecipientDay: 3 },
   // ---- Pedido e pagamento ----
   order_received: { category: 'transactional', audience: 'customer', label: 'Pedido recebido', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 4, group: 'order', respectsOrderPref: true, checkDomain: true },
@@ -69,7 +75,9 @@ export const KINDS: Record<KindName, KindDef> = {
   payment_refunded: { category: 'transactional', audience: 'customer', label: 'Reembolso registrado', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 4, group: 'order', respectsOrderPref: true, checkDomain: true },
   // ---- Promoções ----
   campaign: { category: 'promotional', audience: 'customer', label: 'Campanha promocional', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 3, perRecipientDay: 2 },
-  campaign_test: { category: 'transactional', audience: 'staff', label: 'Teste de campanha', sensitive: false, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 20 },
+  campaign_test: { category: 'transactional', audience: 'staff', label: 'Teste de campanha', sensitive: false, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 20, headerCategory: 'promotional', test: true },
+  // Exemplos de cada modelo de e-mail que o owner manda para si mesmo (painel → Autenticação) para conferir no Gmail e no Outlook.
+  template_test: { category: 'transactional', audience: 'staff', label: 'Exemplo de modelo de e-mail (painel)', sensitive: false, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 30, test: true },
 };
 
 // Teto combinado (por endereço, em 24 h) dos tipos de um mesmo grupo: 5 e-mails de um pedido + pagamento + estorno cabem; um pedido

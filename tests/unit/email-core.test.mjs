@@ -141,6 +141,15 @@ test('os tipos com segredo (código, link de senha) são "sync" e nunca guardam 
   assert.equal(KINDS.campaign.category, 'promotional');
   assert.equal(names.filter((n) => KINDS[n].category === 'promotional').length, 1, 'só a campanha é promocional (o teste de campanha é transacional/equipe)');
   assert.equal(KINDS.campaign_test.audience, 'staff');
+  // Testes do painel: sempre para o e-mail de quem pediu, tentados uma vez, fora do teto geral por endereço; o teste de promoção leva cabeçalhos de promoção.
+  for (const name of ['mail_test', 'campaign_test', 'template_test']) {
+    assert.equal(KINDS[name].test, true, `${name}: teste do painel`);
+    assert.equal(KINDS[name].audience, 'staff', name);
+    assert.equal(KINDS[name].mode, 'sync', name);
+  }
+  assert.deepEqual(names.filter((n) => KINDS[n].test).sort(), ['campaign_test', 'mail_test', 'template_test']);
+  assert.equal(KINDS.campaign_test.headerCategory, 'promotional');
+  assert.equal(KINDS.template_test.sensitive, false);
   for (const name of names.filter((n) => n.startsWith('order_') || n.startsWith('payment_'))) {
     assert.equal(KINDS[name].group, 'order', name);
     assert.equal(KINDS[name].respectsOrderPref, true, name);
@@ -190,6 +199,11 @@ test('remetente de provedor gratuito é detectado (não existe domínio da loja 
   assert.equal(withEnv({ ...SMTP, MAIL_FROM: 'Copo Cheio <copocheio@gmail.com>' }, () => config.sendsFromFreemail()), true);
   assert.equal(withEnv({ ...SMTP, MAIL_FROM: 'Copo Cheio <loja@copocheio.com.br>' }, () => config.sendsFromFreemail()), false);
   assert.equal(withEnv({ ...SMTP, SMTP_USER: 'copocheio@hotmail.com' }, () => config.sendsFromFreemail()), true);
+});
+
+test('interruptor de segurança dos e-mails de pedido: só "off", "false", "0", "no", "pause" e "paused" (qualquer caixa) pausam', () => {
+  for (const v of ['off', 'OFF', ' false ', '0', 'no', 'pause', 'Paused']) withEnv({ EMAIL_ORDER_NOTICES: v }, () => assert.equal(config.orderNoticesPaused(), true, v));
+  for (const v of [undefined, '', 'on', '1', 'yes', 'true', 'ligado', 'offline']) withEnv({ EMAIL_ORDER_NOTICES: v }, () => assert.equal(config.orderNoticesPaused(), false, String(v)));
 });
 
 test('Reply-To só vale se for um endereço; o transporte é SMTP, a menos que se peça a Resend', () => {

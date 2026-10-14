@@ -124,7 +124,7 @@ export default function EmailsPage() {
         ) : tab === 'visao-geral' ? (
           <OverviewTab data={data} days={days} setDays={setDays} loading={loading} onRefresh={() => void load(true)} goTo={go} />
         ) : tab === 'mensagens' ? (
-          <MessagesTab kinds={data.kinds} />
+          <MessagesTab kinds={data.kinds} initial={{ q: new URLSearchParams(window.location.search).get('q') ?? '' }} />
         ) : tab === 'campanhas' ? (
           <CampaignsTab />
         ) : tab === 'supressoes' ? (

@@ -81,11 +81,12 @@ export function alreadyRegisteredMessage(brand: Brand, o: { to: string; name: st
 }
 
 // Recuperação de senha: o link leva à tela de nova senha. Vale por pouco tempo e uma vez só.
-export function passwordResetMessage(brand: Brand, o: { to: string; name: string; link: string; minutes: number }): Message {
+export function passwordResetMessage(brand: Brand, o: { to: string; name: string; link: string; minutes: number; sample?: boolean }): Message {
   const hi = greetingName(o.name);
   return renderEmail(brand, {
     to: o.to,
-    subject: `Redefinir sua senha – ${brand.name}`,
+    subject: `${o.sample ? '[Teste] ' : ''}Redefinir sua senha – ${brand.name}`,
+    banner: o.sample ? 'Mensagem de teste enviada pelo painel. O link abaixo é só um exemplo e não redefine nenhuma senha.' : undefined,
     preheader: `Use o link para criar uma senha nova. Ele vale por ${o.minutes} minutos.`,
     eyebrow: 'Recuperação de senha',
     title: 'Redefina sua senha',

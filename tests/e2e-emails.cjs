@@ -266,6 +266,33 @@ const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', '
   ok(/SPF presente/.test(t) && /DMARC em modo de monitoramento \(p=none\)/.test(t) && /Chave DKIM encontrada/.test(t), 'autenticação: SPF, DKIM e DMARC (p=none) explicados');
   ok(/Mostrar original/.test(t) && /Authentication-Results/.test(t), 'autenticação: traz o passo a passo para conferir o cabeçalho no Gmail e no Outlook');
   ok(await noHScroll(m), 'autenticação cabe no celular');
+  ok((await m.getByRole('button', { name: 'Enviar exemplos para mim' }).count()) === 1, 'autenticação: o owner vê "Enviar exemplos para mim"');
+  const testes = async () => (await mails('dono@copocheio.local')).filter((x) => x.subject.startsWith('[Teste] ')).length;
+  const antesExemplos = await testes();
+  await m.getByRole('button', { name: 'Enviar exemplos para mim' }).click();
+  ok(await until(async () => (await testes()) - antesExemplos === 7, 30000), 'exemplos: chegaram 7 e-mails de teste para o dono');
+  const listaExemplos = m.locator('ul[aria-live="polite"]').filter({ hasText: 'Pedido saiu para entrega' });
+  ok(await until(async () => (await listaExemplos.locator('li').count()) === 7), 'exemplos: a tela lista os 7 modelos enviados');
+  const textoExemplos = await listaExemplos.innerText();
+  ok(['Confirmação de e-mail', 'Nova senha', 'Pedido recebido', 'Pagamento confirmado', 'Pedido saiu para entrega', 'Pedido cancelado', 'Promoção'].every((l) => textoExemplos.includes(l)) && !/falhou/.test(textoExemplos), 'exemplos: todos os modelos aparecem como enviados, sem falha', textoExemplos);
+  ok(await noHScroll(m), 'autenticação com os exemplos cabe no celular');
+  await m.screenshot({ path: `${SP}/emails-autenticacao-celular.png`, fullPage: true });
+
+  console.log('# 7b. painel: atalhos "E-mails enviados" em Clientes e no pedido');
+  await m.goto(BASE + '/admin/clientes', { waitUntil: 'networkidle' });
+  const linkCliente = m.locator('a[href="/admin/emails?aba=mensagens&q=fa1%40exemplo.com"]');
+  ok(await until(async () => (await linkCliente.count()) === 1), 'clientes: o cartão do cliente tem o atalho "E-mails enviados"');
+  await linkCliente.click();
+  await m.waitForURL('**/admin/emails?aba=mensagens&q=fa1%40exemplo.com');
+  ok(await until(async () => (await m.getByPlaceholder('E-mail ou nº do pedido').inputValue()) === 'fa1@exemplo.com'), 'o atalho abre as mensagens já filtradas pelo e-mail do cliente');
+  ok(await until(async () => /fa1@exemplo\.com/.test(await m.locator('main ul').first().innerText()) && !/fa2@exemplo\.com/.test(await m.locator('main ul').first().innerText())), 'e só aparecem os e-mails daquele cliente');
+  await m.goto(BASE + `/admin/pedidos/${orderNumber}`, { waitUntil: 'networkidle' });
+  const linkPedido = m.locator(`a[href="/admin/emails?aba=mensagens&q=${orderNumber}"]`);
+  ok(await until(async () => (await linkPedido.count()) === 1), 'pedido: o detalhe tem o atalho "E-mails enviados deste pedido"');
+  await linkPedido.click();
+  await m.waitForURL(`**/admin/emails?aba=mensagens&q=${orderNumber}`);
+  ok(await until(async () => new RegExp(`pedido #${orderNumber}`).test(await m.locator('main ul').first().innerText())), 'o atalho abre as mensagens daquele pedido');
+  ok(await noHScroll(m), 'mensagens filtradas cabem no celular');
   await ctxM.close();
 
   console.log('# 8. painel (owner), computador');
@@ -303,6 +330,11 @@ const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', '
   await tpage.getByRole('tab', { name: /^Supressões/ }).click();
   await tpage.waitForSelector('text=Lista de supressão');
   ok((await tpage.getByRole('button', { name: 'Adicionar' }).count()) === 0 && /Só o owner coloca ou libera endereços/.test(await body(tpage)), 'administrador comum NÃO vê "Adicionar" na lista de supressão');
+  await tpage.getByRole('tab', { name: /^Autenticação/ }).click();
+  ok(await until(async () => /Conferir os e-mails de verdade/.test(await body(tpage))), 'administrador comum vê a aba Autenticação');
+  ok((await tpage.getByRole('button', { name: 'Enviar exemplos para mim' }).count()) === 0 && /Só o owner envia os exemplos/.test(await body(tpage)), 'administrador comum NÃO vê "Enviar exemplos para mim" e a tela explica por quê');
+  const directSamples = await tpage.evaluate(() => fetch('/api/admin/emails/samples', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) => r.status));
+  ok(directSamples === 403, 'e o servidor recusa os exemplos pedidos direto pelo administrador comum (403)');
   const direct = await tpage.evaluate(() => fetch('/api/admin/emails/process', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) => r.status));
   ok(direct === 403, 'e o servidor recusa a ação direta do administrador comum (403)');
   await ctxT.close();

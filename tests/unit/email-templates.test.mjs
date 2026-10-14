@@ -83,6 +83,8 @@ add('alerta para o dono', 'transactional', tpl.alertMessage(brand, { to: 'dono@e
 add('promoção (com botão)', 'promotional', tpl.campaignMessage(brand, campaign()));
 add('promoção (sem botão)', 'promotional', tpl.campaignMessage(brand, campaign({ ctaLabel: null, ctaUrl: null })));
 add('promoção (teste)', 'promotional', tpl.campaignMessage(brand, campaign({ sample: true })));
+add('nova senha (exemplo do painel)', 'transactional', mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/recuperar`, minutes: 60, sample: true }));
+add('pedido: exemplo do painel', 'transactional', tpl.orderMessage(brand, order({ kind: 'payment_confirmed', online: true, paymentStatus: 'paid', paymentLabel: 'Pix online', sample: true })));
 
 const hrefs = (html) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
 const SHORTENERS = /(^|\/\/|\.)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|cutt\.ly|rebrand\.ly|tiny\.cc|buff\.ly|shorturl\.at)(\/|$)/i;
@@ -256,4 +258,21 @@ test('valores em reais no formato brasileiro', () => {
   assert.equal(tpl.brl(17), 'R$ 17,00');
   assert.equal(tpl.brl(1234.5), 'R$ 1.234,50');
   assert.equal(tpl.brl(0.3), 'R$ 0,30');
+});
+
+test('exemplos do painel (botão "Enviar exemplos para mim"): "[Teste]" no assunto e o aviso no topo; sem "sample", nenhum dos dois', () => {
+  const reset = (sample) => mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/recuperar`, minutes: 60, sample });
+  const paid = (sample) => tpl.orderMessage(brand, order({ kind: 'payment_confirmed', online: true, paymentStatus: 'paid', paymentLabel: 'Pix online', sample }));
+  for (const make of [reset, paid]) {
+    const on = make(true);
+    const off = make(undefined);
+    assert.match(on.subject, /^\[Teste\] /);
+    assert.doesNotMatch(off.subject, /\[Teste\]/);
+    assert.match(on.text, /Mensagem de teste enviada pelo painel/);
+    assert.match(on.html, /Mensagem de teste enviada pelo painel/);
+    assert.doesNotMatch(off.text, /Mensagem de teste/);
+    assert.doesNotMatch(off.html, /Mensagem de teste/);
+  }
+  // O exemplo de nova senha aponta para uma página fixa, nunca para um endereço com chave que funcione.
+  assert.doesNotMatch(reset(true).html, /\/conta\/redefinir\/[A-Za-z0-9_-]{8,}/);
 });

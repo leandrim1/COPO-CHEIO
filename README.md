@@ -376,11 +376,13 @@ qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta *
    | `SITE_URL` | endereço do site nos links e na logo dos e-mails, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
    | `CRON_SECRET` | texto aleatório longo; **liga o cron diário** que processa a fila de e-mails (`/api/cron/email`) | recomendada |
    | `EMAIL_DAILY_LIMIT`, `EMAIL_PROMO_DAILY_LIMIT`, `MAIL_REPLY_TO` | teto diário de envio (padrão 450 no Gmail), parte dele para promoções e endereço de resposta | não |
+   | `EMAIL_ORDER_NOTICES` | `off` **pausa** os e-mails de pedido e pagamento (interruptor de segurança; códigos de confirmação, nova senha e promoções não são afetados) | não |
 
    (Provedor opcional com avisos de entrega: `EMAIL_PROVIDER=resend`, `RESEND_API_KEY`, `RESEND_WEBHOOK_SECRET`. Tudo sobre envio, registro,
    entregabilidade, DNS e promoções: [`docs/EMAIL.md`](docs/EMAIL.md).)
 
-3. Faça um novo deploy, abra *Painel → Clientes* e use **Enviar e-mail de teste** (owner). O painel e
+3. Faça um novo deploy, abra *Painel → Clientes* e use **Enviar e-mail de teste** (owner), ou *Painel → E-mails → Autenticação → **Enviar exemplos para
+   mim*** (um exemplo de cada modelo: confirmação, nova senha, pedido, pagamento, entrega, cancelamento e promoção). O painel e
    `GET /api/health` (`"mail":"ok"`) mostram se está configurado; se faltar algo, listam os **nomes** das variáveis.
 
 Outros provedores (Brevo, Resend `smtp.resend.com`, Amazon SES, SendGrid, Zoho…) funcionam do mesmo jeito, com o servidor
