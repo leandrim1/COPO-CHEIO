@@ -111,7 +111,8 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     });
     ok(/^(Aberto agora|Fechado)/.test(sameRow.prevText ?? '') && sameRow.right && sameRow.dy < 6, `${name}: fica logo depois do status de funcionamento, na mesma linha`, sameRow);
     ok(sameRow.size[0] >= 24 && sameRow.size[1] >= 24, `${name}: tamanho clicável decente (${sameRow.size.join('×')})`);
-    const header = await page.evaluate(() => document.querySelector('main h1')?.parentElement?.textContent ?? '');
+    // A área de informações da loja: o bloco que guarda a linha do nome (h1 + botão Login) e as linhas de entrega e status.
+    const header = await page.evaluate(() => document.querySelector('main h1')?.closest('div.flex')?.parentElement?.textContent ?? '');
     ok(header.includes(site.store.delivery_time), `${name}: o tempo de entrega continua no cabeçalho, perto do botão`);
     ok(!/Segunda|Terça|Quarta|Quinta|Sexta|Sábado|Domingo|\d\d:\d\d às \d\d:\d\d/.test(header), `${name}: o resumo dos horários não aparece mais no cabeçalho (só dentro da janela)`, header);
     if (!(w < 1000)) {

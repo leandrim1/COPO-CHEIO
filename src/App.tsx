@@ -29,6 +29,7 @@ import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop }
 import type { Product } from './site/data';
 import { EnergeticSwapProvider } from './site/EnergeticSwap';
 import { IcePickerProvider } from './site/IceChoice';
+import { AccountLink } from './site/AccountLink';
 import { OpenStatus, StoreInfoButton } from './site/StoreInfo';
 import { useIcePicker } from './site/icePicker';
 import {
@@ -914,7 +915,7 @@ function BebidasPage() {
         </div>
 
         <div
-          className={`px-4 sm:px-6 ${WIDE} lg:grid lg:items-start lg:gap-x-10 ${hold} ${
+          className={`px-4 sm:px-6 ${WIDE} lg:relative lg:grid lg:items-start lg:gap-x-10 ${hold} ${
             hasBanners ? 'lg:grid-cols-[minmax(20rem,5fr)_minmax(0,7fr)]' : 'lg:grid-cols-[minmax(0,1fr)_minmax(20rem,30rem)]'
           }`}
         >
@@ -926,10 +927,20 @@ function BebidasPage() {
             height={96}
             className="relative -mt-12 h-24 w-24 rounded-full object-contain shadow-[0_0_50px_-4px_rgba(20,92,255,0.8)] ring-4 ring-[#050505] lg:-mt-16 lg:h-32 lg:w-32"
           />
-          <h1 className="mt-4 text-3xl font-black tracking-tight text-white lg:text-4xl">
-            <BrandName name={store.store_name} />
-          </h1>
-          {store.tagline && <p className="mt-0.5 text-sm font-medium text-white/60">{store.tagline}</p>}
+          {/* Nome à esquerda e "Login" / "Minha conta" no canto superior direito da área de informações. No computador, sem banners no
+              cardápio, o botão vai para a ponta direita da página (como o Login do site de referência); com banners ele fica na ponta
+              direita da coluna da loja, para não cobrir o carrossel. */}
+          <div className="mt-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="text-3xl font-black tracking-tight text-white lg:text-4xl">
+                <BrandName name={store.store_name} />
+              </h1>
+              {store.tagline && <p className="mt-0.5 text-sm font-medium text-white/60">{store.tagline}</p>}
+            </div>
+            {ready && !offline && (
+              <AccountLink className={`mt-0.5 ${hasBanners ? '' : 'lg:absolute lg:right-10 lg:top-20 lg:mt-0 xl:right-14 2xl:right-20'}`} />
+            )}
+          </div>
           <div className="mt-3 space-y-1.5">
             {info.length > 0 && (
               <ul className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm text-white/80">

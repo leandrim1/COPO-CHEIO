@@ -262,6 +262,14 @@ produto e envie a foto.
   (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas. A capa e o
   carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o outro é só
   escolher *Onde aparece* ao editar.
+- **Login / Minha conta**: em `/bebidas`, um botão compacto **Login** (preto, texto branco, borda discreta) fica no canto superior direito da área de informações da
+  loja, na altura do nome (no computador, na ponta direita do conteúdo; com banners no cardápio, na ponta direita da coluna da loja, para não cobrir o
+  carrossel; no celular, ao lado do nome, sem fazê-lo quebrar de linha). Não existe login novo: o botão é um link para `/conta`, a tela de entrada que o site já
+  tem (entrar, criar conta, confirmar o e-mail por código, "Meus pedidos", "Sair"). A sessão é a de sempre (cookie HttpOnly conferido em `/api/account/me`, o mesmo
+  `useCustomer()` do resto do site): quem já tem sessão vê **Minha conta** (de 360 a 400 px, "Conta"; abaixo de 360 px, só o ícone), cai direto nos dados e nos
+  pedidos sem digitar a senha e nunca vê "Login" piscar enquanto o servidor responde. Depois de entrar o cliente fica na conta (sem `?voltar=`, para não haver vai e
+  volta com a Bebidas). O acompanhamento **sem cadastro** (número + código), o botão "Acompanhar pedido" do topo, o carrinho e o checkout não mudaram. O site não
+  tem avaliações de clientes, então nada de estrelas. Código: `src/site/AccountLink.tsx` (o botão) e o cabeçalho em `src/App.tsx`.
 - **Horário e pagamento (botão ⓘ)**: em `/bebidas`, o resumo dos horários não fica mais na tela: ele só aparece dentro da janela que um ícone ⓘ discreto, ao lado de "Aberto agora / Fechado", abre uma janela centralizada, escura e azul
   (a do tema da marca), com o título (nome da loja e o status), o **horário de funcionamento de domingo a sábado** (o dia de hoje destacado com "Hoje" e
   os dias fechados marcados "Fechado") e as **formas de pagamento aceitas**. Só isso. Tudo vem do que o painel já cadastra (*Configurações → Horários* e
