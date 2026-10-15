@@ -1,6 +1,6 @@
 // Escolha do gelo: tipos, textos e as regras puras do carrinho (sem React, para poder ser testado à parte).
 //
-// As categorias que pedem a escolha são marcadas no banco (categories.ice_choice_required); o site só lê essa marca. Cada linha do
+// Os produtos que pedem a escolha são marcados no banco (products.ice_choice_required, escolhidos no painel); o site só lê essa marca. Cada linha do
 // pedido é "produto + gelo": o mesmo copão com gelos diferentes são duas linhas, cada uma com a sua quantidade.
 
 export type IceChoice = 'normal' | 'flavored';
@@ -96,7 +96,7 @@ export function changeLineIce(cart: Cart, key: string, ice: IceChoice | null): C
   return put(without, target, (without[target] ?? 0) + qty);
 }
 
-// Depois que o cardápio chega: tira o que não está mais nele e acerta as linhas ao que cada produto pede AGORA (se a categoria deixou
+// Depois que o cardápio chega: tira o que não está mais nele e acerta as linhas ao que cada produto pede AGORA (se o produto deixou
 // de pedir o gelo, a linha volta a ser só o produto; se passou a pedir, a linha que veio sem escolha continua no pedido, marcada como
 // "falta escolher"). `requiresIce` devolve undefined para produto desconhecido. `swapOk` diz se a troca de energético de uma linha ainda
 // vale (o combo ainda tem energético definido e o novo ainda existe e é de 2L): se não vale, a linha volta a ser o combo normal.

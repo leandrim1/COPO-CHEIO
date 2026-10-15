@@ -143,13 +143,17 @@ produto e envie a foto.
     tentativas e 20 pedidos a cada 10 min; o pedido devolvido pela chave não gasta limite) e, no banco, no máximo 5 pedidos por
     telefone a cada 10 min. Não há captcha; se ainda aparecer abuso, o próximo passo é acrescentar um (por exemplo, Cloudflare Turnstile).
 - **Itens**: nome e preço são gravados no pedido. Mudar o produto depois não altera pedidos antigos.
-- **Escolha do gelo (Copão e Copão com Monster)**: os produtos dessas categorias só entram no pedido com a escolha **🧊 Gelo normal** ou
-  **🍓 Gelo de sabor**.
-  - *Quem define a regra*: uma marca na própria categoria (`categories.ice_choice_required`), não o nome que aparece no site. A migration
-    `0013_ice_choice.sql` marcou "Copão" e "Copão com Monster" (sem diferenciar maiúsculas, acentos ou espaços repetidos; as outras
-    categorias, como "Copões" ou "Copão Infantil", **não** são marcadas). Qualquer categoria liga ou desliga a regra em *Categorias →
-    Editar → Pedir a escolha do gelo*, e a lista mostra "Pede o gelo" nas que têm. Renomear uma categoria não desliga a regra; criar uma
-    categoria nova com nome parecido também não a liga.
+- **Escolha do gelo (só nos produtos que a loja marcar)**: os produtos marcados só entram no pedido com a escolha **🧊 Gelo normal** ou
+  **🍓 Gelo de sabor**; os outros (mesmo da categoria Copão) são pedidos direto, sem pergunta.
+  - *Quem define a regra*: uma marca em cada **produto** (`products.ice_choice_required`), escolhida no painel; nem a categoria nem o
+    nome decidem. Em *Produtos* há três jeitos de marcar: o botão do **floco de neve** na linha do produto (azul = pede o gelo), a chave
+    **Pedir a escolha do gelo** no formulário do produto (cartão "Gelo") e, para conferir, o selo **Pede o gelo** e o filtro "Pedem o
+    gelo". Vale para o site na hora. Produto novo nasce **sem** a marca (a loja liga um a um); duplicar um produto copia a marca;
+    renomear o produto ou a categoria, ou mudá-lo de categoria, não muda a regra. *De onde veio*: a migration `0013_ice_choice.sql`
+    marcava categorias ("Copão" e "Copão com Monster"); a `0022_ice_per_product.sql` passou a marca para o produto e, **uma única vez**,
+    marcou os produtos que estavam nessas categorias (para o site não mudar de comportamento no instante do deploy). **Depois do deploy,
+    desmarque no painel os produtos que não devem perguntar o gelo.** A marca antiga da categoria (`categories.ice_choice_required`) ficou
+    no banco, sem uso, e saiu da tela *Categorias*.
   - *No site*: tocar em "Adicionar" num desses produtos abre "**Qual gelo você prefere? ***" com dois cartões (celular: folha que sobe
     de baixo; computador: janela no centro). Nada é adicionado sem escolher: o botão mostra "Escolha o tipo de gelo para continuar." e a
     opção escolhida fica destacada; dá para trocar de ideia antes de adicionar. A pergunta volta a cada unidade adicionada (sem opção
@@ -159,10 +163,10 @@ produto e envie a foto.
     escolha fica guardada no aparelho junto com o pedido (sobrevive a recarregar a página e a navegar). Um pedido guardado **antes** desta
     mudança com copão sem gelo continua no carrinho, marcado "Escolher o gelo *": "Finalizar pedido" mostra a mesma mensagem e não segue
     até escolher. "Pedir de novo" (em *Minha conta*) leva o gelo que foi escolhido naquele pedido.
-  - *No servidor*: `create_order` (no banco) recusa o pedido se algum item de categoria que pede o gelo vier sem `ice_choice` válido
+  - *No servidor*: `create_order` (no banco) recusa o pedido se algum item de produto marcado vier sem `ice_choice` válido
     (`"normal"` ou `"flavored"`): `400` com `code: "ice_required"`, a mensagem acima e a lista dos produtos que faltam; **nada é criado e
-    nenhum estoque fica reservado**. Isso vale para qualquer requisição, não só a do site. Em produto de categoria que não pede, o campo é
-    ignorado (nada muda para as outras categorias). Estoque e o limite de 99 por produto contam a **soma** das linhas do mesmo produto.
+    nenhum estoque fica reservado**. Isso vale para qualquer requisição, não só a do site. Em produto que não pede, o campo é
+    ignorado (nada muda para os outros produtos). Estoque e o limite de 99 por produto contam a **soma** das linhas do mesmo produto.
     A escolha é gravada em `order_items.ice_choice` e entra na chave de idempotência (repetir o envio com outro gelo é um pedido
     diferente). Preço, frete, total e pagamento não mudam por causa do gelo.
   - *Onde aparece*: gaveta do pedido, checkout, página do pedido e de acompanhamento, mensagem de WhatsApp para a loja, "Meus pedidos"
@@ -727,10 +731,13 @@ A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desl
 ([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
 A migration `0021_pickup_time.sql` acrescentou uma coluna opcional, `store_settings.pickup_time` (texto de até 30 letras). **Hoje o site não a usa**: a janela ⓘ da página
 Bebidas ficou só com horário de funcionamento e formas de pagamento, então a coluna fica vazia e sem efeito (pode ser apagada ou reaproveitada depois).
-As migrations 0009 a 0021 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+A migration `0022_ice_per_product.sql` acrescentou `products.ice_choice_required` e trocou `create_order` por uma versão idêntica à da 0020, exceto por
+ler a marca do **produto** (era a da categoria). Ela escreve **uma única linha de dados** (um `UPDATE` que marca os produtos que estavam em categorias que pediam o gelo, para o site
+não mudar no deploy); nenhum pedido, preço, estoque ou categoria é alterado. A coluna `categories.ice_choice_required` continua no banco, sem uso.
+As migrations 0009 a 0022 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
-pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
+pedir os produtos marcados (inicialmente, os dos copões) enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
 da 0014**: depois de um rollback do código, o painel antigo lista o "Pix online" e não conhece a trava que impede ligá-lo; não o ligue.
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,

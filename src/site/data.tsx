@@ -21,7 +21,7 @@ export type Product = {
   featured: boolean;
   soldOut: boolean;
   position: number;
-  // A categoria do produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido.
+  // O produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido (a loja liga produto a produto, no painel).
   iceRequired: boolean;
   // Combos (troca de energético): o produto do cardápio que é o energético que vem no combo e/ou o VALOR dele (o painel define; sem nenhum dos
   // dois o produto não aceita a troca) e os energéticos que o cliente pode escolher (lista vazia = qualquer energético de 2L).
@@ -48,7 +48,9 @@ type ShopData = {
 
 // v3: os produtos passaram a trazer `iceRequired`. Uma cópia v2 (sem essa informação) seria um cardápio que deixa pedir copão sem
 // perguntar o gelo, então ela simplesmente não é mais lida.
-const CACHE_KEY = 'copocheio:site-v3';
+// v4: `iceRequired` passou a vir do PRODUTO (a loja escolhe, produto a produto, quais perguntam o gelo); antes vinha da categoria. Uma cópia
+// v3 teria o gelo nos produtos errados, então também não é mais lida.
+const CACHE_KEY = 'copocheio:site-v4';
 const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS };
 
 // ---- Dados defensivos --------------------------------------------------------------------------
@@ -174,6 +176,7 @@ type ProductRowFromDb = {
   swap_base_product_id?: string | null;
   swap_base_price?: number | string | null;
   swap_option_ids?: string[] | null;
+  ice_choice_required?: boolean;
 };
 
 function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[] {
@@ -194,7 +197,7 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         featured: row.featured,
         soldOut: row.sold_out,
         position: row.position,
-        iceRequired: category?.ice_choice_required === true,
+        iceRequired: row.ice_choice_required === true,
         swapBaseId: typeof row.swap_base_product_id === 'string' ? row.swap_base_product_id : null,
         swapBasePrice: row.swap_base_price === null || row.swap_base_price === undefined || !Number.isFinite(Number(row.swap_base_price)) ? null : Number(row.swap_base_price),
         swapOptionIds: Array.isArray(row.swap_option_ids) ? row.swap_option_ids.filter((x): x is string => typeof x === 'string') : [],

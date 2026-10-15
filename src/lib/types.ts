@@ -65,8 +65,6 @@ export type Category = {
   name: string;
   position: number;
   active: boolean;
-  // Os produtos desta categoria só são pedidos com a escolha do gelo (gelo normal ou de sabor).
-  ice_choice_required?: boolean;
   created_at?: string;
 };
 
@@ -93,6 +91,8 @@ export type ProductRecord = {
   // na troca (lista vazia = qualquer energético de 2L).
   swap_base_price?: number | null;
   swap_option_ids?: string[];
+  // Quem pede este produto precisa escolher o gelo (gelo normal ou de sabor). Cada produto liga a sua no painel; a categoria não decide.
+  ice_choice_required?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -169,7 +169,7 @@ export type OrderItem = {
   quantity: number;
   unit_price: number;
   total_price: number;
-  // Escolha do gelo (só nos produtos de categorias que pedem).
+  // Escolha do gelo (só nos produtos que pedem).
   ice_choice?: IceChoice | null;
 };
 

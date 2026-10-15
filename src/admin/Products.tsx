@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, Plus, Search, Snowflake, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
@@ -361,7 +361,7 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
 
 // ---- Lista (/admin/produtos) -------------------------------------------------------------------
 
-type Filter = 'all' | 'active' | 'inactive' | 'soldout' | 'featured';
+type Filter = 'all' | 'active' | 'inactive' | 'soldout' | 'featured' | 'ice';
 
 export function ProductsPage() {
   const toast = useToast();
@@ -413,6 +413,7 @@ export function ProductsPage() {
     if (filter === 'inactive' && p.active) return false;
     if (filter === 'soldout' && !isSoldOut(p)) return false;
     if (filter === 'featured' && !p.featured) return false;
+    if (filter === 'ice' && !p.ice_choice_required) return false;
     return !term || normalizeText(`${p.name} ${p.sku ?? ''} ${p.description ?? ''}`).includes(term);
   });
 
@@ -423,6 +424,10 @@ export function ProductsPage() {
     void patch(p, { featured: !p.featured }, p.featured ? 'Produto removido dos destaques.' : 'Produto marcado como destaque.');
   };
 
+  // O gelo é escolhido produto a produto: quem pede este produto passa a escolher (ou deixa de escolher) entre gelo normal e de sabor.
+  const toggleIce = (p: ProductRecord) =>
+    void patch(p, { ice_choice_required: !p.ice_choice_required }, p.ice_choice_required ? 'Este produto não pergunta mais o gelo.' : 'Este produto agora pede a escolha do gelo.');
+
   const categoryLabel = (p: ProductRecord) => (p.category_id ? (categoryName.get(p.category_id)?.name ?? '—') : 'Outros');
   // Produto numa categoria oculta não aparece no site, mesmo ativo e com estoque.
   const hiddenByCategory = (p: ProductRecord) => Boolean(p.category_id && categoryName.get(p.category_id)?.active === false);
@@ -432,6 +437,7 @@ export function ProductsPage() {
       {!p.active && <Badge>Inativo</Badge>}
       {isSoldOut(p) && <Badge tone="red">Esgotado</Badge>}
       {p.featured && <Badge tone="blue">Destaque</Badge>}
+      {p.ice_choice_required && <Badge tone="blue">Pede o gelo</Badge>}
       {promoState(p) === 'scheduled' && <Badge tone="violet">Promoção agendada</Badge>}
       {promoState(p) === 'expired' && <Badge>Promoção encerrada</Badge>}
       {p.active && hiddenByCategory(p) && <Badge tone="amber">Categoria oculta</Badge>}
@@ -488,6 +494,7 @@ export function ProductsPage() {
           <option value="inactive">Inativos</option>
           <option value="soldout">Esgotados</option>
           <option value="featured">Destaques</option>
+          <option value="ice">Pedem o gelo</option>
         </select>
       </div>
 
@@ -583,6 +590,16 @@ export function ProductsPage() {
                         >
                           <Star className="h-[18px] w-[18px]" fill={p.featured ? 'currentColor' : 'none'} aria-hidden="true" />
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleIce(p)}
+                          aria-pressed={p.ice_choice_required === true}
+                          aria-label={p.ice_choice_required ? `Não pedir a escolha do gelo em ${p.name}` : `Pedir a escolha do gelo em ${p.name}`}
+                          title={p.ice_choice_required ? 'Pede o gelo: clique para não perguntar' : 'Clique para pedir a escolha do gelo'}
+                          className={cx('grid h-9 w-9 shrink-0 place-items-center rounded-xl hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5B8CFF]', p.ice_choice_required ? 'text-sky-300' : 'text-white/55')}
+                        >
+                          <Snowflake className="h-[18px] w-[18px]" aria-hidden="true" />
+                        </button>
                         <Button size="sm" variant={p.sold_out ? 'secondary' : 'ghost'} onClick={() => void patch(p, { sold_out: !p.sold_out }, p.sold_out ? 'Produto disponível novamente.' : 'Produto marcado como esgotado.')}>
                           {p.sold_out ? 'Disponibilizar' : 'Esgotar'}
                         </Button>
@@ -624,6 +641,15 @@ export function ProductsPage() {
                     >
                       <Star className="h-[18px] w-[18px]" fill={p.featured ? 'currentColor' : 'none'} aria-hidden="true" />
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleIce(p)}
+                      aria-pressed={p.ice_choice_required === true}
+                      aria-label={p.ice_choice_required ? `Não pedir a escolha do gelo em ${p.name}` : `Pedir a escolha do gelo em ${p.name}`}
+                      className={cx('grid h-9 w-9 place-items-center rounded-xl hover:bg-white/[0.08]', p.ice_choice_required ? 'text-sky-300' : 'text-white/60')}
+                    >
+                      <Snowflake className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </button>
                     <Button size="sm" variant="ghost" onClick={() => void patch(p, { sold_out: !p.sold_out }, p.sold_out ? 'Produto disponível novamente.' : 'Produto marcado como esgotado.')}>
                       {p.sold_out ? 'Disponibilizar' : 'Esgotar'}
                     </Button>
@@ -656,6 +682,8 @@ type Form = {
   swap_base: string;
   swap_price: string;
   swap_options: string[];
+  // Quem pede este produto escolhe o gelo (normal ou de sabor).
+  ice: boolean;
   sku: string;
   trackStock: boolean;
   stock: string;
@@ -677,6 +705,7 @@ const EMPTY_FORM: Form = {
   swap_base: '',
   swap_price: '',
   swap_options: [],
+  ice: false,
   sku: '',
   trackStock: false,
   stock: '',
@@ -744,6 +773,7 @@ export function ProductFormPage({ id }: { id: string }) {
         swap_base: product.swap_base_product_id ?? '',
         swap_price: moneyInput(product.swap_base_price === null || product.swap_base_price === undefined ? null : Number(product.swap_base_price)),
         swap_options: product.swap_option_ids ?? [],
+        ice: product.ice_choice_required === true,
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
         stock: product.stock === null ? '' : String(product.stock),
@@ -842,6 +872,7 @@ export function ProductFormPage({ id }: { id: string }) {
       // Com um produto escolhido, o valor vem do preço dele; o valor digitado só vale quando o energético não é um produto do cardápio.
       swap_base_price: form.swap_base ? null : swapPrice,
       swap_option_ids: form.swap_options.filter((id) => id !== form.swap_base),
+      ice_choice_required: form.ice,
       sku: form.sku.trim() || null,
       stock,
       featured: form.featured,
@@ -1065,6 +1096,14 @@ export function ProductFormPage({ id }: { id: string }) {
         <div className="space-y-4">
           <Card title="Imagem">
             <ImageInput label="Foto do produto" value={form.image} onChange={(v) => set('image', v)} hint="Quadrada, de preferência com fundo transparente (PNG/WebP)." />
+          </Card>
+          <Card title="Gelo">
+            <Switch
+              checked={form.ice}
+              onChange={(v) => set('ice', v)}
+              label="Pedir a escolha do gelo"
+              description="Quem pedir este produto escolhe entre gelo normal e gelo de sabor. A escolha aparece no pedido, no acompanhamento e no recibo. Desligado, o produto é pedido sem perguntar."
+            />
           </Card>
           <Card title="Visibilidade">
             <div className="space-y-4">

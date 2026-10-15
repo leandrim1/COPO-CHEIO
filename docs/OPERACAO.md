@@ -86,17 +86,23 @@ verificações) contra um banco só com as migrations 0001–0008 e contra o ban
 (as poucas verificações que falham, nos dois casos, testam comportamentos novos; a única diferença é uma consulta do próprio teste a uma
 tabela que só existe no banco novo). Ou seja: nesses fluxos, voltar o código para a versão anterior funciona com o banco novo.
 
-**Exceção conhecida: a migration 0013 (escolha do gelo).** Ela segue as regras acima (só acrescenta colunas e troca funções), com duas
-ressalvas que você precisa conhecer:
+**Exceção conhecida: a escolha do gelo (migrations 0013 e 0022).** A 0013 marcava *categorias* ("Copão" e "Copão com Monster"); a **0022 passou a marca para o
+produto** (`products.ice_choice_required`, escolhida em *Produtos* no painel) e, daí em diante, só a marca do produto vale (a da categoria ficou no banco, sem uso). Elas
+seguem as regras acima (só acrescentam colunas e trocam funções), com duas ressalvas que você precisa conhecer:
 
-1. Ela escreve **uma linha de dados**: liga `categories.ice_choice_required` nas categorias chamadas "Copão" e "Copão com Monster" (o nome
-   só é usado nesse momento, sem diferenciar maiúsculas, acentos ou espaços). Se na loja elas têm outro nome, a regra **não** liga sozinha:
-   ligue em *Categorias → Editar → Pedir a escolha do gelo* (confira depois do deploy, passo 4 do item 8).
+1. A 0013 escreveu **uma linha de dados**: ligou `categories.ice_choice_required` nas categorias chamadas "Copão" e "Copão com Monster" (o nome
+   só foi usado nesse momento, sem diferenciar maiúsculas, acentos ou espaços). A **0022** escreve **uma linha de dados** também: marca (`products.ice_choice_required = true`)
+   os produtos que estão em categorias com essa marca, para o site **não mudar de comportamento no instante do deploy** (copão continua perguntando o gelo; o pedido nunca
+   chega à cozinha sem essa informação). **Depois do deploy, desmarque os produtos que não devem perguntar o gelo** (*Produtos*: botão do floco de neve na linha do produto ou a
+   chave **Pedir a escolha do gelo** no formulário; o filtro "Pedem o gelo" lista os marcados). Produto novo nasce sem a marca. Se na loja as categorias tinham outro nome, nada
+   é marcado sozinho: marque os produtos no painel (confira depois do deploy, passo 4 do item 8).
 2. A regra é conferida **no banco**, então a versão antiga do site (que não sabe perguntar o gelo) é recusada ao pedir produtos dessas
-   categorias, com a mensagem "Escolha o tipo de gelo para continuar.". Isso acontece (a) nos poucos minutos entre a migration rodar e o
-   site novo entrar no ar e (b) **depois de um rollback do código**. O resto do site (outras categorias) segue normal. Para voltar o código
-   sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update categories set ice_choice_required = false;` (quando
-   voltar ao código novo, ligue de novo em *Categorias*). Quem estava com o site aberto de antes só precisa recarregar a página.
+   produtos, com a mensagem "Escolha o tipo de gelo para continuar.". Isso acontece (a) nos poucos minutos entre a migration rodar e o
+   site novo entrar no ar e (b) **depois de um rollback do código**. O resto do site (produtos sem a marca) segue normal. Para voltar o código
+   sem perder pedidos de copão, desligue a regra no SQL Editor do Neon: `update products set ice_choice_required = false;` (guarde antes quais estavam
+   marcados, com `select id, name from products where ice_choice_required;`, para marcar de novo ao voltar ao código novo). Quem estava com o site aberto de antes só precisa recarregar a página.
+   Observação do rollback da 0022: o código ANTERIOR à 0022 decide a pergunta pela categoria (a marca antiga continua no banco), mas o banco só exige o gelo dos produtos marcados; o
+   que o site antigo perguntar a mais é ignorado pelo banco, sem erro.
 
 **A migration 0017 (troca do energético dos combos).** Só acrescenta (duas colunas e funções de apoio) e troca três funções (`create_order`, `restore_order_stock`, `order_json`) por versões iguais para tudo o que já existe: pedido sem troca não muda. Na criação da coluna `products.swap_base_product_id`, ela é **preenchida uma única vez** nos produtos da categoria "Combos", procurando no nome do combo o energético de 2L que ele cita (ex.: "…1 Energético Jack Power 2L"). **Depois do deploy, abra cada combo no painel (Produtos → editar) e confira o campo "Energético que vem neste combo"**: combo sem ele não oferece a troca. Nada mais muda para quem não usa a troca.
 
@@ -204,7 +210,7 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | O link do e-mail abre o endereço errado | Defina `SITE_URL` com o endereço público e faça um novo deploy |
 | Não consigo enviar imagem | *Estado do sistema*: "Armazenamento de imagens". Limites: 4 MB e JPG, PNG, WebP, GIF ou AVIF (SVG nunca) |
 | Cliente diz que o pedido "sumiu" | Busque o número em *Pedidos*. Sem o link do acompanhamento, o painel gera um novo (*Pedido → Acompanhamento do cliente*) |
-| Cliente diz que não consegue adicionar ou finalizar um copão ("Escolha o tipo de gelo para continuar.") | É a regra da escolha do gelo. No site novo, a pergunta aparece ao tocar em "Adicionar"; se a pessoa está com uma aba aberta de antes do deploy, basta recarregar. Confira em *Categorias* quais categorias têm "Pede o gelo" (liga e desliga em *Editar*). Depois de um rollback do código, veja o item 3 |
+| Cliente diz que não consegue adicionar ou finalizar um copão ("Escolha o tipo de gelo para continuar.") | É a regra da escolha do gelo. No site novo, a pergunta aparece ao tocar em "Adicionar"; se a pessoa está com uma aba aberta de antes do deploy, basta recarregar. Confira em *Produtos* quais produtos têm o selo "Pede o gelo" (liga e desliga no botão do floco de neve da linha ou na chave do formulário do produto; o filtro "Pedem o gelo" lista só eles). Depois de um rollback do código, veja o item 3 |
 | Cliente viu o aviso de que o valor mudou ("Confirmar novo total") | É esperado: o total mostrado precisa bater com o do servidor (`409 price_changed`: preço, promoção ou taxa mudaram). A tela mostra o que mudou e pede a confirmação; nenhum pedido foi criado até ali |
 | *Pagamentos* mostra cobranças em "Pedem conferência" (só quando o Pix online estiver ligado) | O dinheiro entrou, mas algo não fecha: pago **depois** de o pedido ser cancelado, pago **em duplicidade**, valor diferente do cobrado, ou repasse da comissão que falhou. O pedido **não** é reaberto sozinho. Nos três primeiros casos há dinheiro do cliente a conferir/devolver: faça pelo painel da operadora (o sistema só registra) e marque como conferido em *Pagamentos*. Se foi só o repasse da comissão que falhou, o pedido segue normal e a comissão fica "Falhou" (não "Efetivada"): resolva com a operadora |
 | Pedido "Aguardando pagamento" parado (só com Pix online ligado) | Normal por até 15 minutos (validade do Pix) + 10 de nova tentativa; depois o pedido é cancelado e o estoque volta. Se ficar mais tempo, abra *Pagamentos → Conferir agora* (não há agendador: a conferência roda quando o painel está aberto ou entra pedido) |
@@ -253,8 +259,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
 2. Abra `/` e `/bebidas` (um celular e um computador) e confira a logo, o cardápio e o botão do WhatsApp.
 3. Entre em `/admin`, abra *Configurações → Painel → Estado do sistema*: banco, imagens, e-mail e endereço do site em OK.
 4. Se mexeu em pedidos/checkout: faça **um pedido de teste** e cancele (ele aparece nos relatórios como cancelado). Depois da migration 0013,
-   confira em *Categorias* que "Copão" e "Copão com Monster" mostram **Pede o gelo**, e, no site, que "Adicionar" num copão pergunta o gelo
-   e o pedido de teste mostra a escolha em *Pedidos*.
+   confira em *Produtos* (filtro "Pedem o gelo") que os copões certos têm o selo **Pede o gelo**, e, no site, que "Adicionar" num deles pergunta o gelo
+   (e que um copão sem o selo entra direto) e o pedido de teste mostra a escolha em *Pedidos*. Depois da 0022, desmarque ali os produtos que não devem perguntar.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner) e abra **Painel → E-mails**: nenhum alerta aberto, "Aceitas pelo servidor" subindo e a fila vazia. Depois da migration 0019, faça **um pedido de teste com um e-mail seu** e
    confira: chegou "Pedido recebido"; ao mudar a etapa no painel, chegou o aviso da etapa; abra a mensagem em **Mensagens** para ver a linha do tempo.
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
@@ -269,6 +275,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
    divisão. O Pix online nasce desligado: se ainda não foi ligado em produção, nenhum pedido é afetado.
 10. Depois da migration 0021 (uma coluna opcional em `store_settings`, hoje sem uso no site): nada muda. Abra **/bebidas**, toque no **ⓘ** ao lado de "Aberto agora" e confira o
    **horário de funcionamento** (com o dia de hoje destacado) e as **formas de pagamento**.
+11. Depois da migration 0022 (gelo por produto): os copões que já perguntavam o gelo **continuam perguntando** (a migration marcou os produtos dessas categorias). Abra *Produtos* → filtro
+   **Pedem o gelo** e **desmarque** (botão do floco de neve) os que não devem perguntar; no site, confira um copão desmarcado (entra direto no pedido) e um marcado (abre "Qual gelo você prefere?").
 
 ## 9. O que este guia não cobre
 

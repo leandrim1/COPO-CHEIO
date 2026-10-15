@@ -21,14 +21,15 @@ export function registerPublic(r: Router) {
   // promo_price é a promoção EM VIGOR agora (fora da janela de datas, ela some e o produto volta ao preço normal).
   r.get('/api/products', 'public', async () => {
     const [categories, products] = await batch([
-      // ice_choice_required: os produtos desta categoria só são pedidos com a escolha do gelo (o banco confere de novo ao criar o pedido).
-      ['select id, name, position, active, ice_choice_required from categories where active order by position, name'],
+      ['select id, name, position, active from categories where active order by position, name'],
       [
         `select p.id, p.category_id, p.name, p.description, p.price,
                 effective_promo(p.promo_price, p.promo_starts_at, p.promo_ends_at) as promo_price,
                 p.image_url, p.featured,
                 (p.sold_out or (p.stock is not null and p.stock <= 0)) as sold_out, p.position,
                 p.swap_base_product_id, p.swap_base_price,
+                -- ice_choice_required: este produto só é pedido com a escolha do gelo (o banco confere de novo ao criar o pedido).
+                p.ice_choice_required,
                 array(select o.option_id from product_swap_options o where o.product_id = p.id order by o.option_id) as swap_option_ids
            from products p
            left join categories c on c.id = p.category_id

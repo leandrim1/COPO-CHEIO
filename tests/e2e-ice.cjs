@@ -1,4 +1,4 @@
-// Escolha obrigatória do gelo (Copão e Copão com Monster) no navegador, em celular e computador: a pergunta ao adicionar, a mensagem ao
+// Escolha obrigatória do gelo (só nos produtos que a loja marca no painel: os copões do teste) no navegador, em celular e computador: a pergunta ao adicionar, a mensagem ao
 // tentar continuar sem escolher, o destaque da opção, trocar a escolha, linhas separadas por gelo, editar no pedido, guardar ao recarregar,
 // checkout, página do pedido, WhatsApp, painel (pedido, recibo e Categorias), pedido antigo sem escolha, regra mudando no meio da compra,
 // teclado e leitor de tela, e produtos de outras categorias intactos.
@@ -79,17 +79,19 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true });
   const img = (await api('POST', '/api/admin/upload?folder=products', fs.readFileSync(FX + '/lata.webp'), true)).data.url;
-  const mkCat = async (name, ice) => (await api('POST', '/api/admin/categories', { name, ice_choice_required: ice })).data.category;
-  const catMonster = await mkCat('Copão com Monster', true);
-  const catCopao = await mkCat('Copão', true);
-  const catBeer = await mkCat('Cervejas', false);
+  const mkCat = async (name) => (await api('POST', '/api/admin/categories', { name })).data.category;
+  const catMonster = await mkCat('Copão com Monster');
+  const catCopao = await mkCat('Copão');
+  const catBeer = await mkCat('Cervejas');
   const mk = async (name, price, category, extra = {}) => (await api('POST', '/api/admin/products', { name, price, category_id: category.id, image_url: img, description: 'Descrição de teste.', confirm_duplicate: true, ...extra })).data.product;
-  const m1 = await mk('Copão Monster Original', 25, catMonster, { featured: true });
-  const m2 = await mk('Copão Monster Mango', 27, catMonster);
-  const c1 = await mk('Copão de Gin Tônica', 18, catCopao, { promo_price: 15 });
+  // O gelo é escolhido produto a produto (ice_choice_required): o Copão Simples, da MESMA categoria do Gin, fica sem a pergunta.
+  const m1 = await mk('Copão Monster Original', 25, catMonster, { featured: true, ice_choice_required: true });
+  const m2 = await mk('Copão Monster Mango', 27, catMonster, { ice_choice_required: true });
+  const c1 = await mk('Copão de Gin Tônica', 18, catCopao, { promo_price: 15, ice_choice_required: true });
+  const c2 = await mk('Copão Simples', 12, catCopao);
   const beer = await mk('Heineken Long Neck', 8, catBeer, { featured: true });
   const beer2 = await mk('Brahma Lata 350ml', 5, catBeer);
-  ok(!!m1?.id && !!c1?.id && !!beer?.id, 'dados de teste criados (3 categorias, 5 produtos)');
+  ok(!!m1?.id && !!c1?.id && !!c2?.id && !!beer?.id, 'dados de teste criados (3 categorias, 6 produtos)');
   const browser = await chromium.launch();
 
   for (const [label, vp] of [['celular 390', { width: 390, height: 844 }], ['computador 1280', { width: 1280, height: 800 }]]) {
@@ -101,6 +103,16 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
     await addButton(page, 'Heineken Long Neck').click();
     ok(await until(async () => (await cartOf(page))[beer.id] === 1), `${label}: cerveja entra direto no pedido (chave só com o id, como sempre)`, await cartOf(page));
     ok((await dialog(page).count()) === 0, `${label}: nenhuma pergunta de gelo para produto de outra categoria`);
+
+    // Copão que a loja NÃO marcou (mesma categoria do Gin): entra direto, sem pergunta (numa página à parte, para não mexer no pedido do roteiro)
+    {
+      const { ctx: plainCtx, page: plain } = await newCtx(browser, vp);
+      await plain.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
+      await addButton(plain, 'Copão Simples').click();
+      ok(await until(async () => (await cartOf(plain))[c2.id] === 1), `${label}: o copão sem a marca entra direto no pedido (chave só com o id)`, await cartOf(plain));
+      ok((await dialog(plain).count()) === 0, `${label}: nenhuma pergunta de gelo para um copão que a loja não marcou (mesmo estando na categoria Copão)`);
+      await plainCtx.close();
+    }
 
     // Copão: a pergunta aparece
     await addButton(page, 'Copão Monster Original').click();
@@ -262,26 +274,66 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
       ok(/2x Copão Monster Original \(Gelo normal\)/.test(receipt) && /1x Copão Monster Original \(Gelo de sabor\)/.test(receipt) && /1x Heineken Long Neck(?!\s*\()/.test(receipt), 'painel: o recibo impresso traz o gelo (e a cerveja não)', receipt);
       await a.screenshot({ path: `${SP}/ice-admin-pedido.png`, fullPage: true });
 
+      // Categorias: a marca do gelo saiu daqui (agora é do produto)
       await a.goto(BASE + '/admin/categorias', { waitUntil: 'networkidle' });
       const rows = await a.locator('li').filter({ hasText: 'produto(s)' }).allInnerTexts();
-      ok(rows.filter((t) => /Pede o gelo/.test(t)).length === 2 && !/Pede o gelo/.test(rows.find((t) => /Cervejas/.test(t)) ?? ''), 'painel: Categorias marca "Pede o gelo" em Copão e Copão com Monster, e não em Cervejas', rows);
-      await a.getByRole('button', { name: 'Editar Cervejas' }).click();
-      const sw = a.getByRole('switch', { name: 'Pedir a escolha do gelo' });
-      ok((await sw.getAttribute('aria-checked')) === 'false', 'painel: a chave "Pedir a escolha do gelo" está desligada na Cervejas');
-      await sw.click();
-      await a.getByRole('button', { name: 'Salvar', exact: true }).click();
-      ok(await until(async () => (await api('GET', '/api/products')).data.categories.find((c) => c.id === catBeer.id)?.ice_choice_required === true), 'painel: ligar a chave vale para o site na hora');
+      ok(rows.length >= 3 && rows.every((t) => !/Pede o gelo/.test(t)), 'painel: Categorias não mostra mais "Pede o gelo" (a marca é do produto)', rows);
+      await a.getByRole('button', { name: 'Editar Copão', exact: true }).click();
+      ok((await a.getByRole('switch', { name: 'Pedir a escolha do gelo' }).count()) === 0, 'painel: o formulário da categoria não tem mais a chave do gelo');
+      await a.getByRole('button', { name: 'Cancelar' }).click();
+
+      // Produtos: selo, filtro e botão rápido (o gelo é escolhido produto a produto)
+      await a.goto(BASE + '/admin/produtos', { waitUntil: 'networkidle' });
+      const iceBtn = (name) => a.getByRole('button', { name: new RegExp(`^(Pedir|Não pedir) a escolha do gelo em ${name}$`) }).first();
+      ok(await until(async () => (await iceBtn('Copão Monster Original').getAttribute('aria-pressed')) === 'true'), 'painel: o Copão Monster Original aparece como "pede o gelo" (botão do floco pressionado)');
+      ok((await iceBtn('Copão Simples').getAttribute('aria-pressed')) === 'false' && (await iceBtn('Heineken Long Neck').getAttribute('aria-pressed')) === 'false', 'painel: o Copão Simples (mesma categoria do Gin) e a cerveja não pedem o gelo');
+      ok((await a.locator('tbody :text-is("Pede o gelo"):visible').count()) === 3, 'painel: só os 3 produtos marcados mostram o selo "Pede o gelo"', await a.locator('tbody :text-is("Pede o gelo"):visible').count());
+      await a.screenshot({ path: `${SP}/ice-admin-produtos.png`, fullPage: true });
+      await a.getByLabel('Filtrar por situação').selectOption('ice');
+      const onlyIce = await a.locator('tbody tr').allInnerTexts();
+      ok(onlyIce.length === 3 && onlyIce.every((t) => /Copão/.test(t)) && !onlyIce.some((t) => /Simples|Heineken|Brahma/.test(t)), 'painel: o filtro "Pedem o gelo" lista só os 3 produtos marcados', onlyIce);
+      await a.getByLabel('Filtrar por situação').selectOption('all');
+
+      // Liga o Copão Simples pelo botão rápido: vale para o site na hora
+      await iceBtn('Copão Simples').click();
+      ok(await until(async () => (await api('GET', '/api/products')).data.products.find((p) => p.id === c2.id)?.ice_choice_required === true), 'painel: ligar o floco do Copão Simples vale para o site na hora');
+      ok(await until(async () => (await iceBtn('Copão Simples').getAttribute('aria-pressed')) === 'true'), 'painel: o botão fica pressionado depois de salvar');
       const { page: s } = await newCtx(browser, { width: 390, height: 844 });
       await s.goto(BASE + '/bebidas', { waitUntil: 'networkidle' });
-      await addButton(s, 'Brahma Lata 350ml').click();
-      ok(await until(async () => (await dialog(s).count()) === 1) && /Qual gelo você prefere/.test(await dialog(s).innerText()), 'site: com a regra ligada, a cerveja também pergunta o gelo (a regra é da categoria, qualquer uma serve)');
+      await addButton(s, 'Copão Simples').click();
+      ok(await until(async () => (await dialog(s).count()) === 1) && /Qual gelo você prefere/.test(await dialog(s).innerText()), 'site: depois de marcado no painel, o Copão Simples também pergunta o gelo');
       await s.keyboard.press('Escape');
-      await a.getByRole('button', { name: 'Editar Cervejas' }).click().catch(() => {});
-      await a.goto(BASE + '/admin/categorias', { waitUntil: 'networkidle' });
-      await a.getByRole('button', { name: 'Editar Cervejas' }).click();
+      // ...e desliga o Copão Monster Mango (da categoria cujo irmão segue marcado)
+      await iceBtn('Copão Monster Mango').click();
+      ok(await until(async () => (await api('GET', '/api/products')).data.products.find((p) => p.id === m2.id)?.ice_choice_required === false), 'painel: desligar o floco do Mango vale para o site na hora');
+      await s.reload({ waitUntil: 'networkidle' });
+      await addButton(s, 'Copão Monster Mango').click();
+      ok(await until(async () => (await cartOf(s))[m2.id] === 1), 'site: o Mango desmarcado entra direto no pedido, sem pergunta');
+      ok((await dialog(s).count()) === 0, 'site: ...sem janela de gelo');
+      await addButton(s, 'Copão Monster Original').click();
+      ok(await until(async () => (await dialog(s).count()) === 1), 'site: o Original, da mesma categoria e ainda marcado, continua perguntando');
+      await s.keyboard.press('Escape');
+      await a.screenshot({ path: `${SP}/ice-admin-produtos-2.png`, fullPage: true });
+      await iceBtn('Copão Monster Mango').click();
+      await iceBtn('Copão Simples').click();
+      ok(await until(async () => { const l = (await api('GET', '/api/products')).data.products; return l.find((p) => p.id === m2.id)?.ice_choice_required === true && l.find((p) => p.id === c2.id)?.ice_choice_required === false; }), 'painel: Mango ligado e Simples desligado de volta (estado do teste restaurado)');
+
+      // Formulário do produto: a chave "Pedir a escolha do gelo"
+      await a.goto(BASE + `/admin/produtos/${beer2.id}`, { waitUntil: 'networkidle' });
+      const sw = a.getByRole('switch', { name: 'Pedir a escolha do gelo' });
+      ok((await sw.getAttribute('aria-checked')) === 'false', 'painel: no formulário da Brahma a chave "Pedir a escolha do gelo" está desligada');
+      await sw.click();
+      await a.getByRole('button', { name: 'Salvar produto' }).click();
+      ok(await until(async () => (await api('GET', '/api/products')).data.products.find((p) => p.id === beer2.id)?.ice_choice_required === true), 'painel: ligar a chave no formulário vale para o site na hora');
+      await s.reload({ waitUntil: 'networkidle' });
+      await addButton(s, 'Brahma Lata 350ml').click();
+      ok(await until(async () => (await dialog(s).count()) === 1) && /Qual gelo você prefere/.test(await dialog(s).innerText()), 'site: com a chave ligada, a cerveja também pergunta o gelo (qualquer produto serve)');
+      await s.keyboard.press('Escape');
+      await a.goto(BASE + `/admin/produtos/${beer2.id}`, { waitUntil: 'networkidle' });
+      ok((await a.getByRole('switch', { name: 'Pedir a escolha do gelo' }).getAttribute('aria-checked')) === 'true', 'painel: reabrir o produto mostra a chave ligada (valor salvo)');
       await a.getByRole('switch', { name: 'Pedir a escolha do gelo' }).click();
-      await a.getByRole('button', { name: 'Salvar', exact: true }).click();
-      ok(await until(async () => (await api('GET', '/api/products')).data.categories.find((c) => c.id === catBeer.id)?.ice_choice_required === false), 'painel: desligar a chave também vale na hora');
+      await a.getByRole('button', { name: 'Salvar produto' }).click();
+      ok(await until(async () => (await api('GET', '/api/products')).data.products.find((p) => p.id === beer2.id)?.ice_choice_required === false), 'painel: desligar a chave também vale na hora');
       await a.context().close();
       await s.context().close();
     }
@@ -333,7 +385,7 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
   }
 
   // ---- a regra muda no meio da compra: o servidor também confere -----------------------------------
-  console.log('# a categoria passa a pedir o gelo com o cliente já no checkout');
+  console.log('# o produto passa a pedir o gelo com o cliente já no checkout');
   {
     const { ctx, page } = await newCtx(browser, { width: 390, height: 844 }, { fn: ([k, v]) => { if (!localStorage.getItem('copocheio:seeded2')) { localStorage.setItem(k, v); localStorage.setItem('copocheio:seeded2', '1'); } }, arg: ['copocheio:pedido', JSON.stringify({ [beer2.id]: 2 })] });
     await page.goto(BASE + '/checkout', { waitUntil: 'networkidle' });
@@ -341,7 +393,7 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
     await page.getByLabel('Telefone / WhatsApp *').fill('34 99333-0001');
     await page.getByText('Retirar na loja', { exact: true }).click();
     ok((await page.locator('[data-ice-pending]').count()) === 0, 'cerveja no checkout: sem pergunta de gelo');
-    await api('PATCH', `/api/admin/categories/${catBeer.id}`, { ice_choice_required: true });
+    await api('PATCH', `/api/admin/products/${beer2.id}`, { ice_choice_required: true });
     await page.getByRole('button', { name: /^Finalizar pedido/ }).click();
     const box = page.getByRole('alert').filter({ hasText: MESSAGE });
     ok(await until(async () => (await box.count()) >= 1), 'o servidor recusa (a página ainda não sabia da regra) e a mesma mensagem aparece', await page.locator('main').innerText());
@@ -354,7 +406,7 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
     await page.getByRole('button', { name: /^Finalizar pedido/ }).click();
     await page.waitForURL('**/pedido/**', { timeout: 15000 });
     ok(true, 'com o gelo escolhido, o pedido passa');
-    await api('PATCH', `/api/admin/categories/${catBeer.id}`, { ice_choice_required: false });
+    await api('PATCH', `/api/admin/products/${beer2.id}`, { ice_choice_required: false });
     await ctx.close();
   }
 
