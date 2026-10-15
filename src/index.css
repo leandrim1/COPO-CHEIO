@@ -4,8 +4,8 @@
 
 @layer components {
   /* Lista que rola na horizontal (categorias, "Os favoritos da galera"). No celular não há barra (o dedo rola). Com mouse,
-     aparece uma barra fina na cor da marca, alinhada ao conteúdo (a lista tem 1rem de respiro nas pontas, 1,5rem a partir
-     de 640 px). */
+     aparece uma barra bem fina e discreta (quase transparente; ganha a cor da marca ao passar o mouse), alinhada ao conteúdo
+     (a lista tem 1rem de respiro nas pontas, 1,5rem a partir de 640 px). */
   .cc-hscroll {
     scrollbar-width: none;
   }
@@ -26,19 +26,19 @@
     /* Chrome, Edge e Safari */
     .cc-hscroll::-webkit-scrollbar {
       display: block;
-      height: 10px;
+      height: 6px;
     }
     .cc-hscroll::-webkit-scrollbar-track {
       margin-inline: 1rem;
       border-radius: 9999px;
-      background: rgb(255 255 255 / 0.08);
+      background: rgb(255 255 255 / 0.04);
     }
     .cc-hscroll::-webkit-scrollbar-thumb {
       border-radius: 9999px;
-      background: #2563ff;
+      background: rgb(255 255 255 / 0.22);
     }
     .cc-hscroll::-webkit-scrollbar-thumb:hover {
-      background: #5b8cff;
+      background: rgb(37 99 255 / 0.85);
     }
     @media (min-width: 640px) {
       .cc-hscroll::-webkit-scrollbar-track {
@@ -65,7 +65,7 @@
     @supports (-moz-appearance: none) {
       .cc-hscroll {
         scrollbar-width: thin;
-        scrollbar-color: #2563ff rgb(255 255 255 / 0.1);
+        scrollbar-color: rgb(255 255 255 / 0.25) rgb(255 255 255 / 0.04);
       }
     }
 
@@ -73,7 +73,7 @@
        voltaria sozinha para o card mais perto). A barra ocupa o pé da lista, então sobra um pouco mais de espaço depois. */
     .cc-hsnap {
       scroll-snap-type: none;
-      margin-bottom: -0.5rem;
+      margin-bottom: -0.25rem;
     }
   }
 }
