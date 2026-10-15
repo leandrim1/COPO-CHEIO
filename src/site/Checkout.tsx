@@ -12,7 +12,7 @@ import { rememberOrder } from '../lib/recent';
 import { navigate } from '../lib/router';
 import type { DeliveryType, PaymentMethod, PublicOrder } from '../lib/types';
 import { useCustomer } from './customer';
-import { fullAddress, useShop } from './data';
+import { acceptedPayments, cardFeeRates, fullAddress, useShop } from './data';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
 
@@ -178,10 +178,8 @@ export function CheckoutPage() {
   const deliveryOptions = (['delivery', 'pickup'] as DeliveryType[]).filter((d) => (d === 'delivery' ? store.delivery_enabled : store.pickup_enabled));
   // Cartão online: a taxa (percentual + tarifa fixa) vem do servidor só para o resumo mudar enquanto a pessoa mexe no pedido; o servidor calcula
   // de novo ao receber o pedido e recusa (409) se o total que a pessoa viu for diferente. Sem a taxa conhecida, a opção nem aparece.
-  const cardRate = payments.find((p) => p.code === 'card_online')?.card_fee;
-  const cardRates =
-    cardRate && Number.isSafeInteger(cardRate.bps) && Number.isSafeInteger(cardRate.fixed_cents) && cardRate.bps >= 0 && cardRate.fixed_cents >= 0 ? { bps: cardRate.bps, fixedCents: cardRate.fixed_cents } : null;
-  const paymentOptions: PaymentMethod[] = payments.filter((p) => p.code !== 'card_online' || cardRates !== null).map((p) => p.code);
+  const cardRates = cardFeeRates(payments.find((p) => p.code === 'card_online')?.card_fee);
+  const paymentOptions: PaymentMethod[] = acceptedPayments(payments).map((p) => p.code);
   // Pix online: taxa de serviço do cliente (percentual sobre itens + entrega), também só para o resumo; o servidor calcula e confere de novo.
   const pixRate = payments.find((p) => p.code === 'pix_online')?.service_fee;
   const pixBps = pixRate && Number.isSafeInteger(pixRate.bps) && pixRate.bps >= 0 && pixRate.bps <= 1000 ? pixRate.bps : null;

@@ -23,6 +23,7 @@ export const DEFAULT_STORE: StoreSettings = {
   delivery_fee: 5,
   min_order: 0,
   delivery_time: '30 a 45 min',
+  pickup_time: null,
   tracking_retention_days: 180,
 };
 

@@ -341,7 +341,7 @@ section('8. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail
   check('as etapas seguintes ficam bloqueadas ("pediu para não receber")', blocked?.status === 'blocked' && blocked.block_reason === 'order_notices_off', blocked);
   check('...e nada novo foi enviado', (await mailsTo(email)).length === 1);
   check('ligar promoções por este link é recusado quando a conta não existe (409)', (await anon.patch(`/api/email/preferences/${token}`, { marketing: true })).status === 409);
-  check('link adulterado ou inventado: sempre 404, igual', (await anon.get(`/api/email/preferences/${token.slice(0, -1)}0`)).status === 404 && (await anon.get('/api/email/preferences/qualquer-coisa')).status === 404 && (await anon.get('/api/email/preferences/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
+  check('link adulterado ou inventado: sempre 404, igual', (await anon.get(`/api/email/preferences/${token.slice(0, -1)}${token.endsWith('0') ? '1' : '0'}`)).status === 404 && (await anon.get('/api/email/preferences/qualquer-coisa')).status === 404 && (await anon.get('/api/email/preferences/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
   check('corpo inválido: 400', (await anon.patch(`/api/email/preferences/${token}`, { notify_orders: 'sim' })).status === 400 && (await anon.patch(`/api/email/preferences/${token}`, {})).status === 400);
   // Um código de login/senha NUNCA depende dessa preferência.
   await clearMail();

@@ -22,6 +22,7 @@ export type StoreSettings = {
   delivery_fee: number;
   min_order: number;
   delivery_time: string | null;
+  pickup_time: string | null;
   tracking_retention_days: number;
   updated_at?: string;
 };

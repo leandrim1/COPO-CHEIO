@@ -248,6 +248,7 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
     fee: moneyInput(Number(store.delivery_fee)),
     min: moneyInput(Number(store.min_order)),
     time: store.delivery_time ?? '',
+    pickupTime: store.pickup_time ?? '',
   });
   const [zones, setZones] = useState<DeliveryZone[] | null>(null);
   const [zone, setZone] = useState<{ id?: string; name: string; fee: string; active: boolean } | null>(null);
@@ -278,7 +279,14 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
       return;
     }
     await save(
-      { delivery_enabled: form.delivery_enabled, pickup_enabled: form.pickup_enabled, delivery_fee: fee, min_order: min, delivery_time: form.time.trim() || null },
+      {
+        delivery_enabled: form.delivery_enabled,
+        pickup_enabled: form.pickup_enabled,
+        delivery_fee: fee,
+        min_order: min,
+        delivery_time: form.time.trim() || null,
+        pickup_time: form.pickupTime.trim() || null,
+      },
       'Entrega salva.',
     );
   };
@@ -322,15 +330,18 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
             <Switch checked={form.delivery_enabled} onChange={(v) => setForm({ ...form, delivery_enabled: v })} label="Ativar delivery" description="O cliente informa o endereço e paga a taxa de entrega." />
             <Switch checked={form.pickup_enabled} onChange={(v) => setForm({ ...form, pickup_enabled: v })} label="Ativar retirada na loja" description="Sem taxa de entrega." />
           </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-3">
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Taxa de entrega" hint={activeZones ? 'Com bairros cadastrados, vale a taxa de cada bairro.' : 'Taxa única para qualquer endereço.'}>
               {(p) => <input {...p} inputMode="decimal" value={form.fee} onChange={(e) => setForm({ ...form, fee: e.target.value })} className={INPUT} placeholder="5,00" />}
             </Field>
             <Field label="Pedido mínimo (entrega)" hint="0 = sem mínimo.">
               {(p) => <input {...p} inputMode="decimal" value={form.min} onChange={(e) => setForm({ ...form, min: e.target.value })} className={INPUT} placeholder="0,00" />}
             </Field>
-            <Field label="Tempo estimado" count={form.time.length} max={30}>
+            <Field label="Tempo estimado de entrega" count={form.time.length} max={30}>
               {(p) => <input {...p} value={form.time} maxLength={30} onChange={(e) => setForm({ ...form, time: e.target.value })} className={INPUT} placeholder="30 a 45 min" />}
+            </Field>
+            <Field label="Tempo de retirada no balcão" hint="Opcional. Aparece em ⓘ no site." count={form.pickupTime.length} max={30}>
+              {(p) => <input {...p} value={form.pickupTime} maxLength={30} onChange={(e) => setForm({ ...form, pickupTime: e.target.value })} className={INPUT} placeholder="10 a 15 min" />}
             </Field>
           </div>
           <Footer saving={saving} />

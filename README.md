@@ -262,6 +262,14 @@ produto e envie a foto.
   (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas. A capa e o
   carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o outro é só
   escolher *Onde aparece* ao editar.
+- **Informações da loja (botão ⓘ)**: em `/bebidas`, um ícone ⓘ discreto ao lado de "Aberto agora / Fechado" abre uma janela centralizada, escura e
+  azul (a do tema da marca), com **nome**, **endereço** (e "Como chegar", se houver endereço), **tempo médio de entrega**, **tempo médio de retirada no
+  balcão**, **pedido mínimo** (só vale na entrega; "Sem pedido mínimo" quando é zero), **horários de domingo a sábado** (o dia de hoje destacado com
+  "Hoje" e os dias fechados marcados "Fechado") e as **formas de pagamento aceitas**. Tudo vem do que o painel já cadastra (*Configurações → Loja,
+  Horários, Entrega e Pagamento*; a única informação nova é o **Tempo de retirada no balcão**, em *Entrega*, migration 0021): o que não estiver
+  cadastrado simplesmente não aparece, e sem os dados da API (e sem cópia salva) o botão nem é mostrado, para nunca exibir horários inventados.
+  Fecha pelo X, clicando no fundo escuro ou com Esc; a página de trás não rola enquanto a janela está aberta; o foco entra na janela, fica preso
+  nela (Tab) e volta para o ⓘ ao fechar. Código: `src/site/StoreInfo.tsx`.
 - **Página Bebidas no computador**: a partir de 1024 px de largura a página ocupa a tela toda (a coluna estreita de 44 rem
   continua valendo abaixo disso, no celular e no tablet, que não mudam em nada). A capa vira uma faixa em largura total; o
   cabeçalho da loja (logo, nome, horário, aberto/fechado e busca) fica à esquerda e o carrossel de banners à direita (sem
@@ -710,7 +718,9 @@ operadora (o adaptador fica no servidor); a única linha de dados é o `pix_onli
 A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desligado) e a **taxa de serviço do Pix** (2,5% do cliente + 2,5% do estabelecimento = 5% para a conta master; `service_fee_cents`,
 `payment_fee_settings.pix_*`, colunas `payment_fee*` em `orders` e `customer_fee_cents` em `payments`). Pedidos de Pix feitos antes dela mantêm o total e a comissão de 2% de quando nasceram
 ([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
-As migrations 0009 a 0019 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+A migration `0021_pickup_time.sql` acrescenta uma coluna opcional, `store_settings.pickup_time` (tempo médio de retirada no balcão, texto livre de até 30 letras), usada pela janela **ⓘ** da
+página Bebidas (abaixo). Nasce vazia: nada muda no site até o owner preencher em **Painel → Configurações → Entrega → Tempo de retirada no balcão**.
+As migrations 0009 a 0021 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir produtos dessas duas categorias enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado

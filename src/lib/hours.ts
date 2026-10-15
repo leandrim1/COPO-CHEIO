@@ -1,4 +1,4 @@
-import type { DayKey, OpeningHours } from './types';
+import type { DayHours, DayKey, OpeningHours } from './types';
 
 // Mesma regra da função store_open_now() do banco: "início = fim" é 24 horas e um fim antes do
 // início atravessa a meia-noite (ex.: 18:00 às 02:00).
@@ -51,6 +51,14 @@ export function isOpenNow(hours: OpeningHours, timeZone: string, now = new Date(
 }
 
 const span = (start: string, end: string) => (start === end ? '24 horas' : `${start} às ${end}`);
+
+// Dia da semana de hoje no fuso da loja ('mon' … 'sun'); null se o navegador não souber dizer.
+export function todayKey(timeZone: string, now = new Date()): DayKey | null {
+  return BY_DOW[localNow(timeZone, now).dow] ?? null;
+}
+
+// O texto de um dia na lista de horários: "09:00 às 23:00", "24 horas" ou "Fechado". Mesmo texto de hoursLines().
+export const dayHoursText = (hours: DayHours | undefined) => (hours?.open ? span(hours.start, hours.end) : 'Fechado');
 
 // ["Segunda a Sexta: 09:00 às 23:00", "Sábado e Domingo: fechado"]
 export function hoursLines(hours: OpeningHours): string[] {

@@ -23,6 +23,7 @@ let zoneA, zoneB;
     delivery_fee: '7,50',
     min_order: 20,
     delivery_time: '40 a 60 min',
+    pickup_time: ' 10 a 15 min ',
     opening_hours: allDays,
   });
   const d = st.data.store;
@@ -30,6 +31,11 @@ let zoneA, zoneB;
   check('store: instagram normalizado', d?.instagram === 'copocheio.teste', d?.instagram);
   check('store: cep e UF normalizados', d?.cep === '38400000' && d?.state === 'MG');
   check('store: taxa e mínimo numéricos', d?.delivery_fee === 7.5 && d?.min_order === 20);
+  check('store: tempo de retirada gravado (sem espaços nas pontas)', d?.pickup_time === '10 a 15 min', d?.pickup_time);
+  check('site público devolve o tempo de retirada (janela ⓘ da página Bebidas)', (await anon.get('/api/site')).data.store.pickup_time === '10 a 15 min');
+  check('tempo de retirada com mais de 30 letras → 400', (await owner.patch('/api/admin/store', { pickup_time: 'x'.repeat(31) })).status === 400);
+  check('tempo de retirada só com espaços vira vazio (a janela não mostra a linha)', (await owner.patch('/api/admin/store', { pickup_time: '   ' })).data?.store?.pickup_time === null);
+  await owner.patch('/api/admin/store', { pickup_time: '10 a 15 min' });
   check('site público reflete a loja', (await anon.get('/api/site')).data.store.store_name === 'Copo Cheio Teste');
   check('WhatsApp curto → 400', (await owner.patch('/api/admin/store', { whatsapp: '123' })).status === 400);
   check('UF inválida → 400', (await owner.patch('/api/admin/store', { state: 'MGG' })).status === 400);

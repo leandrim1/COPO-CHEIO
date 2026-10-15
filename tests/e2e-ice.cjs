@@ -127,7 +127,8 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
     await dialog(page).locator('label[data-ice=normal]').click();
     ok(await until(async () => (await dialog(page).getByRole('alert').count()) === 0), `${label}: ao escolher, a mensagem some`);
     ok(JSON.stringify(await radioState(page)) === '[true,false]', `${label}: "Gelo normal" fica marcado`, await radioState(page));
-    await page.waitForTimeout(350); // a borda muda com uma transição de 200 ms
+    // A borda muda com uma transição de 200 ms: espera chegar ao valor final (em máquina lenta, 350 ms fixos já deram a cor ainda a meio caminho).
+    await until(async () => /^rgba?\(37, 99, 255(, 1)?\)$/.test(await border('normal')) && (await border('flavored')).startsWith('rgba(255, 255, 255'));
     const selected = await border('normal');
     const other = await border('flavored');
     ok(/^rgba?\(37, 99, 255(, 1)?\)$/.test(selected) && other !== selected && other.startsWith('rgba(255, 255, 255'), `${label}: a opção escolhida tem destaque (borda azul da marca) e a outra fica discreta`, { selected, other });

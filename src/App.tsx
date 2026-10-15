@@ -20,7 +20,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
 import { DEFAULT_FAVICON, DEFAULT_SHARE_IMAGE } from './lib/defaults';
 import { money, normalizeText } from './lib/format';
-import { hoursLines, nextOpening, openHoursSummary } from './lib/hours';
+import { hoursLines, openHoursSummary } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
 import { ICE_REQUIRED_MESSAGE } from './lib/ice';
 import { CheckoutPage } from './site/Checkout';
@@ -29,6 +29,7 @@ import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop }
 import type { Product } from './site/data';
 import { EnergeticSwapProvider } from './site/EnergeticSwap';
 import { IcePickerProvider } from './site/IceChoice';
+import { OpenStatus, StoreInfoButton } from './site/StoreInfo';
 import { useIcePicker } from './site/icePicker';
 import {
   AddNotice,
@@ -526,22 +527,6 @@ function SkeletonRow() {
   );
 }
 
-// "Aberto agora" / "Fechado · Abre amanhã às 09:00"
-function OpenStatus() {
-  const { store, isOpen } = useShop();
-  const next = isOpen ? '' : store.orders_paused ? 'Pedidos pausados' : nextOpening(store.opening_hours, store.timezone);
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${
-        isOpen ? 'bg-emerald-400/10 text-emerald-300 ring-emerald-400/30' : 'bg-white/5 text-white/60 ring-white/15'
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 rounded-full ${isOpen ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.9)]' : 'bg-white/40'}`} />
-      {isOpen ? 'Aberto agora' : `Fechado${next ? ` · ${next}` : ''}`}
-    </span>
-  );
-}
-
 // ---- Banners (cadastrados no painel) -----------------------------------------------------------
 
 function BannerCarousel({ banners, className = '' }: { banners: Banner[]; className?: string }) {
@@ -959,6 +944,7 @@ function BebidasPage() {
             )}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               {fresh && !offline && <OpenStatus />}
+              {ready && !offline && <StoreInfoButton />}
               {hours && <p className="text-xs text-white/50">{hours}</p>}
             </div>
           </div>

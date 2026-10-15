@@ -92,6 +92,7 @@ export function normalizeStore(raw: unknown): StoreSettings {
     pickup_enabled: typeof r.pickup_enabled === 'boolean' ? r.pickup_enabled : DEFAULT_STORE.pickup_enabled,
     delivery_fee: amount(r.delivery_fee, DEFAULT_STORE.delivery_fee),
     min_order: amount(r.min_order, 0),
+    pickup_time: typeof r.pickup_time === 'string' && r.pickup_time.trim() ? r.pickup_time : null,
     tracking_retention_days: amount(r.tracking_retention_days, DEFAULT_STORE.tracking_retention_days),
   };
 }
@@ -435,7 +436,15 @@ export function useShop(): Shop {
 export const storeWhatsappUrl = (store: StoreSettings, text: string) =>
   `https://wa.me/${(store.whatsapp ?? '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 
-export const instagramHandle = (store: StoreSettings) => (store.instagram ?? '').replace(/^@/, '');
+// Cartão online: percentual (pontos-base) e tarifa fixa (centavos) que o servidor mandou, só se forem números válidos. Sem eles, a opção nem aparece.
+export const cardFeeRates = (fee: PaymentOption['card_fee']) =>
+  fee && Number.isSafeInteger(fee.bps) && Number.isSafeInteger(fee.fixed_cents) && fee.bps >= 0 && fee.fixed_cents >= 0 ? { bps: fee.bps, fixedCents: fee.fixed_cents } : null;
+
+// As formas de pagamento que a loja aceita agora (as ativas no painel; o cartão online só com a taxa conhecida). Checkout e a janela de
+// informações da loja usam a mesma lista.
+export const acceptedPayments = (payments: PaymentOption[]) => payments.filter((p) => p.code !== 'card_online' || cardFeeRates(p.card_fee) !== null);
+
+export const instagramHandle =(store: StoreSettings) => (store.instagram ?? '').replace(/^@/, '');
 
 export const fullAddress = (store: StoreSettings) =>
   [store.address, [store.city, store.state].filter(Boolean).join(' - '), store.cep ? store.cep.replace(/^(\d{5})(\d{3})$/, '$1-$2') : '']
