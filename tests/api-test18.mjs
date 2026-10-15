@@ -293,7 +293,13 @@ section('7. Travas contra abuso: endereço de outra pessoa digitado no pedido');
   const victim = fresh('vitima');
   await clearMail();
   const made = [];
-  for (let i = 0; i < 6; i++) made.push(await placeOrder({ customer_email: victim }, [{ product_id: water.id, quantity: 1 }]));
+  for (let i = 0; i < 6; i++) {
+    const o = await placeOrder({ customer_email: victim }, [{ product_id: water.id, quantity: 1 }]);
+    made.push(o);
+    // Cada aviso é decidido (enviado ou bloqueado) antes do pedido seguinte, como no uso real. Sem esperar, o envio em segundo plano de
+    // pedidos feitos em rajada vê os avisos "irmãos" ainda na fila e bloqueia além do teto (em máquina lenta, como a do CI, deu 3 em vez de 4).
+    await until(() => ['accepted', 'blocked'].includes(msgs(o.number, 'order_received')[0]?.status));
+  }
   for (let i = 0; i < 4; i++) await process_();
   await new Promise((r) => setTimeout(r, 600));
   const states = made.map((o) => msgs(o.number, 'order_received')[0]?.status);
