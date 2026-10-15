@@ -4,8 +4,7 @@
 
 @layer components {
   /* Lista que rola na horizontal (categorias, "Os favoritos da galera"). No celular não há barra (o dedo rola). Com mouse,
-     aparece uma barra bem fina, curta (cerca de 200 px) e discreta, centralizada sob a lista (quase transparente; ganha a cor da marca ao
-     passar o mouse). */
+     aparece uma barra fina e curta (cerca de 200 px), na cor da marca, centralizada sob a lista. */
   .cc-hscroll {
     scrollbar-width: none;
   }
@@ -32,20 +31,20 @@
     .cc-hscroll::-webkit-scrollbar-track {
       margin-inline: max(1rem, calc(50vw - 6.25rem));
       border-radius: 9999px;
-      background: rgb(255 255 255 / 0.04);
+      background: rgb(255 255 255 / 0.08);
     }
     .cc-hscroll::-webkit-scrollbar-thumb {
       border-radius: 9999px;
-      background: rgb(255 255 255 / 0.22);
+      background: #2563ff;
     }
     .cc-hscroll::-webkit-scrollbar-thumb:hover {
-      background: rgb(37 99 255 / 0.85);
+      background: #5b8cff;
     }
     /* Firefox não entende ::-webkit-scrollbar (e não deixa mudar o comprimento da barra: ela acompanha a largura da lista) */
     @supports (-moz-appearance: none) {
       .cc-hscroll {
         scrollbar-width: thin;
-        scrollbar-color: rgb(255 255 255 / 0.25) rgb(255 255 255 / 0.04);
+        scrollbar-color: #2563ff rgb(255 255 255 / 0.1);
       }
     }
 
