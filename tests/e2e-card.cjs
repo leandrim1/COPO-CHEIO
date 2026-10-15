@@ -211,8 +211,8 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     ok(/Subtotal R\$ 100,00/.test(s), `${label}: o subtotal continua R$ 100,00`);
     const notice = await text(page.locator('[data-card-notice]'));
     ok(/^Os dados do cartão vão direto para a operadora de pagamento: este site não guarda número nem código de segurança\.$/.test(notice.trim()), `${label}: o aviso do cartão tem SÓ a frase de que os dados vão direto para a operadora e o site não guarda o cartão`, notice);
-    ok(!/taxa/i.test(notice), `${label}: o aviso azul não repete a taxa (ela aparece no resumo, no total e abaixo do botão)`, notice);
-    ok(/Você será cobrado\(a\) R\$ 106,07 no cartão de crédito, à vista, com a taxa do cartão de R\$ 6,07 incluída/.test(await text(page.locator('[data-card-total-note]'))), `${label}: ao lado do botão, a frase final com o valor exato`);
+    ok(!/taxa/i.test(notice), `${label}: o aviso azul não repete a taxa (ela aparece no resumo, no total e no botão)`, notice);
+    ok((await page.locator('[data-card-total-note]').count()) === 0 && !/Você será cobrado\(a\) R\$ 106,07/.test(await text(page)), `${label}: abaixo do botão não há a frase "Você será cobrado(a)…" (o total está no resumo e no botão)`);
     ok(await page.getByRole('button', { name: /^Finalizar e pagar com cartão · R\$ 106,07$/ }).count() === 1, `${label}: o botão mostra o total COM a taxa`);
     // Quantidade
     await page.getByRole('button', { name: 'Aumentar Garrafa Cem' }).click();

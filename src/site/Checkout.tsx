@@ -694,16 +694,6 @@ export function CheckoutPage() {
                   </>
                 )}
               </button>
-              {payment === 'card_online' && fee !== null && (
-                <p data-card-total-note className="text-center text-xs font-semibold text-white/80">
-                  Você será cobrado(a) {money(payTotal)} no cartão de crédito, à vista, com a taxa do cartão de {money(cardFee / 100)} incluída.
-                </p>
-              )}
-              {payment === 'pix_online' && pixBps !== null && fee !== null && (
-                <p data-pix-total-note className="text-center text-xs font-semibold text-white/80">
-                  Você pagará {money(payTotal)} no Pix, com a taxa de serviço de {money(cardFee / 100)} incluída.
-                </p>
-              )}
               <p className="text-center text-xs text-white/60">Você recebe o número do pedido e um link para acompanhar o andamento, sem precisar de cadastro.</p>
               <p className="text-center text-xs text-white/60">
                 Usamos seus dados só para entregar e acompanhar o pedido. Veja a{' '}

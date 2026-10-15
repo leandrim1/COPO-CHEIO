@@ -126,10 +126,10 @@ const pay = async (chargeId, eventId) => {
     await page.waitForTimeout(900);
     const pixNotice = await page.locator('[data-pix-notice]').innerText();
     ok(/^Você paga na próxima tela, com QR Code ou Pix copia e cola\. O pedido só é enviado para a loja depois que o pagamento for confirmado\.$/.test(pixNotice.trim()), `${label}: o aviso azul do Pix tem SÓ a frase de que se paga na próxima tela, com QR Code ou copia e cola, e que o pedido só vai para a loja depois da confirmação`, pixNotice);
-    ok(!/taxa/i.test(pixNotice), `${label}: o aviso azul não repete a taxa (ela aparece no resumo, no total e abaixo do botão)`, pixNotice);
+    ok(!/taxa/i.test(pixNotice), `${label}: o aviso azul não repete a taxa (ela aparece no resumo, no total e no botão)`, pixNotice);
     const pixSummary = await page.locator('[data-fee-line]').innerText();
     ok(/Taxa de serviço/.test(pixSummary) && /0,63/.test(pixSummary) && !/cartão/i.test(pixSummary), `${label}: o resumo tem a linha "Taxa de serviço" de R$ 0,63 (e não "taxa do cartão")`, pixSummary);
-    ok(/Você pagará R\$\s*25,63 no Pix/.test(await page.locator('[data-pix-total-note]').innerText()), `${label}: abaixo do botão: "Você pagará R$ 25,63 no Pix"`);
+    ok((await page.locator('[data-pix-total-note]').count()) === 0 && !/Você pagará/.test(await page.innerText('body')), `${label}: abaixo do botão não há a frase "Você pagará…" (o total está no resumo e no botão)`);
     ok((await page.getByRole('button', { name: /^Finalizar e pagar com Pix · R\$\s*25,63/ }).count()) === 1, `${label}: o botão traz o total com a taxa (R$ 25,63)`);
     await page.locator('label').filter({ hasText: /Dinheiro/ }).first().click();
     ok((await page.locator('[data-fee-line]').count()) === 0 && (await page.locator('[data-pix-notice]').count()) === 0, `${label}: trocando para Dinheiro a taxa some do resumo e do aviso`);
