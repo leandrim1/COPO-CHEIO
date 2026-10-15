@@ -568,50 +568,19 @@ export function CheckoutPage() {
               ))}
             </div>
             {payment === 'pix_online' && (
-              <div data-pix-notice className="mt-4 space-y-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
+              <div data-pix-notice className="mt-4 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
                 <p className="flex items-start gap-2.5">
                   <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
                   <span>Você paga na próxima tela, com QR Code ou Pix copia e cola. O pedido só é enviado para a loja depois que o pagamento for confirmado.</span>
                 </p>
-                {pixBps !== null && (
-                  <p className="flex items-start gap-2.5 font-semibold text-white">
-                    <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
-                    <span>
-                      {fee === null ? (
-                        `No Pix online é cobrada uma taxa de serviço de ${(pixBps / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%. Escolha o bairro para ver o valor.`
-                      ) : (
-                        <>
-                          Taxa de serviço ({(pixBps / 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%): {money(cardFee / 100)}. Ela já está no total de {money(payTotal)}.
-                        </>
-                      )}
-                    </span>
-                  </p>
-                )}
-                {pixBps !== null && paymentOptions.some((p) => p !== 'pix_online') && <p className="pl-6 text-white/70">Essa taxa só existe no Pix online: nas outras formas de pagamento ela não é cobrada.</p>}
               </div>
             )}
             {payment === 'card_online' && (
-              <div data-card-notice className="mt-4 space-y-2.5 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
+              <div data-card-notice className="mt-4 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
                 <p className="flex items-start gap-2.5">
                   <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
-                  <span>
-                    Você paga na próxima tela, com cartão de crédito, à vista. Os dados do cartão vão direto para a operadora de pagamento: este site não guarda número nem código de segurança. O
-                    pedido só é enviado para a loja depois que o pagamento for aprovado.
-                  </span>
+                  <span>Os dados do cartão vão direto para a operadora de pagamento: este site não guarda número nem código de segurança.</span>
                 </p>
-                <p className="flex items-start gap-2.5 font-semibold text-white">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" aria-hidden="true" />
-                  <span>
-                    {fee === null ? (
-                      'No cartão online é cobrada uma taxa de processamento do cartão. Escolha o bairro para ver o valor.'
-                    ) : (
-                      <>
-                        Taxa do cartão: {money(cardFee / 100)}. Ela já está no total de {money(payTotal)}.
-                      </>
-                    )}
-                  </span>
-                </p>
-                {paymentOptions.some((p) => p !== 'card_online') && <p className="pl-6 text-white/70">Essa taxa só existe no cartão online: nas outras formas de pagamento ela não é cobrada.</p>}
               </div>
             )}
             {payment === 'cash' && (

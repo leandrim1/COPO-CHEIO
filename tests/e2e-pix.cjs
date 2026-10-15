@@ -125,8 +125,8 @@ const pay = async (chargeId, eventId) => {
     await page.getByText('Retirar na loja', { exact: true }).click();
     await page.waitForTimeout(900);
     const pixNotice = await page.locator('[data-pix-notice]').innerText();
-    ok(/Taxa de serviço \(2,5%\): R\$\s*0,63\. Ela já está no total de R\$\s*25,63/.test(pixNotice), `${label}: o aviso do Pix mostra a taxa de serviço do cliente (2,5% de R$ 25,00 = R$ 0,63) já dentro do total de R$ 25,63`, pixNotice);
-    ok(/Essa taxa só existe no Pix online/.test(pixNotice), `${label}: o aviso diz que a taxa é só do Pix online`);
+    ok(/^Você paga na próxima tela, com QR Code ou Pix copia e cola\. O pedido só é enviado para a loja depois que o pagamento for confirmado\.$/.test(pixNotice.trim()), `${label}: o aviso azul do Pix tem SÓ a frase de que se paga na próxima tela, com QR Code ou copia e cola, e que o pedido só vai para a loja depois da confirmação`, pixNotice);
+    ok(!/taxa/i.test(pixNotice), `${label}: o aviso azul não repete a taxa (ela aparece no resumo, no total e abaixo do botão)`, pixNotice);
     const pixSummary = await page.locator('[data-fee-line]').innerText();
     ok(/Taxa de serviço/.test(pixSummary) && /0,63/.test(pixSummary) && !/cartão/i.test(pixSummary), `${label}: o resumo tem a linha "Taxa de serviço" de R$ 0,63 (e não "taxa do cartão")`, pixSummary);
     ok(/Você pagará R\$\s*25,63 no Pix/.test(await page.locator('[data-pix-total-note]').innerText()), `${label}: abaixo do botão: "Você pagará R$ 25,63 no Pix"`);
