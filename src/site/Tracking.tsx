@@ -635,7 +635,7 @@ export function TrackingPage({ token, confirmation }: { token: string; confirmat
 function TrackingNotFound() {
   useNoIndex();
   return (
-    <PageShell back="/" backLabel="Início">
+    <PageShell back="/bebidas" backLabel="Início">
       <Message title="Pedido não encontrado">
         <p>Esse link não é válido ou já expirou. Confira o link ou consulte pelo número do pedido e o código de acompanhamento.</p>
         <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:justify-center">
@@ -666,7 +666,7 @@ function TrackingLoaded({ token, confirmation }: { token: string; confirmation: 
 
   if (feed.state === 'loading') {
     return (
-      <PageShell back="/" backLabel="Início">
+      <PageShell back="/bebidas" backLabel="Início">
         <div className="mt-20 flex justify-center" role="status" aria-label="Carregando o pedido">
           <LoaderCircle className="h-10 w-10 animate-spin text-[#2563FF]" aria-hidden="true" />
         </div>
@@ -676,7 +676,7 @@ function TrackingLoaded({ token, confirmation }: { token: string; confirmation: 
 
   if (feed.state === 'error' && !feed.order) {
     return (
-      <PageShell back="/" backLabel="Início">
+      <PageShell back="/bebidas" backLabel="Início">
         <Message title="Não foi possível carregar o pedido agora">
           <p>Sem conexão com o servidor. Seu pedido está salvo; tentando de novo em {feed.retryIn}s.</p>
           <button type="button" onClick={feed.refresh} className={`${BLUE_BUTTON} mt-6`}>
@@ -714,7 +714,7 @@ export function LookupPage() {
   if (status === 'in' && customer) return <AccountTracking customer={customer} />;
   if ((status === 'idle' || status === 'loading') && !waited) {
     return (
-      <PageShell back="/" backLabel="Início">
+      <PageShell back="/bebidas" backLabel="Início">
         <div className="mt-20 flex justify-center" role="status" aria-label="Carregando">
           <LoaderCircle className="h-10 w-10 animate-spin text-[#2563FF]" aria-hidden="true" />
         </div>
@@ -734,7 +734,7 @@ const LookupTitle = () => (
 function AccountTracking({ customer }: { customer: CustomerAccount }) {
   const { orders, failed, reload } = useActiveOrders();
   return (
-    <PageShell back="/" backLabel="Início">
+    <PageShell back="/bebidas" backLabel="Início">
       <LookupTitle />
       <p className="mt-2 max-w-2xl text-white/60">
         Você entrou como <strong className="text-white">{customer.name}</strong>. Seus pedidos ficam aqui, sem precisar de link nem de código.
@@ -825,7 +825,7 @@ function GuestLookup() {
   };
 
   return (
-    <PageShell back="/" backLabel="Início">
+    <PageShell back="/bebidas" backLabel="Início">
       <LookupTitle />
       <p className="mt-2 max-w-2xl text-white/60">Veja em que etapa está o seu pedido. Você pode entrar na sua conta ou acompanhar sem cadastro, como preferir.</p>
 

@@ -680,7 +680,7 @@ export function AccountPage() {
   const aba = query().get('aba') === 'cadastro' ? 'cadastro' : 'entrar';
 
   return (
-    <PageShell back="/" backLabel="Início">
+    <PageShell back="/bebidas" backLabel="Início">
       {status === 'in' && customer ? (
         <Profile customer={customer} />
       ) : status === 'out' ? (

@@ -305,6 +305,51 @@ async function nextMail(to, ms = 8000) {
   }
 
   // ---------------------------------------------------------------------------------------------------------------------------------
+  console.log('# 5b. o botão "Início" das páginas de login/conta e de acompanhar pedido volta para a página Bebidas');
+  {
+    const homeOf = (page) => page.locator('header > a').first();
+    const check = async (page, path, label) => {
+      await page.goto(BASE + path, { waitUntil: 'networkidle' });
+      await homeOf(page).waitFor({ timeout: 8000 });
+      const href = await homeOf(page).evaluate((a) => new URL(a.href).pathname);
+      ok((await homeOf(page).innerText()).trim() === 'Início' && href === '/bebidas', `${label}: o botão "Início" aponta para /bebidas`, href);
+      const logo = await page.locator('header > a').nth(1).evaluate((a) => new URL(a.href).pathname);
+      ok(logo === '/', `${label}: a logo do canto continua levando à página inicial`, logo);
+    };
+    // visitante
+    {
+      const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
+      await check(page, '/conta', 'visitante, tela de login (/conta)');
+      await check(page, '/acompanhar-pedido', 'visitante, acompanhar pedido (/acompanhar-pedido)');
+      await check(page, '/acompanhar-pedido/ABCDEFGHIJKLMNOPQRSTUVWXYZ123456', 'visitante, link de pedido inválido');
+      await homeOf(page).click();
+      await page.waitForURL('**/bebidas');
+      ok(new URL(page.url()).pathname === '/bebidas', 'tocar em "Início" leva à página Bebidas');
+      await page.goto(BASE + '/conta', { waitUntil: 'networkidle' });
+      await homeOf(page).click();
+      await page.waitForURL('**/bebidas');
+      ok(await link(page).waitFor({ timeout: 8000 }).then(() => true).catch(() => false), 'e a página Bebidas abre inteira (com o botão Login)');
+      await page.goto(BASE + '/privacidade', { waitUntil: 'networkidle' });
+      await homeOf(page).waitFor({ timeout: 8000 });
+      ok((await homeOf(page).evaluate((a) => new URL(a.href).pathname)) === '/', 'a política de privacidade (fora do login e do acompanhamento) segue voltando para a página inicial');
+      await ctx.close();
+    }
+    // logado: as duas telas das imagens (Acompanhar pedido com a conta, e "Olá, ...!")
+    {
+      const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
+      const r = await ctx.request.post(BASE + '/api/account/login', { data: { email, password: 'maria-senha-123' } });
+      ok(r.ok(), 'sessão criada para o teste');
+      await check(page, '/conta', 'logado, conta (Olá, ...!)');
+      await check(page, '/acompanhar-pedido', 'logado, acompanhar pedido (Você entrou como ...)');
+      ok(/Você entrou como/.test(await page.innerText('body')), 'a tela de acompanhar do logado é a dos pedidos da conta');
+      await homeOf(page).click();
+      await page.waitForURL('**/bebidas');
+      ok(new URL(page.url()).pathname === '/bebidas', 'logado: tocar em "Início" também leva à página Bebidas');
+      await ctx.close();
+    }
+  }
+
+  // ---------------------------------------------------------------------------------------------------------------------------------
   console.log('# 6. com banners no cardápio (outra disposição no computador): sem cobrir o carrossel');
   {
     psql(`insert into banners(placement, title, image_desktop_url, active, position) values ('menu', 'Promoção de teste', '/img/hero-1.webp', true, 0);`);
