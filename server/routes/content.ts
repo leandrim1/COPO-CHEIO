@@ -40,7 +40,6 @@ const storeSpec: Spec = {
   delivery_fee: money('Taxa de entrega'),
   min_order: money('Pedido mínimo'),
   delivery_time: text('Tempo de entrega', { max: 30, nullable: true }),
-  pickup_time: text('Tempo de retirada', { max: 30, nullable: true }),
   tracking_retention_days: int('Validade do link de acompanhamento (dias)', { min: 7, max: 3650 }),
 };
 
@@ -119,7 +118,6 @@ const STORE_LABELS: FieldLabels = {
   delivery_fee: { label: 'taxa de entrega', format: 'money' },
   min_order: { label: 'pedido mínimo', format: 'money' },
   delivery_time: { label: 'tempo de entrega' },
-  pickup_time: { label: 'tempo de retirada' },
   tracking_retention_days: { label: 'validade do link de acompanhamento (dias)' },
 };
 const longLabels = (spec: Spec): FieldLabels => Object.fromEntries(Object.entries(spec).map(([key, field]) => [key, { label: field.label.toLowerCase(), format: 'changed' as const }]));

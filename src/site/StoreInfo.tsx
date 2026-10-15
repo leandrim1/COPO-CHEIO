@@ -1,15 +1,15 @@
-import { Banknote, Clock, CreditCard, Info, MapPin, Motorbike, Navigation, QrCode, ShoppingBag, Wallet, X } from 'lucide-react';
+import { Banknote, Clock, CreditCard, Info, QrCode, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { PAYMENT_LABEL, money } from '../lib/format';
+import { PAYMENT_LABEL } from '../lib/format';
 import { DAYS, dayHoursText, nextOpening, todayKey } from '../lib/hours';
 import type { PaymentMethod } from '../lib/types';
-import { acceptedPayments, fullAddress, useShop } from './data';
+import { acceptedPayments, useShop } from './data';
 import { BrandName } from './ui';
 
-// O botão ⓘ da página Bebidas e a janela com as informações da loja. Tudo vem do que o owner já cadastra no painel (nome, endereço, horários,
-// tempos, pedido mínimo e formas de pagamento): nada é escrito à mão aqui, e o que não estiver cadastrado simplesmente não aparece.
+// O botão ⓘ da página Bebidas e a janela com o horário de funcionamento e as formas de pagamento. Tudo vem do que o owner já cadastra no painel
+// (Horários e Pagamento): nada é escrito à mão aqui, e uma forma de pagamento desligada no painel simplesmente não aparece.
 
 // "Aberto agora" / "Fechado · Abre amanhã às 09:00"
 export function OpenStatus() {
@@ -41,18 +41,6 @@ function Section({ icon, title, children, ...rest }: { icon: ReactNode; title: s
       </h3>
       <div className="mt-3">{children}</div>
     </section>
-  );
-}
-
-function Row({ icon, label, value, ...rest }: { icon: ReactNode; label: string; value: string; 'data-row'?: string }) {
-  return (
-    <li {...rest} className="flex items-center justify-between gap-3 py-1.5 text-sm">
-      <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-white/65">
-        <span className="text-[#2563FF]">{icon}</span>
-        {label}
-      </span>
-      <span className="text-right font-semibold text-white">{value}</span>
-    </li>
   );
 }
 
@@ -113,15 +101,7 @@ function StoreInfoDialog({ onClose }: { onClose: () => void }) {
     };
   }, [onClose]);
 
-  const address = fullAddress(store);
-  const directions = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`;
   const accepted = acceptedPayments(payments);
-  const times = [
-    store.delivery_enabled && store.delivery_time && { key: 'delivery', icon: <Motorbike className="h-4 w-4" aria-hidden="true" />, label: 'Entrega', value: store.delivery_time },
-    store.pickup_enabled && store.pickup_time && { key: 'pickup', icon: <ShoppingBag className="h-4 w-4" aria-hidden="true" />, label: 'Retirada no balcão', value: store.pickup_time },
-  ].filter(Boolean) as { key: string; icon: ReactNode; label: string; value: string }[];
-  // O pedido mínimo só vale para a entrega (é como o checkout confere).
-  const minimum = store.delivery_enabled ? (store.min_order > 0 ? `${money(store.min_order)} na entrega` : 'Sem pedido mínimo') : null;
 
   return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -166,33 +146,13 @@ function StoreInfoDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="relative space-y-3 overflow-y-auto overscroll-contain px-5 pb-5 pt-1 [color-scheme:dark] [scrollbar-color:rgb(255_255_255/0.25)_transparent] [scrollbar-width:thin]">
-          {address && (
-            <Section icon={<MapPin className="h-4 w-4" aria-hidden="true" />} title="Endereço" data-section="address">
-              <p className="text-sm leading-relaxed text-white/85">{address.replace(/(\d{5})-(\d{3})/, '$1\u2011$2')}</p>
-              <a
-                href={directions}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-[#8FB1FF] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-              >
-                <Navigation className="h-3.5 w-3.5" aria-hidden="true" />
-                Como chegar
-              </a>
-            </Section>
-          )}
-
-          {(times.length > 0 || minimum) && (
-            <Section icon={<Clock className="h-4 w-4" aria-hidden="true" />} title="Entrega e retirada" data-section="service">
-              <ul className="divide-y divide-white/[0.06]">
-                {times.map((t) => (
-                  <Row key={t.key} data-row={t.key} icon={t.icon} label={t.label} value={t.value} />
-                ))}
-                {minimum && <Row data-row="minimum" icon={<Wallet className="h-4 w-4" aria-hidden="true" />} label="Pedido mínimo" value={minimum} />}
-              </ul>
-            </Section>
-          )}
-
+        {/* Focável para quem navega pelo teclado conseguir rolar a lista quando ela não cabe na tela (não há outro item focável aqui dentro). */}
+        <div
+          tabIndex={0}
+          role="region"
+          aria-label="Horário de funcionamento e formas de pagamento"
+          className="relative space-y-3 overflow-y-auto overscroll-contain px-5 pb-5 pt-1 [color-scheme:dark] [scrollbar-color:rgb(255_255_255/0.25)_transparent] [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2563FF]/70"
+        >
           <Section icon={<Clock className="h-4 w-4" aria-hidden="true" />} title="Horário de funcionamento" data-section="hours">
             <ul className="space-y-1">
               {WEEK.map((day) => {
@@ -253,8 +213,8 @@ export function StoreInfoButton({ className = '' }: { className?: string }) {
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        aria-label="Informações da loja: horários, entrega e pagamento"
-        title="Informações da loja"
+        aria-label="Horário de funcionamento e formas de pagamento"
+        title="Horário e formas de pagamento"
         data-store-info-trigger
         className={`relative grid h-7 w-7 shrink-0 place-items-center rounded-full border border-white/15 text-white/60 transition-all duration-150 after:absolute after:-inset-2 after:content-[''] hover:scale-110 hover:border-[#2563FF] hover:bg-[#145CFF]/15 hover:text-white hover:shadow-[0_0_14px_rgba(37,99,255,0.55)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white motion-reduce:transition-none motion-reduce:hover:scale-100 ${className}`}
       >

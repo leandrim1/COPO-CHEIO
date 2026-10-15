@@ -1,7 +1,6 @@
-// Botão ⓘ e janela de informações da loja na página Bebidas, de ponta a ponta no navegador (celular e computador): onde o botão fica, o que a
-// janela mostra (vindo do que o painel já cadastra), dia de hoje e dias fechados, o que some quando não está cadastrado, abrir/fechar
-// (botão, Esc, clique fora), rolagem da página travada, foco (entra, fica preso, volta), tela pequena, carregamento dos dados e o campo novo
-// "Tempo de retirada no balcão" no painel.
+// Botão ⓘ e janela da página Bebidas, de ponta a ponta no navegador (celular e computador): onde o botão fica, o que a janela mostra (SÓ o
+// horário de funcionamento e as formas de pagamento, vindos do que o painel já cadastra), dia de hoje e dias fechados, pagamento desligado
+// no painel, abrir/fechar (botão, Esc, clique fora), rolagem da página travada, foco (entra, fica preso, volta), tela pequena e carregamento.
 // usage: bash tests/fresh.sh && npm run build && node tests/e2e-info.cjs
 const { chromium } = (() => {
   try {
@@ -63,10 +62,6 @@ const DAY_LABEL = { sun: 'Domingo', mon: 'Segunda', tue: 'Terça', wed: 'Quarta'
 const day = (open, end = '00:00') => ({ open, start: '10:00', end });
 const HOURS = { mon: day(true), tue: day(false), wed: day(true), thu: day(true), fri: day(true, '02:00'), sat: day(true, '02:00'), sun: day(true) };
 const STORE = {
-  address: 'Rua das Bebidas, 100',
-  cep: '38400-000',
-  city: 'Uberlândia',
-  state: 'MG',
   opening_hours: HOURS,
   orders_paused: false,
   delivery_enabled: true,
@@ -74,7 +69,6 @@ const STORE = {
   delivery_fee: 5,
   min_order: 20,
   delivery_time: '30 a 45 min',
-  pickup_time: '10 a 15 min',
 };
 const setStore = (patch) => api('PATCH', '/api/admin/store', { ...STORE, ...patch });
 
@@ -92,9 +86,7 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
 (async () => {
   await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const saved = await setStore({});
-  ok(saved.status === 200 && saved.data.store.pickup_time === '10 a 15 min', 'o painel (API) grava o tempo de retirada', saved.data);
-  ok((await api('GET', '/api/site')).data.store.pickup_time === '10 a 15 min', 'o site público recebe o tempo de retirada');
-  ok((await api('PATCH', '/api/admin/store', { pickup_time: 'x'.repeat(31) })).status === 400, 'tempo de retirada com mais de 30 letras → 400');
+  ok(saved.status === 200, 'o painel (API) grava os horários de teste', saved.data);
   // Cardápio com bastante coisa, para a página rolar.
   psql(`insert into categories(name, position) values ('Copão', 0), ('Cervejas', 1);
         insert into products(category_id, name, description, price, featured, position)
@@ -110,7 +102,7 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     await trigger(page).waitFor({ timeout: 8000 });
     ok((await dialog(page).count()) === 0, `${name}: a janela começa fechada`);
     const t = trigger(page);
-    ok((await t.getAttribute('aria-label')) === 'Informações da loja: horários, entrega e pagamento' && (await t.getAttribute('aria-haspopup')) === 'dialog', `${name}: botão com nome acessível e aria-haspopup="dialog"`);
+    ok((await t.getAttribute('aria-label')) === 'Horário de funcionamento e formas de pagamento' && (await t.getAttribute('aria-haspopup')) === 'dialog', `${name}: botão com nome acessível e aria-haspopup="dialog"`);
     const sameRow = await t.evaluate((el) => {
       const prev = el.previousElementSibling;
       const a = el.getBoundingClientRect();
@@ -144,15 +136,10 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     const headerStatus = await page.evaluate(() => [...document.querySelectorAll('main span')].map((s) => s.textContent.trim()).find((t) => /^(Aberto agora|Fechado)/.test(t)));
     ok((await d.innerText()).includes(headerStatus), `${name}: o status de funcionamento da janela é o mesmo do cabeçalho (${headerStatus})`);
 
-    const addr = (await d.locator('[data-section="address"]').innerText()).replace(/‑/g, '-');
-    ok(addr.includes('Rua das Bebidas, 100') && addr.includes('Uberlândia - MG') && addr.includes('38400-000'), `${name}: endereço cadastrado (rua, cidade, UF e CEP)`, addr);
-    const href = await d.locator('[data-section="address"] a').getAttribute('href');
-    ok(href.startsWith('https://www.google.com/maps/dir/?api=1&destination=') && (await d.locator('[data-section="address"] a').getAttribute('rel')).includes('noopener'), `${name}: "Como chegar" abre o mapa em outra aba, com noopener`, href);
-
-    const row = (k) => d.locator(`[data-row="${k}"]`).innerText().then((t) => t.replace(/\s+/g, ' ').trim());
-    ok((await row('delivery')) === 'Entrega 30 a 45 min', `${name}: tempo médio de entrega`, await row('delivery'));
-    ok((await row('pickup')) === 'Retirada no balcão 10 a 15 min', `${name}: tempo médio de retirada no balcão`, await row('pickup'));
-    ok((await row('minimum')) === 'Pedido mínimo R$ 20,00 na entrega', `${name}: pedido mínimo`, await row('minimum'));
+    const sections = await d.locator('[data-section]').evaluateAll((els) => els.map((e) => e.dataset.section));
+    ok(sections.join() === 'hours,payments', `${name}: só dois blocos: horário de funcionamento e formas de pagamento (${sections.join(', ')})`, sections);
+    const all = await d.innerText();
+    ok(!/Endereço|Como chegar|Pedido mínimo|Retirada no balcão|Tempo/i.test(all) && (await d.locator('a').count()) === 0, `${name}: nada de endereço, tempos de entrega/retirada nem pedido mínimo`, all);
 
     const order = await d.locator('[data-day]').evaluateAll((els) => els.map((e) => e.dataset.day));
     ok(order.join() === 'sun,mon,tue,wed,thu,fri,sat', `${name}: horários de domingo a sábado, nessa ordem`, order);
@@ -245,7 +232,7 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     ok(trapped.every(Boolean), 'Tab nunca sai da janela (12 toques seguidos)', trapped);
     await page.getByRole('button', { name: 'Fechar informações da loja' }).focus();
     await page.keyboard.press('Shift+Tab');
-    ok((await page.evaluate(() => document.activeElement?.textContent?.trim())) === 'Como chegar', 'Shift+Tab no X volta para o último item ("Como chegar")');
+    ok((await page.evaluate(() => document.activeElement?.getAttribute('role'))) === 'region', 'Shift+Tab no X volta para o último item (a lista, que também recebe o foco para poder rolar pelo teclado)');
     await page.keyboard.press('Tab');
     ok((await page.evaluate(() => document.activeElement?.getAttribute('aria-label'))) === 'Fechar informações da loja', 'Tab no último item dá a volta e chega ao X');
     await page.keyboard.press('Escape');
@@ -275,17 +262,12 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     await ctx.close();
   }
 
-  console.log('# o que não está cadastrado não aparece (sem inventar nada)');
+  console.log('# o que o painel muda aparece na janela (sem inventar nada)');
   {
     const variants = [
-      ['sem endereço', { address: null, cep: null, city: null, state: null }, async (d) => (await d.locator('[data-section="address"]').count()) === 0 && (await d.locator('[data-row="delivery"]').count()) === 1],
-      ['sem tempo de retirada', { pickup_time: null }, async (d) => (await d.locator('[data-row="pickup"]').count()) === 0 && (await d.locator('[data-row="delivery"]').count()) === 1],
-      ['sem tempo de entrega', { delivery_time: null }, async (d) => (await d.locator('[data-row="delivery"]').count()) === 0 && (await d.locator('[data-row="pickup"]').count()) === 1],
-      ['sem pedido mínimo', { min_order: 0 }, async (d) => /Sem pedido mínimo/.test(await d.locator('[data-row="minimum"]').innerText())],
-      ['só retirada (entrega desligada): nada de entrega nem de pedido mínimo', { delivery_enabled: false }, async (d) => (await d.locator('[data-row="delivery"]').count()) === 0 && (await d.locator('[data-row="minimum"]').count()) === 0 && (await d.locator('[data-row="pickup"]').count()) === 1],
-      ['só entrega (retirada desligada): nada de retirada', { pickup_enabled: false }, async (d) => (await d.locator('[data-row="pickup"]').count()) === 0 && (await d.locator('[data-row="delivery"]').count()) === 1],
       ['pedidos pausados: o status diz isso', { orders_paused: true }, async (d) => /Pedidos pausados/.test(await d.innerText())],
       ['dia 24 horas', { opening_hours: { ...HOURS, mon: { open: true, start: '00:00', end: '00:00' } } }, async (d) => /24 horas/.test(await d.locator('[data-day="mon"]').innerText())],
+      ['todos os dias fechados', { opening_hours: Object.fromEntries(Object.keys(HOURS).map((k) => [k, day(false)])) }, async (d) => (await d.locator('[data-closed]').count()) === 7 && (await d.locator('[data-day]').count()) === 7],
     ];
     for (const [name, patch, check] of variants) {
       const res = await setStore(patch);
@@ -319,7 +301,7 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     ok((await trigger(page).count()) === 0, 'enquanto os dados não chegaram, o botão ⓘ não aparece (nada de informação provisória)');
     ok(await until(async () => (await trigger(page).count()) === 1, 8000), 'quando os dados chegam, o botão aparece');
     await trigger(page).click();
-    ok((await dialog(page).locator('[data-row="pickup"]').innerText()).includes('10 a 15 min'), 'e a janela mostra os dados que acabaram de chegar');
+    ok((await dialog(page).locator('[data-day="mon"]').innerText()).includes('10:00 às 00:00'), 'e a janela mostra os dados que acabaram de chegar');
     await ctx.close();
   }
   {
@@ -341,47 +323,8 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     const has = (await trigger(page).count()) === 1;
     if (has) {
       await trigger(page).click();
-      ok((await dialog(page).locator('[data-row="pickup"]').innerText()).includes('10 a 15 min'), 'com a API fora do ar e a cópia salva, a janela mostra os últimos dados conhecidos');
+      ok((await dialog(page).locator('[data-day="mon"]').innerText()).includes('10:00 às 00:00'), 'com a API fora do ar e a cópia salva, a janela mostra os últimos dados conhecidos');
     } else ok(true, 'com a API fora do ar a página abre sem erro (sem cópia utilizável o botão some)');
-    await ctx.close();
-  }
-
-  console.log('# painel: Configurações → Entrega → "Tempo de retirada no balcão"');
-  {
-    const { ctx, page } = await newCtx(browser, { width: 1280, height: 900 });
-    await page.goto(BASE + '/admin/login', { waitUntil: 'networkidle' });
-    await page.fill('#login-email', 'dono@copocheio.local');
-    await page.fill('#login-senha', 'senha-forte-123');
-    await page.click('button[type=submit]');
-    await page.waitForURL('**/admin/dashboard');
-    await page.goto(BASE + '/admin/configuracoes', { waitUntil: 'networkidle' });
-    await page.getByRole('tab', { name: 'Entrega' }).click();
-    const field = page.getByLabel('Tempo de retirada no balcão');
-    ok((await field.inputValue()) === '10 a 15 min', 'o campo mostra o valor salvo (10 a 15 min)', await field.inputValue());
-    ok((await field.getAttribute('maxlength')) === '30', 'o campo limita a 30 letras');
-    ok(await page.getByLabel('Tempo estimado de entrega').isVisible(), 'o tempo de entrega continua lá, com o nome mais claro');
-    await field.fill('12 a 18 min');
-    await page.getByRole('button', { name: /Salvar/ }).first().click();
-    ok(await until(async () => (await api('GET', '/api/site')).data.store.pickup_time === '12 a 18 min'), 'salvar no painel muda o site');
-    {
-      const v = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      const p = await v.newPage();
-      await open(p);
-      ok((await dialog(p).locator('[data-row="pickup"]').innerText()).includes('12 a 18 min'), 'e a janela do site mostra o novo tempo');
-      await v.close();
-    }
-    await field.fill('');
-    await page.getByRole('button', { name: /Salvar/ }).first().click();
-    ok(await until(async () => (await api('GET', '/api/site')).data.store.pickup_time === null), 'apagar o campo no painel tira a linha do site (fica sem tempo de retirada)');
-    {
-      const v = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-      const p = await v.newPage();
-      await open(p);
-      ok((await dialog(p).locator('[data-row="pickup"]').count()) === 0, 'sem valor, a janela não mostra a linha da retirada');
-      await v.close();
-    }
-    const hist = (await api('GET', '/api/admin/audit')).data;
-    ok(JSON.stringify(hist ?? '').includes('tempo de retirada'), 'a alteração entra no histórico de atividades do painel', JSON.stringify(hist).slice(0, 200));
     await ctx.close();
   }
 

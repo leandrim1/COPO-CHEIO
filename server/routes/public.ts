@@ -45,7 +45,7 @@ export function registerPublic(r: Router) {
     const [store, site, hero, banners, coverBanners, zones, payments] = await batch([
       [
         `select store_name, tagline, whatsapp, instagram, address, cep, city, state, opening_hours, timezone, orders_paused,
-                delivery_enabled, pickup_enabled, delivery_fee, min_order, delivery_time, pickup_time, tracking_retention_days
+                delivery_enabled, pickup_enabled, delivery_fee, min_order, delivery_time, tracking_retention_days
            from store_settings where id = 1`,
       ],
       [

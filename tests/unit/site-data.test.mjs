@@ -56,12 +56,6 @@ test('limite de destaques sempre fica entre 1 e 24', () => {
   assert.equal(d.normalizeSite({ featured_limit: 6 }).featured_limit, 6);
 });
 
-test('tempo de retirada: texto vira texto; vazio, nulo ou outro tipo vira nulo (a janela de informações não mostra a linha)', () => {
-  assert.equal(d.normalizeStore({ pickup_time: '10 a 15 min' }).pickup_time, '10 a 15 min');
-  for (const empty of [null, undefined, '', '   ', 5, {}, []]) assert.equal(d.normalizeStore({ pickup_time: empty }).pickup_time, null);
-  assert.equal(d.normalizeStore(null).pickup_time, null);
-});
-
 test('formas de pagamento aceitas: as do painel; o cartão online só com a taxa conhecida (a mesma regra do checkout)', () => {
   const pay = (code, extra = {}) => ({ code, label: code, details: null, ...extra });
   assert.deepEqual(d.acceptedPayments([pay('pix'), pay('cash'), pay('card')]).map((p) => p.code), ['pix', 'cash', 'card']);

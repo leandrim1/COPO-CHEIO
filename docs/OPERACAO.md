@@ -267,8 +267,8 @@ agendador, então com o site parado ela só roda quando houver movimento.
    TODO pedido de Pix feito a partir dela; pedidos de Pix feitos antes continuam com o total e a comissão de 2% de quando nasceram. Se não quiser a taxa, zere os percentuais em
    `payment_fee_settings` (`pix_customer_fee_bps` e `pix_store_fee_bps`, com SQL no Neon; ainda não há tela para isso): com os dois em zero os pedidos NOVOS voltam a cobrar só o valor do pedido, sem
    divisão. O Pix online nasce desligado: se ainda não foi ligado em produção, nenhum pedido é afetado.
-10. Depois da migration 0021 (tempo de retirada, só uma coluna opcional em `store_settings`): nada muda sozinho. Abra **/bebidas**, toque no **ⓘ** ao lado de "Aberto agora" e confira
-   endereço, horários e formas de pagamento; para mostrar o tempo de retirada, preencha **Painel → Configurações → Entrega → Tempo de retirada no balcão** (opcional).
+10. Depois da migration 0021 (uma coluna opcional em `store_settings`, hoje sem uso no site): nada muda. Abra **/bebidas**, toque no **ⓘ** ao lado de "Aberto agora" e confira o
+   **horário de funcionamento** (com o dia de hoje destacado) e as **formas de pagamento**.
 
 ## 9. O que este guia não cobre
 

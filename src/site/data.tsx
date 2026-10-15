@@ -92,7 +92,6 @@ export function normalizeStore(raw: unknown): StoreSettings {
     pickup_enabled: typeof r.pickup_enabled === 'boolean' ? r.pickup_enabled : DEFAULT_STORE.pickup_enabled,
     delivery_fee: amount(r.delivery_fee, DEFAULT_STORE.delivery_fee),
     min_order: amount(r.min_order, 0),
-    pickup_time: typeof r.pickup_time === 'string' && r.pickup_time.trim() ? r.pickup_time : null,
     tracking_retention_days: amount(r.tracking_retention_days, DEFAULT_STORE.tracking_retention_days),
   };
 }
