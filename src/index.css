@@ -4,8 +4,8 @@
 
 @layer components {
   /* Lista que rola na horizontal (categorias, "Os favoritos da galera"). No celular não há barra (o dedo rola). Com mouse,
-     aparece uma barra bem fina e discreta (quase transparente; ganha a cor da marca ao passar o mouse), alinhada ao conteúdo
-     (a lista tem 1rem de respiro nas pontas, 1,5rem a partir de 640 px). */
+     aparece uma barra bem fina, curta (cerca de 200 px) e discreta, centralizada sob a lista (quase transparente; ganha a cor da marca ao
+     passar o mouse). */
   .cc-hscroll {
     scrollbar-width: none;
   }
@@ -28,8 +28,9 @@
       display: block;
       height: 6px;
     }
+    /* O trilho fica com cerca de 200 px, no meio da lista (50vw − 6,25rem de cada lado); em tela estreita nunca passa de 1rem de respiro. */
     .cc-hscroll::-webkit-scrollbar-track {
-      margin-inline: 1rem;
+      margin-inline: max(1rem, calc(50vw - 6.25rem));
       border-radius: 9999px;
       background: rgb(255 255 255 / 0.04);
     }
@@ -40,28 +41,7 @@
     .cc-hscroll::-webkit-scrollbar-thumb:hover {
       background: rgb(37 99 255 / 0.85);
     }
-    @media (min-width: 640px) {
-      .cc-hscroll::-webkit-scrollbar-track {
-        margin-inline: 1.5rem;
-      }
-    }
-    /* A página Bebidas, no computador, ganha respiro maior nas laterais (veja WIDE em App.tsx). */
-    @media (min-width: 1024px) {
-      .cc-hscroll::-webkit-scrollbar-track {
-        margin-inline: 2.5rem;
-      }
-    }
-    @media (min-width: 1280px) {
-      .cc-hscroll::-webkit-scrollbar-track {
-        margin-inline: 3.5rem;
-      }
-    }
-    @media (min-width: 1536px) {
-      .cc-hscroll::-webkit-scrollbar-track {
-        margin-inline: 5rem;
-      }
-    }
-    /* Firefox não entende ::-webkit-scrollbar */
+    /* Firefox não entende ::-webkit-scrollbar (e não deixa mudar o comprimento da barra: ela acompanha a largura da lista) */
     @supports (-moz-appearance: none) {
       .cc-hscroll {
         scrollbar-width: thin;
