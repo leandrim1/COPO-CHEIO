@@ -20,7 +20,7 @@ import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
 import { DEFAULT_FAVICON, DEFAULT_SHARE_IMAGE } from './lib/defaults';
 import { money, normalizeText } from './lib/format';
-import { hoursLines, openHoursSummary } from './lib/hours';
+import { hoursLines } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
 import { ICE_REQUIRED_MESSAGE } from './lib/ice';
 import { CheckoutPage } from './site/Checkout';
@@ -880,7 +880,6 @@ function BebidasPage() {
     store.delivery_enabled && { icon: <Motorbike className="h-4 w-4" aria-hidden="true" />, text: fee },
     !store.delivery_enabled && store.pickup_enabled && { icon: <ShoppingBag className="h-4 w-4" aria-hidden="true" />, text: 'Retirada na loja' },
   ].filter(Boolean) as { icon: ReactNode; text: string }[];
-  const hours = openHoursSummary(store.opening_hours);
   const loadFailed = failed && products.length === 0;
   const hasBanners = banners.length > 0;
 
@@ -945,7 +944,6 @@ function BebidasPage() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               {fresh && !offline && <OpenStatus />}
               {ready && !offline && <StoreInfoButton />}
-              {hours && <p className="text-xs text-white/50">{hours}</p>}
             </div>
           </div>
 

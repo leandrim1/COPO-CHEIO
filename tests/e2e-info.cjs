@@ -113,6 +113,7 @@ const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('
     ok(sameRow.size[0] >= 24 && sameRow.size[1] >= 24, `${name}: tamanho clicável decente (${sameRow.size.join('×')})`);
     const header = await page.evaluate(() => document.querySelector('main h1')?.parentElement?.textContent ?? '');
     ok(header.includes(site.store.delivery_time), `${name}: o tempo de entrega continua no cabeçalho, perto do botão`);
+    ok(!/Segunda|Terça|Quarta|Quinta|Sexta|Sábado|Domingo|\d\d:\d\d às \d\d:\d\d/.test(header), `${name}: o resumo dos horários não aparece mais no cabeçalho (só dentro da janela)`, header);
     if (!(w < 1000)) {
       const before = await t.evaluate((el) => ({ tr: getComputedStyle(el).transform, bc: getComputedStyle(el).borderColor }));
       await t.hover();

@@ -262,7 +262,7 @@ produto e envie a foto.
   (no alto) e a logo (embaixo, à esquerda) ficam por cima da imagem: a prévia do painel mostra essas áreas. A capa e o
   carrossel do cardápio (abaixo do título "Bebidas") têm ordem própria; trocar um banner de um lugar para o outro é só
   escolher *Onde aparece* ao editar.
-- **Horário e pagamento (botão ⓘ)**: em `/bebidas`, um ícone ⓘ discreto ao lado de "Aberto agora / Fechado" abre uma janela centralizada, escura e azul
+- **Horário e pagamento (botão ⓘ)**: em `/bebidas`, o resumo dos horários não fica mais na tela: ele só aparece dentro da janela que um ícone ⓘ discreto, ao lado de "Aberto agora / Fechado", abre uma janela centralizada, escura e azul
   (a do tema da marca), com o título (nome da loja e o status), o **horário de funcionamento de domingo a sábado** (o dia de hoje destacado com "Hoje" e
   os dias fechados marcados "Fechado") e as **formas de pagamento aceitas**. Só isso. Tudo vem do que o painel já cadastra (*Configurações → Horários* e
   *Pagamento*): uma forma de pagamento desligada no painel some da janela, e sem os dados da API (e sem cópia salva) o botão nem é mostrado, para nunca
@@ -270,7 +270,7 @@ produto e envie a foto.
   janela, fica preso nela (Tab) e volta para o ⓘ ao fechar. Código: `src/site/StoreInfo.tsx`.
 - **Página Bebidas no computador**: a partir de 1024 px de largura a página ocupa a tela toda (a coluna estreita de 44 rem
   continua valendo abaixo disso, no celular e no tablet, que não mudam em nada). A capa vira uma faixa em largura total; o
-  cabeçalho da loja (logo, nome, horário, aberto/fechado e busca) fica à esquerda e o carrossel de banners à direita (sem
+  cabeçalho da loja (logo, nome, tempo e taxa de entrega, aberto/fechado com o ⓘ e busca) fica à esquerda e o carrossel de banners à direita (sem
   banners, a busca vai para a direita do título); as categorias ficam numa fileira fixa em largura total; os favoritos
   mostram mais cards por tela; as bebidas se organizam em 2 colunas (3 a partir de 1800 px); o botão "Ver pedido" vai para o
   canto de baixo, à direita, para não cobrir as categorias nem o meio da página. O respiro das laterais cresce com a tela

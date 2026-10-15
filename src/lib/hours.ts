@@ -77,10 +77,6 @@ export function hoursLines(hours: OpeningHours): string[] {
   });
 }
 
-// Só os dias abertos, numa linha: "Segunda a Sexta: 09:00 às 23:00".
-export const openHoursSummary = (hours: OpeningHours) =>
-  hoursLines(hours).filter((line) => !line.endsWith('fechado')).join(' · ');
-
 // "Abre hoje às 18:00", "Abre amanhã às 09:00", "Abre segunda às 09:00".
 export function nextOpening(hours: OpeningHours, timeZone: string, now = new Date()): string {
   const { dow, minutes } = localNow(timeZone, now);
