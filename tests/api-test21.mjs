@@ -6,7 +6,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
-import { Client, check, section, summary } from './lib.mjs';
+import { Client, check, section, summary, setAdminCodeReader } from './lib.mjs';
 
 const P = ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-v', 'ON_ERROR_STOP=1'];
 const psql = (sql) => execFileSync('psql', [...P, '-c', sql], { encoding: 'utf8' }).trim();
@@ -56,6 +56,16 @@ const fakeApi = http.createServer(async (req, res) => {
 });
 await new Promise((r) => fakeApi.listen(0, '127.0.0.1', r));
 const callsTo = (email) => calls.filter((c) => c.body.to?.[0] === email);
+// Neste modo o e-mail não passa pela caixa simulada do SMTP: o código do login do painel é lido da chamada que chegou à API simulada.
+setAdminCodeReader(async (email) => {
+  for (let i = 0; i < 60; i++) {
+    const call = calls.filter((c) => c.body.to?.[0] === email && /código de acesso ao painel/.test(String(c.body.subject))).at(-1);
+    const code = /\b(\d{6})\b/.exec(call?.body.text ?? '')?.[1];
+    if (code) return code;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return undefined;
+});
 const codeSentTo = (email) => /\b(\d{6})\b/.exec(callsTo(email).at(-1)?.body.text ?? '')?.[1];
 
 // ---- Avisos assinados -----------------------------------------------------------------------------------------------------------------

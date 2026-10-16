@@ -1,7 +1,7 @@
 // Segurança: limites atômicos, senha forte, verificação em duas etapas, aviso de aparelho novo, links de e-mail, cabeçalhos HTTP,
 // anti-robô nos pedidos, pré-sequestro de cadastro, imagens, rotas e informações expostas.
 import { execFileSync, spawn } from 'node:child_process';
-import { BASE, Client, check, clearMail, lastCode, linkFrom, mailsTo, registerVerified, section, summary, loginCustomer } from './lib.mjs';
+import { BASE, Client, check, clearMail, lastCode, linkFrom, mailsTo, registerVerified, section, summary, loginCustomer, loginAdmin } from './lib.mjs';
 import { load } from './unit/load.mjs';
 
 const psql = (sql) => execFileSync('psql', ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-c', sql], { encoding: 'utf8' }).trim();
@@ -23,14 +23,14 @@ section('1. SEG-01: o limite de tentativas é atômico (simultâneas não furam)
 await makeAdmin('vitima@copocheio.local', 'Vítima Teste');
 {
   const attacker = new Client(undefined, '203.0.113.50');
-  const burst = await Promise.all(Array.from({ length: 40 }, () => attacker.post('/api/auth/login', { email: 'vitima@copocheio.local', password: 'errada-errada-1' })));
+  const burst = await Promise.all(Array.from({ length: 40 }, () => loginAdmin(attacker, { email: 'vitima@copocheio.local', password: 'errada-errada-1' })));
   const wrong = burst.filter((r) => r.status === 401).length;
   const blocked = burst.filter((r) => r.status === 429).length;
   check('40 logins errados ao mesmo tempo (mesma rede e e-mail): só 8 chegam a conferir a senha', wrong === 8 && blocked === 32, { wrong, blocked });
   check('o bloqueio traz Retry-After e código rate_limited', Number(burst.find((r) => r.status === 429).headers.get('retry-after')) > 0 && burst.find((r) => r.status === 429).data.code === 'rate_limited');
-  check('a mesma rede segue barrada, até com a senha certa', (await attacker.post('/api/auth/login', { email: 'vitima@copocheio.local', password: STRONG })).status === 429);
+  check('a mesma rede segue barrada, até com a senha certa', (await loginAdmin(attacker, { email: 'vitima@copocheio.local', password: STRONG })).status === 429);
   const victimSide = new Client(undefined, '198.51.100.7');
-  check('mas o dono da conta (outra rede) entra normalmente: o ataque não o tranca', (await victimSide.post('/api/auth/login', { email: 'vitima@copocheio.local', password: STRONG })).status === 200);
+  check('mas o dono da conta (outra rede) entra normalmente: o ataque não o tranca', (await loginAdmin(victimSide, { email: 'vitima@copocheio.local', password: STRONG })).status === 200);
 
   const noisy = new Client(undefined, '203.0.113.60');
   const wave = await Promise.all(Array.from({ length: 80 }, (_, i) => noisy.post('/api/auth/login', { email: `alvo${i}@exemplo.com`, password: 'qualquer-coisa-1' })));
@@ -73,20 +73,20 @@ section('3. SEG-02: aviso por e-mail quando entram de um aparelho novo');
   await clearMail();
   const email = 'vitima@copocheio.local';
   const first = new Client(undefined, '198.51.100.30');
-  check('primeiro acesso de um aparelho: entra', (await first.post('/api/auth/login', { email, password: STRONG })).status === 200);
+  check('primeiro acesso de um aparelho: entra', (await loginAdmin(first, { email, password: STRONG })).status === 200);
   check('o cookie do aparelho foi gravado (HttpOnly)', first.jar.has('copocheio_dispositivo') && /HttpOnly/i.test(first.lastSetCookie ?? '') || first.jar.has('copocheio_dispositivo'));
   const before = (await mailsTo(email)).filter((m) => /Novo acesso/.test(m.subject)).length;
   const second = new Client(undefined, '198.51.100.31');
-  const login2 = await second.post('/api/auth/login', { email, password: STRONG });
+  const login2 = await loginAdmin(second, { email, password: STRONG });
   check('entrar de outro aparelho funciona', login2.status === 200);
   const after = (await mailsTo(email)).filter((m) => /Novo acesso/.test(m.subject));
   check('chegou o e-mail "Novo acesso ao painel"', after.length === before + 1, after.length);
   check('o aviso diz o aparelho e orienta a trocar a senha, sem conter a senha nem token de sessão', /Aparelho/.test(after.at(-1).text) && /senha/i.test(after.at(-1).text) && !after.at(-1).text.includes(STRONG) && !/copocheio_admin/.test(after.at(-1).text));
-  check('o mesmo aparelho entrando de novo não gera outro aviso', (await second.post('/api/auth/login', { email, password: STRONG })).status === 200 && (await mailsTo(email)).filter((m) => /Novo acesso/.test(m.subject)).length === before + 1);
+  check('o mesmo aparelho entrando de novo não gera outro aviso', (await loginAdmin(second, { email, password: STRONG })).status === 200 && (await mailsTo(email)).filter((m) => /Novo acesso/.test(m.subject)).length === before + 1);
   const log = await owner.get('/api/admin/audit?q=aparelho%20novo');
   check('o acesso por aparelho novo ficou no histórico', log.status === 200 && log.data.entries.some((e) => e.action === 'auth.login_new_device'), log.data);
   const stranger = new Client(undefined, '198.51.100.32');
-  const wrongPwd = await stranger.post('/api/auth/login', { email, password: 'errada-errada-1' });
+  const wrongPwd = await loginAdmin(stranger, { email, password: 'errada-errada-1' });
   check('senha errada de aparelho desconhecido não manda aviso nem abre sessão', wrongPwd.status === 401 && (await mailsTo(email)).filter((m) => /Novo acesso/.test(m.subject)).length === before + 1);
 }
 
@@ -118,7 +118,7 @@ section('4. SEG-02: verificação em duas etapas (TOTP + códigos de recuperaç�
   // Login em duas etapas
   const fresh = () => new Client(undefined, `198.51.100.${41 + Math.floor(Math.random() * 100)}`);
   const d1 = fresh();
-  const l1 = await d1.post('/api/auth/login', { email, password: STRONG });
+  const l1 = await loginAdmin(d1, { email, password: STRONG });
   check('com 2FA, a senha certa NÃO abre sessão: pede o código', l1.status === 200 && l1.data.two_factor === true && typeof l1.data.challenge === 'string' && !l1.data.admin, l1.data);
   check('ainda não há sessão (me = null)', (await d1.get('/api/auth/me')).data.admin === null && !d1.jar.has('copocheio_admin'));
   check('painel recusa a rota administrativa sem a segunda etapa', (await d1.get('/api/admin/dashboard')).status === 401);
@@ -126,37 +126,39 @@ section('4. SEG-02: verificação em duas etapas (TOTP + códigos de recuperaç�
   check('código errado: 401 com tentativas restantes', bad.status === 401 && bad.data.code === 'invalid_code' && bad.data.attempts_left === 4, bad.data);
   const noSuch = await d1.post('/api/auth/login/2fa', { challenge: 'x'.repeat(40), code: totp.totpAtStep(secret, step()) });
   check('desafio inventado não vale', noSuch.status === 401 && noSuch.data.code === 'challenge_expired', noSuch.data);
-  const good = await d1.post('/api/auth/login/2fa', { challenge: l1.data.challenge, code: totp.totpAtStep(secret, step() + 1) });
+  // O MESMO código nas três tentativas abaixo (o do passo seguinte): calculado uma vez, para a virada dos 30 s não separar o uso do reuso.
+  const usedCode = totp.totpAtStep(secret, step() + 1);
+  const good = await d1.post('/api/auth/login/2fa', { challenge: l1.data.challenge, code: usedCode });
   check('código certo abre a sessão', good.status === 200 && good.data.admin?.email === email && good.data.admin.two_factor === true && d1.jar.has('copocheio_admin'), good.data);
   check('agora o painel responde', (await d1.get('/api/admin/dashboard')).status === 200);
-  check('o desafio foi consumido (não dá para usar de novo)', (await fresh().post('/api/auth/login/2fa', { challenge: l1.data.challenge, code: totp.totpAtStep(secret, step() + 1) })).status === 401);
+  check('o desafio foi consumido (não dá para usar de novo)', (await fresh().post('/api/auth/login/2fa', { challenge: l1.data.challenge, code: usedCode })).status === 401);
 
   // O mesmo código não vale duas vezes (anti-repetição)
   const d2 = fresh();
-  const l2 = await d2.post('/api/auth/login', { email, password: STRONG });
-  const replay = await d2.post('/api/auth/login/2fa', { challenge: l2.data.challenge, code: totp.totpAtStep(secret, step() + 1) });
+  const l2 = await loginAdmin(d2, { email, password: STRONG });
+  const replay = await d2.post('/api/auth/login/2fa', { challenge: l2.data.challenge, code: usedCode });
   check('repetir um código já usado é recusado', replay.status === 401 && replay.data.code === 'invalid_code', replay.data);
 
   // 5 erros matam o desafio
   const d3 = fresh();
-  const l3 = await d3.post('/api/auth/login', { email, password: STRONG });
+  const l3 = await loginAdmin(d3, { email, password: STRONG });
   const tries = [];
   for (let i = 0; i < 5; i++) tries.push((await d3.post('/api/auth/login/2fa', { challenge: l3.data.challenge, code: '111111' })).status);
   const afterFive = await d3.post('/api/auth/login/2fa', { challenge: l3.data.challenge, code: totp.totpAtStep(secret, step() + 1) });
   check('depois de 5 códigos errados o desafio morre, mesmo com o código certo', tries.every((s) => s === 401) && afterFive.status === 401 && afterFive.data.code === 'challenge_expired', { tries, afterFive: afterFive.data });
   // Rajada simultânea no mesmo desafio: nunca mais de 5 conferências
   const d4 = fresh();
-  const l4 = await d4.post('/api/auth/login', { email, password: STRONG });
+  const l4 = await loginAdmin(d4, { email, password: STRONG });
   const burst = await Promise.all(Array.from({ length: 20 }, () => d4.post('/api/auth/login/2fa', { challenge: l4.data.challenge, code: '222222' })));
   check('20 códigos simultâneos no mesmo desafio: só 5 são conferidos', burst.filter((r) => r.data?.code === 'invalid_code').length === 5 && burst.filter((r) => r.data?.code === 'challenge_expired').length === 15, burst.map((r) => r.data?.code).join(','));
 
   // Código de recuperação: vale uma vez
   const d5 = fresh();
-  const l5 = await d5.post('/api/auth/login', { email, password: STRONG });
+  const l5 = await loginAdmin(d5, { email, password: STRONG });
   const rec = await d5.post('/api/auth/login/2fa', { challenge: l5.data.challenge, code: recovery[0].toLowerCase() });
   check('código de recuperação (em minúsculas) abre a sessão e informa quantos sobram', rec.status === 200 && rec.data.recovery_codes_left === 7, rec.data);
   const d6 = fresh();
-  const l6 = await d6.post('/api/auth/login', { email, password: STRONG });
+  const l6 = await loginAdmin(d6, { email, password: STRONG });
   check('o mesmo código de recuperação não vale de novo', (await d6.post('/api/auth/login/2fa', { challenge: l6.data.challenge, code: recovery[0] })).status === 401);
   check('outro código de recuperação ainda vale', (await d6.post('/api/auth/login/2fa', { challenge: l6.data.challenge, code: recovery[1] })).status === 200);
 
@@ -174,7 +176,7 @@ section('4. SEG-02: verificação em duas etapas (TOTP + códigos de recuperaç�
   const regen = await d1.post('/api/auth/2fa/recovery-codes', { password: STRONG, code: totp.totpAtStep(secret, step()) });
   check('gera 8 códigos novos', regen.status === 200 && regen.data.recovery_codes.length === 8 && !regen.data.recovery_codes.includes(recovery[3]), regen.data);
   const dOld = fresh();
-  const lOld = await dOld.post('/api/auth/login', { email, password: STRONG });
+  const lOld = await loginAdmin(dOld, { email, password: STRONG });
   check('os códigos antigos deixaram de valer', (await dOld.post('/api/auth/login/2fa', { challenge: lOld.data.challenge, code: recovery[3] })).status === 401);
 
   const disableNoPwd = await d1.post('/api/auth/2fa/disable', { password: 'errada!errada1', code: regen.data.recovery_codes[0] });
@@ -183,7 +185,7 @@ section('4. SEG-02: verificação em duas etapas (TOTP + códigos de recuperaç�
   check('...e um código válido', disableNoCode.status === 400);
   const disable = await d1.post('/api/auth/2fa/disable', { password: STRONG, code: regen.data.recovery_codes[0] });
   check('com senha + código de recuperação desativa', disable.status === 200 && disable.data.enabled === false, disable.data);
-  check('depois de desativada, o login volta a ser só senha', (await fresh().post('/api/auth/login', { email, password: STRONG })).data.admin?.email === email);
+  check('depois de desativada, o login volta a ser só senha', (await loginAdmin(fresh(), { email, password: STRONG })).data.admin?.email === email);
   check('e a chave e os códigos sumiram do banco', psql(`select totp_secret is null and totp_enabled_at is null from admins where email = ${lit(email)}`) === 't' && psql(`select count(*) from admin_recovery_codes where admin_id = ${lit(admin.id)}`) === '0');
 
   // O owner desliga a de outra pessoa (perdeu o celular); admin comum não pode
@@ -249,7 +251,8 @@ async function withServer(env, fn) {
     child.kill();
   }
 }
-const prodEnv = { VERCEL: '1', VERCEL_ENV: 'production', VERCEL_URL: '', VERCEL_PROJECT_PRODUCTION_URL: '', SITE_URL: '' };
+// Sem SITE_URL nenhum e-mail pode ser montado (nem o código do login do painel): para olhar o painel nesse cenário, o teste liga o interruptor de emergência.
+const prodEnv = { VERCEL: '1', VERCEL_ENV: 'production', VERCEL_URL: '', VERCEL_PROJECT_PRODUCTION_URL: '', SITE_URL: '', ADMIN_EMAIL_CODE: 'off' };
 await withServer(prodEnv, async (base) => {
   const anon = new Client(base, '198.51.100.120');
   const health = await anon.get('/api/health');
@@ -418,7 +421,7 @@ section('10. SEG-09 / SEG-12 / SEG-10 / SEG-11: imagens, rota e informações ex
   const out = run('node', ['tests/with-neon-proxy.mjs', 'scripts/create-admin.mjs', email, 'Via Script'], { cwd: new URL('..', import.meta.url).pathname, env, encoding: 'utf8' });
   check('o script avisa que encerrou as sessões abertas', /sess/i.test(out), out);
   check('a sessão que estava aberta foi derrubada', (await sess.get('/api/admin/dashboard')).status === 401);
-  check('a senha nova entra', (await new Client(undefined, '198.51.100.141').post('/api/auth/login', { email, password: 'Script!Nova-Senha-2026' })).status === 200);
+  check('a senha nova entra', (await loginAdmin(new Client(undefined, '198.51.100.141'), { email, password: 'Script!Nova-Senha-2026' })).status === 200);
   let rejected = false;
   try {
     run('node', ['tests/with-neon-proxy.mjs', 'scripts/create-admin.mjs', 'curta@copocheio.local', 'Curta'], { cwd: new URL('..', import.meta.url).pathname, env: { ...env, ADMIN_PASSWORD: '12345678' }, encoding: 'utf8', stdio: 'pipe' });

@@ -2,11 +2,29 @@
 //
 // Fluxo do login:
 //  1. e-mail + senha. Cada tentativa é RESERVADA no banco antes de conferir a senha (contador atômico), então tentativas simultâneas
-//     não furam o limite. Se a conta tem verificação em duas etapas, a resposta é { two_factor: true, challenge } e ainda não há sessão;
-//  2. código de 6 dígitos do aplicativo (ou um código de recuperação) em /api/auth/login/2fa, que só aceita o desafio recém-criado.
+//     não furam o limite. Com a senha certa NÃO há sessão: o servidor manda um código de 6 dígitos para o e-mail da conta e responde
+//     202 { status: "code_required" } (e um cookie secreto que prende a tentativa a este navegador);
+//  2. código de 6 dígitos do e-mail em /api/auth/login/code (vale 5 min, uso único, 5 erros). Acertando, entra; se a conta também usa o
+//     aplicativo autenticador, a resposta é { two_factor: true, challenge } e ainda não há sessão;
+//  3. (só para contas com verificação em duas etapas) código do aplicativo, ou um código de recuperação, em /api/auth/login/2fa, que só
+//     aceita o desafio recém-criado no passo 2.
+//  Interruptor de emergência: ADMIN_EMAIL_CODE=off pula o passo do e-mail (volta ao fluxo antigo: senha e, se a conta tem, o aplicativo).
 import { randomBytes } from 'node:crypto';
 import { audit } from '../audit.js';
 import { finishAdminLogin, knownDevice } from '../adminAccess.js';
+import {
+  ADMIN_CODE_MINUTES,
+  ADMIN_CODE_TRY_BUCKET,
+  adminChallengeHash,
+  adminEmailCodeEnabled,
+  checkAdminCode,
+  clearAdminLoginCookie,
+  cleanCode as cleanAdminCode,
+  expiredAdminChallenge,
+  resendAdminCode,
+  startAdminChallenge,
+} from '../adminLoginCode.js';
+import { maskEmail } from '../emailAddress.js';
 import {
   adminFromRequest,
   checkNewPassword,
@@ -33,6 +51,14 @@ const MAX_CODE_TRIES = 5;
 const TOO_MANY = 'Muitas tentativas de login. Aguarde alguns minutos e tente de novo.';
 
 type LoginRow = Admin & { password_hash: string; active: boolean; totp_enabled_at: string | null; device_known: boolean };
+
+// Desafio do aplicativo autenticador (a etapa seguinte, para quem tem a verificação em duas etapas): vale 5 min e 5 erros.
+async function openTotpChallenge(adminId: string): Promise<{ two_factor: true; challenge: string; expires_in: number }> {
+  const challenge = randomBytes(32).toString('base64url');
+  await query(`delete from admin_login_challenges where admin_id = $1 and (expires_at < now() or attempts >= $2)`, [adminId, MAX_CODE_TRIES]);
+  await query(`insert into admin_login_challenges (token_hash, admin_id, expires_at) values ($1, $2, now() + make_interval(mins => $3))`, [sha256(challenge), adminId, CHALLENGE_MINUTES]);
+  return { two_factor: true, challenge, expires_in: CHALLENGE_MINUTES * 60 };
+}
 
 export function registerSession(r: Router) {
   r.post('/api/auth/login', 'public', async (ctx) => {
@@ -65,13 +91,51 @@ export function registerSession(r: Router) {
     await Promise.all([refund('login-pair', `${email}|${ctx.ip}`), refund('login-ip', ctx.ip), known ? undefined : refund('login-email', email)]);
 
     const admin: Admin = { id: row.id, name: row.name, email: row.email, role: row.role, two_factor: Boolean(row.totp_enabled_at) };
-    if (row.totp_enabled_at) {
-      const challenge = randomBytes(32).toString('base64url');
-      await query(`delete from admin_login_challenges where admin_id = $1 and (expires_at < now() or attempts >= $2)`, [row.id, MAX_CODE_TRIES]);
-      await query(`insert into admin_login_challenges (token_hash, admin_id, expires_at) values ($1, $2, now() + make_interval(mins => $3))`, [sha256(challenge), row.id, CHALLENGE_MINUTES]);
-      return json({ two_factor: true, challenge, expires_in: CHALLENGE_MINUTES * 60 });
+
+    // Senha certa e conta ativa: AINDA SEM SESSÃO. O servidor manda um código de 6 dígitos para o e-mail da conta e só abre a sessão quando ele
+    // voltar certo, do mesmo navegador (POST /api/auth/login/code). Quem erra a senha nunca chega aqui: nenhum e-mail sai para quem não sabe a senha.
+    if (adminEmailCodeEnabled()) {
+      const started = await startAdminChallenge(ctx.req, ctx.ip, row);
+      return json(
+        { status: 'code_required', email_masked: maskEmail(row.email), resend_in: started.resendIn, code_minutes: ADMIN_CODE_MINUTES, expires_in: started.expiresIn },
+        202,
+        started.cookie ? { 'set-cookie': started.cookie } : {},
+      );
     }
+    console.error(JSON.stringify({ level: 'warn', msg: '[painel] ADMIN_EMAIL_CODE=off: o código por e-mail do login do painel está DESLIGADO' }));
+    if (row.totp_enabled_at) return json(await openTotpChallenge(row.id));
     return finishAdminLogin(ctx, admin, { deviceKnown: known, method: 'password' });
+  });
+
+  // Segundo passo do login: o código de 6 dígitos que chegou no e-mail da conta. Só vale vindo do navegador que digitou a senha (cookie do desafio).
+  r.post('/api/auth/login/code', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    const code = cleanAdminCode(body.code);
+    if (!code) throw new HttpError(400, 'Digite os 6 dígitos do código que enviamos por e-mail.', { code: 'invalid_code_format' });
+    const nonceHash = adminChallengeHash(ctx.req);
+    if (!nonceHash) throw expiredAdminChallenge();
+    // A vaga é reservada ANTES de conferir (atômico) e devolvida se o código estava certo. Além disso o banco conta 5 erros por código.
+    await reserve(ADMIN_CODE_TRY_BUCKET, ctx.ip, WINDOW, 30, 'Muitas tentativas incorretas. Aguarde alguns minutos e tente de novo.', 'too_many_attempts');
+    const checked = await checkAdminCode(nonceHash, code);
+    if (checked.result !== 'ok') {
+      if (checked.result === 'locked') {
+        throw new HttpError(400, 'Muitas tentativas incorretas com este código. Informe o e-mail e a senha de novo para receber um novo código.', { code: 'code_locked' }, { 'set-cookie': clearAdminLoginCookie(ctx.req) });
+      }
+      throw new HttpError(400, 'Código incorreto ou expirado. Confira os 6 dígitos ou peça um novo código.', { code: 'invalid_code' });
+    }
+    await refund(ADMIN_CODE_TRY_BUCKET, ctx.ip);
+    const admin = await one<Admin & { active: boolean; totp_enabled_at: string | null }>('select id, name, email, role, active, totp_enabled_at from admins where id = $1', [checked.admin_id]);
+    if (!admin || !admin.active) throw expiredAdminChallenge();
+    // Conta com o aplicativo autenticador: o código do e-mail NÃO o substitui; ainda falta o código do aplicativo (e só este desafio o libera).
+    if (admin.totp_enabled_at) return json(await openTotpChallenge(admin.id), 200, { 'set-cookie': clearAdminLoginCookie(ctx.req) });
+    return finishAdminLogin(ctx, { ...admin, two_factor: false }, { deviceKnown: await knownDevice(ctx.req, admin.id), method: 'email', extraCookies: [clearAdminLoginCookie(ctx.req)] });
+  });
+
+  // "Reenviar código" na tela do código (mesma tentativa de login): espera de 60 s, no máximo 4 envios por tentativa e 8 por hora por conta.
+  r.post('/api/auth/login/resend', 'public', async (ctx) => {
+    await readJson(ctx.req, 1024);
+    const sent = await resendAdminCode(ctx.req, ctx.ip);
+    return json({ ok: true, resend_in: sent.resendIn, code_minutes: ADMIN_CODE_MINUTES, expires_in: sent.expiresIn });
   });
 
   // Segunda etapa: o desafio de /login + o código de 6 dígitos do aplicativo (ou um código de recuperação).
@@ -119,7 +183,7 @@ export function registerSession(r: Router) {
     if (method === 'recovery') {
       recoveryLeft = (await one<{ n: number }>('select count(*) as n from admin_recovery_codes where admin_id = $1 and used_at is null', [admin.id]))?.n ?? 0;
     }
-    return finishAdminLogin(ctx, { ...admin, two_factor: true }, { deviceKnown: await knownDevice(ctx.req, admin.id), method, recoveryLeft });
+    return finishAdminLogin(ctx, { ...admin, two_factor: true }, { deviceKnown: await knownDevice(ctx.req, admin.id), method, recoveryLeft, emailCode: adminEmailCodeEnabled() });
   });
 
   r.post('/api/auth/logout', 'public', async (ctx) => {

@@ -55,8 +55,9 @@ export class Client {
   patch = (p, b, o) => this.req('PATCH', p, b, o);
   put = (p, b, o) => this.req('PUT', p, b, o);
   del = (p, b, o) => this.req('DELETE', p, b, o);
+  // Login do PAINEL em dois passos (e-mail + senha → código enviado por e-mail → sessão): usa a caixa simulada do servidor de teste.
   async login(email = 'dono@copocheio.local', password = 'senha-forte-123') {
-    const r = await this.post('/api/auth/login', { email, password });
+    const r = await loginAdmin(this, { email, password });
     if (r.status !== 200) throw new Error(`login falhou: ${r.status} ${JSON.stringify(r.data)}`);
     return r;
   }
@@ -83,8 +84,18 @@ export function summary() {
 }
 
 // ---- E-mail de verificação (servidor SMTP de mentira do servidor de teste) -----------------------------
-export async function mailsTo(email) {
-  return (await fetch(`${BASE}/__mail?to=${encodeURIComponent(email.toLowerCase())}`)).json();
+// `base`: o servidor de teste que recebeu o pedido (cada servidor tem a sua caixa simulada). Reconexão automática: depois de o servidor ser reiniciado, a
+// primeira conexão reaproveitada pode estar morta.
+export async function mailsTo(email, base) {
+  // `.map(mailsTo)` passa o índice como 2º argumento: só vale `base` se for um endereço.
+  if (typeof base !== 'string') base = BASE;
+  const url = `${base}/__mail?to=${encodeURIComponent(email.toLowerCase())}`;
+  try {
+    return await (await fetch(url)).json();
+  } catch (error) {
+    if (!['UND_ERR_SOCKET', 'ECONNRESET'].includes(error.cause?.code)) throw error;
+    return (await fetch(url)).json();
+  }
 }
 export async function clearMail() {
   await fetch(`${BASE}/__mail`, { method: 'DELETE' });
@@ -107,18 +118,55 @@ export async function mailMode(failure = null, delayMs = 0) {
 // que o servidor respondeu. Serve para trocar, sem mudar o resto do teste, qualquer `client.post('/api/account/login', { email, password })`.
 export async function loginCustomer(client, body, opts) {
   const email = String(body?.email ?? '').trim();
-  const before = email ? (await mailsTo(email)).length : 0;
+  const before = email ? (await mailsTo(email, client.base)).length : 0;
   const first = await client.post('/api/account/login', body, opts);
   if (first.status !== 202 || first.data?.status !== 'code_required') return first;
   let code;
   for (let i = 0; i < 50 && !code; i++) {
-    const list = await mailsTo(email);
+    const list = await mailsTo(email, client.base);
     if (list.length > before) code = codeFrom(list[list.length - 1]);
     else await new Promise((r) => setTimeout(r, 100));
   }
   // Pedido repetido logo em seguida pelo mesmo navegador: vale o código que já tinha sido enviado (nenhum e-mail novo).
-  if (!code) code = await lastCode(email);
+  if (!code) code = codeFrom((await mailsTo(email, client.base)).at(-1));
   return client.post('/api/account/login/code', { code });
+}
+
+// Onde o teste lê o código do login do painel: por padrão, a caixa simulada do servidor de teste. Quem sobe o servidor com outro transporte (a API da Resend
+// simulada, por exemplo) troca o leitor com `setAdminCodeReader(async (email, client) => código)`.
+let adminCodeReader = null;
+export const setAdminCodeReader = (reader) => {
+  adminCodeReader = reader;
+};
+
+// Login do PAINEL em DOIS passos, como o do cliente: devolve a resposta final (a do código: 200 com o administrador e o cookie da sessão); se o primeiro passo
+// falhar (senha errada, conta desativada, limite, e-mail fora do ar...), devolve a resposta dele. Para contas com o aplicativo autenticador (TOTP) a resposta final
+// é { two_factor: true, challenge } (o terceiro passo é do teste). Troca, sem mudar o resto do teste, qualquer `client.post('/api/auth/login', { email, password })`.
+// O e-mail do código diz de que rede veio o pedido: com vários logins da MESMA conta ao mesmo tempo (clientes com IPs diferentes), cada um acha o seu.
+export async function loginAdmin(client, body, opts) {
+  const email = String(body?.email ?? '').trim();
+  const sinkMails = async () => {
+    try {
+      return (await mailsTo(email, client.base)).filter((m) => /código de acesso ao painel/.test(m.subject));
+    } catch {
+      return []; // servidor sem caixa simulada (sem e-mail configurado): o primeiro passo responde sozinho
+    }
+  };
+  const before = adminCodeReader || !email ? 0 : (await sinkMails()).length;
+  const first = await client.post('/api/auth/login', body, opts);
+  if (first.status !== 202 || first.data?.status !== 'code_required') return first;
+  let code;
+  if (adminCodeReader) code = await adminCodeReader(email, client);
+  else {
+    for (let i = 0; i < 50 && !code; i++) {
+      const fresh = (await sinkMails()).slice(before);
+      if (fresh.length) code = codeFrom(fresh.find((m) => client.ip && String(m.text).includes(client.ip)) ?? fresh.at(-1));
+      else await new Promise((r) => setTimeout(r, 100));
+    }
+    // Pedido repetido logo em seguida pelo mesmo navegador: vale o código que já tinha sido enviado (nenhum e-mail novo).
+    if (!code) code = codeFrom((await sinkMails()).at(-1));
+  }
+  return client.post('/api/auth/login/code', { code });
 }
 
 // Cadastra, confirma o e-mail com o código recebido e entra. Devolve a resposta do login.

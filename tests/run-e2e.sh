@@ -37,9 +37,10 @@ run() { # nome [variável=valor ...]
   if [ $code -ne 0 ]; then failed=1; show_failure "$name" 10; fi
 }
 if [ -n "$1" ]; then run "$1" X=1; else
-  for t in e2e e2e-track e2e-verify e2e-recover e2e-cover e2e-whatsapp e2e-hardening e2e-ice e2e-pix e2e-card e2e-account e2e-combo e2e-info e2e-login e2e-logincode e2e-emails; do run "$t" X=1; done
+  for t in e2e e2e-track e2e-verify e2e-recover e2e-cover e2e-whatsapp e2e-hardening e2e-ice e2e-pix e2e-card e2e-account e2e-combo e2e-info e2e-login e2e-logincode e2e-adminlogin e2e-emails; do run "$t" X=1; done
   bash tests/fresh.sh >/dev/null 2>&1
-  MAIL_MODE=none bash tests/serve.sh >/dev/null 2>&1
+  # Sem e-mail configurado o código do login do painel não pode ser enviado: este arquivo liga o interruptor de emergência (ADMIN_EMAIL_CODE=off).
+  MAIL_MODE=none ADMIN_EMAIL_CODE=off bash tests/serve.sh >/dev/null 2>&1
   node tests/e2e-mail-off.cjs > "$OUT/e2e-mail-off.txt" 2>&1; code=$?
   summary+="e2e-mail-off (saída $code): $(grep -E '^(OK|FALHOU|CRASH)' "$OUT/e2e-mail-off.txt" | tail -1)"$'\n'
   [ $code -ne 0 ] && failed=1

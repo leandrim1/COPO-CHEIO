@@ -5,7 +5,7 @@
 // • Registra a entrada no histórico de atividades.
 import { randomBytes } from 'node:crypto';
 import { audit } from './audit.js';
-import { DEVICE_COOKIE, createSession, deviceCookie, readCookie, sessionCookie, sha256 } from './auth.js';
+import { DEVICE_COOKIE, createSession, destroySession, deviceCookie, readCookie, sessionCookie, sha256 } from './auth.js';
 import { one, query } from './db.js';
 import { json } from './http.js';
 import type { Admin, Ctx } from './http.js';
@@ -69,10 +69,17 @@ async function notifyNewDevice(ctx: Pick<Ctx, 'req' | 'ip'>, admin: Admin, devic
   await Promise.race([send(), new Promise<void>((resolve) => setTimeout(resolve, NOTICE_TIMEOUT_MS))]);
 }
 
-export async function finishAdminLogin(ctx: Pick<Ctx, 'req' | 'ip'>, admin: Admin, opts: { deviceKnown: boolean; method?: 'password' | 'totp' | 'recovery'; recoveryLeft?: number }): Promise<Response> {
+export async function finishAdminLogin(
+  ctx: Pick<Ctx, 'req' | 'ip'>,
+  admin: Admin,
+  opts: { deviceKnown: boolean; method?: 'password' | 'email' | 'totp' | 'recovery'; recoveryLeft?: number; emailCode?: boolean; extraCookies?: string[] },
+): Promise<Response> {
+  // O identificador da sessão é SEMPRE novo: a sessão que este navegador já tinha (a mesma ou de outra conta) é encerrada antes de abrir a nova.
+  await destroySession(ctx.req);
   const { token, maxAge } = await createSession(admin.id);
   await query('update admins set last_login_at = now() where id = $1', [admin.id]);
-  const cookies = [sessionCookie(ctx.req, token, maxAge)];
+  // A sessão vai PRIMEIRO (os testes e os clientes simples guardam só o primeiro cookie da resposta).
+  const cookies = [sessionCookie(ctx.req, token, maxAge), ...(opts.extraCookies ?? [])];
   const device = describeDevice(ctx.req.headers.get('user-agent'));
 
   let isNewDevice = false;
@@ -92,7 +99,9 @@ export async function finishAdminLogin(ctx: Pick<Ctx, 'req' | 'ip'>, admin: Admi
     isNewDevice = (before?.n ?? 0) > 0;
   }
 
-  const how = opts.method === 'recovery' ? ' com um código de recuperação' : opts.method === 'totp' ? ' com verificação em duas etapas' : '';
+  const second = opts.method === 'recovery' ? ' com um código de recuperação' : opts.method === 'totp' ? ' com verificação em duas etapas' : '';
+  const byMail = opts.method === 'email' || opts.emailCode;
+  const how = byMail ? (second ? `${second} e código por e-mail` : ' com código por e-mail') : second;
   await audit(
     { admin, ip: ctx.ip },
     {

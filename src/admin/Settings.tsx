@@ -527,7 +527,7 @@ function PanelTab() {
 
 // ---- Estado do sistema --------------------------------------------------------------------------
 
-type Health = { database: 'ok' | 'missing' | 'error'; blob: 'ok' | 'missing'; mail: 'ok' | 'missing'; site_url: 'ok' | 'missing'; missing: string[] };
+type Health = { database: 'ok' | 'missing' | 'error'; blob: 'ok' | 'missing'; mail: 'ok' | 'missing'; site_url: 'ok' | 'missing'; missing: string[]; admin_login_code?: 'on' | 'off' };
 
 // Mostra se as peças de que o site depende estão funcionando (banco, imagens, e-mail, endereço do site) e, se faltar alguma
 // configuração, qual (só o nome da variável: valores e senhas nunca aparecem).
@@ -556,6 +556,8 @@ function SystemStatusCard() {
         { label: 'Armazenamento de imagens', hint: 'Fotos de produtos, banners e logo.', state: health.blob },
         { label: 'Envio de e-mail', hint: 'Verificação de conta, recuperação de senha e avisos.', state: health.mail },
         { label: 'Endereço do site', hint: 'Usado nos links dos e-mails.', state: health.site_url },
+        // O login do painel exige um código enviado por e-mail a cada entrada. "Desligado" só existe com o interruptor de emergência (ADMIN_EMAIL_CODE=off).
+        { label: 'Código por e-mail no login do painel', hint: 'Cada entrada no painel pede o código enviado ao e-mail do administrador.', state: health.admin_login_code === 'off' ? 'off' : 'ok' },
       ]
     : [];
   return (
@@ -589,12 +591,22 @@ function SystemStatusCard() {
                   <Badge tone="red">
                     <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Sem resposta
                   </Badge>
+                ) : row.state === 'off' ? (
+                  <Badge tone="red">
+                    <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Desligado (emergência)
+                  </Badge>
                 ) : (
                   <Badge tone="amber">Não configurado</Badge>
                 )}
               </li>
             ))}
           </ul>
+          {health.admin_login_code === 'off' && (
+            <p className="mt-3 rounded-xl border border-rose-400/30 bg-rose-400/[0.08] px-3 py-2 text-sm text-rose-100">
+              O código por e-mail no login do painel está <strong>desligado</strong> pelo interruptor de emergência (<span className="font-mono">ADMIN_EMAIL_CODE=off</span> na Vercel). Conserte o envio de e-mail, remova essa
+              variável e faça um novo deploy para voltar a proteger o painel.
+            </p>
+          )}
           {health.missing.length > 0 && (
             <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] px-3 py-2 text-sm text-amber-100">
               Faltam estas configurações no servidor (variáveis de ambiente na Vercel): <strong className="font-mono">{health.missing.join(', ')}</strong>.

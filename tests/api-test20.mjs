@@ -2,7 +2,7 @@
 // SPF/DKIM/DMARC no DNS, alertas (abrem, avisam o dono uma vez, se resolvem sozinhos) e permissões.
 // usage: bash tests/fresh.sh && node tests/api-test20.mjs
 import { execFileSync, execSync } from 'node:child_process';
-import { Client, check, clearMail, mailMode, mailsTo, section, summary } from './lib.mjs';
+import { Client, check, clearMail, loginAdmin, mailMode, mailsTo, section, summary } from './lib.mjs';
 
 const P = ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-v', 'ON_ERROR_STOP=1'];
 const psql = (sql) => execFileSync('psql', [...P, '-c', sql], { encoding: 'utf8' }).trim();
@@ -207,7 +207,7 @@ section('4. Teto diário de envio (EMAIL_DAILY_LIMIT) e remetente de e-mail grat
   wipe();
 
   psql(`delete from email_messages where kind = 'deliverability_alert'`);
-  serve({ MAIL_MODE: 'env', SMTP_HOST: '127.0.0.1', SMTP_PORT: '2525', SMTP_USER: 'apikey', SMTP_PASS: 'x', MAIL_FROM: 'Minha Loja <minhaloja@gmail.com>' });
+  serve({ MAIL_MODE: 'env', SMTP_HOST: '127.0.0.1', SMTP_PORT: '2525', SMTP_USER: 'apikey', SMTP_PASS: 'x', MAIL_FROM: 'Minha Loja <minhaloja@gmail.com>', ADMIN_EMAIL_CODE: 'off' });
   const g = new Client(undefined, '198.51.100.54');
   await g.login();
   const free = (await g.get('/api/admin/emails/overview?refresh=1')).data;
@@ -267,8 +267,13 @@ section('5. "Enviar exemplos para mim": um exemplo de cada modelo, só para o ow
   await new Client(undefined, '198.51.100.57').login();
   check('com 28 exemplos + 30 e-mails de verdade para o dono, o aviso "novo acesso ao painel" AINDA sai (exemplos não entram no teto de 40)', await until(() => lastNotice()?.status === 'accepted'), lastNotice());
   real(10);
-  await new Client(undefined, '198.51.100.58').login();
-  check('e com 40 e-mails de verdade o teto geral continua valendo (o aviso é barrado)', await until(() => lastNotice()?.status === 'blocked' && lastNotice()?.block_reason === 'recipient_limit'), lastNotice());
+  // Com 40 e-mails de verdade o teto geral continua valendo, e vale também para o código de acesso ao painel: sem e-mail NÃO há sessão (nada de entrar "por falta
+  // de e-mail"), e o aviso de "novo acesso" nem chega a existir. A tela mostra o motivo; passado o dia (ou pelo interruptor de emergência) volta ao normal.
+  await clearMail();
+  const capped = new Client(undefined, '198.51.100.58');
+  const cappedLogin = await loginAdmin(capped, { email: OWNER, password: 'senha-forte-123' });
+  check('e com 40 e-mails de verdade o teto geral continua valendo: o código do painel é barrado (429, sem sessão)', cappedLogin.status === 429 && cappedLogin.data?.code === 'rate_limited' && !capped.cookie.includes('copocheio_admin='), [cappedLogin.status, cappedLogin.data]);
+  check('o código barrado fica registrado como "teto por endereço" e nenhum e-mail sai', Number(psql(`select count(*) from email_messages where kind = 'admin_login_code' and status = 'blocked' and block_reason = 'recipient_limit' and recipient_email = '${OWNER}'`)) === 1 && (await mailsTo(OWNER)).length === 0, psql(`select status, block_reason from email_messages where kind = 'admin_login_code' order by created_at desc limit 2`));
   wipe();
 }
 

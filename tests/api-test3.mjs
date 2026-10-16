@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { Client, check, section, summary } from './lib.mjs';
+import { Client, check, section, summary, loginAdmin } from './lib.mjs';
 
 const anon = new Client();
 const owner = new Client();
@@ -34,8 +34,8 @@ let staff;
   check('trocar a própria senha', change.status === 200);
   check('sessão atual continua', (await s.get('/api/admin/orders')).status === 200);
   check('outras sessões da conta são encerradas', (await other.get('/api/admin/orders')).status === 401);
-  check('senha antiga não vale mais', (await new Client().post('/api/auth/login', { email: 'atendente@copocheio.local', password: 'Caixa#Segura-2026' })).status === 401);
-  check('senha nova vale', (await new Client().post('/api/auth/login', { email: 'atendente@copocheio.local', password: 'nova-senha-123' })).status === 200);
+  check('senha antiga não vale mais', (await loginAdmin(new Client(), { email: 'atendente@copocheio.local', password: 'Caixa#Segura-2026' })).status === 401);
+  check('senha nova vale', (await loginAdmin(new Client(), { email: 'atendente@copocheio.local', password: 'nova-senha-123' })).status === 200);
 
   // owner redefine a senha → sessões derrubadas
   const live = new Client();
@@ -48,7 +48,7 @@ let staff;
   const off = await owner.patch(`/api/admin/admins/${staff.id}`, { active: false });
   check('owner desativa administrador', off.data.admin.active === false);
   const sOff = new Client();
-  check('desativado não entra', (await sOff.post('/api/auth/login', { email: 'atendente@copocheio.local', password: 'redefinida-123' })).status === 401);
+  check('desativado não entra', (await loginAdmin(sOff, { email: 'atendente@copocheio.local', password: 'redefinida-123' })).status === 401);
   await owner.patch(`/api/admin/admins/${staff.id}`, { active: true });
   const sBack = new Client();
   await sBack.login('atendente@copocheio.local', 'redefinida-123');
@@ -115,7 +115,7 @@ section('Sem variáveis de ambiente: mensagem exata');
   check('/api/site sem DATABASE_URL → 503 dizendo qual variável falta', site.status === 503 && site.data.code === 'not_configured' && site.data.missing?.join() === 'DATABASE_URL' && /DATABASE_URL/.test(site.data.error), site.data);
   const health = await bare.get('/api/health');
   check('health sem variáveis', health.data.database === 'missing' && health.data.blob === 'missing', health.data);
-  const login = await bare.post('/api/auth/login', { email: 'a@b.com', password: '12345678' });
+  const login = await loginAdmin(bare, { email: 'a@b.com', password: '12345678' });
   check('login sem DATABASE_URL → 503', login.status === 503 && login.data.missing?.[0] === 'DATABASE_URL', login.data);
   child.kill();
 }
@@ -134,7 +134,8 @@ section('Blob sem token ou privado');
     const { default: handler } = await import('./tests/build/api-noblob.mjs');
     import('node:http').then(({ default: http }) => http.createServer(handler).listen(4196, '127.0.0.1'));
   `;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: new URL('..', import.meta.url).pathname, env: { PATH: process.env.PATH, HOME: process.env.HOME }, stdio: 'ignore' });
+  // Este servidor não tem e-mail configurado: o painel só abre com o interruptor de emergência (sem ele, o código do login não poderia ser enviado).
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: new URL('..', import.meta.url).pathname, env: { PATH: process.env.PATH, HOME: process.env.HOME, ADMIN_EMAIL_CODE: 'off' }, stdio: 'ignore' });
   await new Promise((r) => setTimeout(r, 3000));
   const c = new Client('http://127.0.0.1:4196');
   await c.login();

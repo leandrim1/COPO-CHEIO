@@ -83,8 +83,9 @@ async function open(page, url = '/bebidas') {
 }
 const focusedInDialog = (page) => page.evaluate(() => !!document.querySelector('[data-store-info]')?.contains(document.activeElement));
 
+const { adminLoginViaApi } = require('./e2e-code.cjs');
 (async () => {
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const saved = await setStore({});
   ok(saved.status === 200, 'o painel (API) grava os horários de teste', saved.data);
   // Cardápio com bastante coisa, para a página rolar.

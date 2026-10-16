@@ -53,7 +53,7 @@ Endereço que não existe mostra "Página não encontrada" (e responde `404` par
 
 | Painel (só administradores)                    | O que faz                                                   |
 | ---------------------------------------------- | ----------------------------------------------------------- |
-| `/admin/login`                                 | Entrar com e-mail e senha (e o código do aplicativo, se a conta usa verificação em duas etapas) |
+| `/admin/login`                                 | Entrar com e-mail e senha **e o código de 6 dígitos enviado ao e-mail da conta** (mais o código do aplicativo, se a conta usa verificação em duas etapas) |
 | `/admin/dashboard`                             | Pedidos e faturamento do dia/semana/mês, gráficos, recentes |
 | `/admin/pedidos` · `/admin/pedidos/:numero`    | Pedidos ao vivo, filtros (status, data, conta/visitante), busca, status, histórico, link de acompanhamento, impressão |
 | `/admin/clientes`                              | Contas de clientes (confirmadas / aguardando confirmação do e-mail), estado do envio de e-mails e e-mail de teste, link de nova senha, desativar, excluir; **pedidos de privacidade (LGPD)** e anonimização (owner) |
@@ -358,6 +358,47 @@ checkout. Comprar como visitante continua sempre possível.
   - O e-mail do código é o tipo `login_code` (transacional, síncrono, nunca guardado nem reenviado: só o nome do tipo vai para o registro de e-mails). O painel (`/admin/login`)
     não muda: continua com senha e, se a conta usar, o código do aplicativo (2FA).
 
+### Login do painel com código por e-mail
+
+**Fluxo** (tela `/admin/login`, o mesmo visual de sempre):
+
+1. *E-mail e senha* → `POST /api/auth/login`. O servidor confere a senha, se a conta está **ativa** e o papel (owner ou admin). Quem erra a senha, não existe, está desativado ou
+   é cliente recebe sempre o **mesmo** `401 "E-mail ou senha incorretos."` e **nenhum e-mail sai** (ninguém enche a caixa de um administrador sem saber a senha dele).
+2. Com a senha certa **ainda não há sessão**: o servidor manda um código de 6 dígitos para o e-mail da conta e responde `202 { status: "code_required", email_masked, resend_in: 60,
+   expires_in: 300 }` mais um cookie secreto (`copocheio_admin_login`, `HttpOnly`, `SameSite=Strict`, 15 min) que prende a tentativa a **este navegador**. A tela mostra o e-mail
+   mascarado (`a***@dominio.com`), seis caixas para o código, o contador de validade, "Reenviar código" (liberado após 60 s) e "Voltar".
+3. *Código* → `POST /api/auth/login/code { code }`: com o código certo, vindo do mesmo navegador, a sessão é criada (`200 { admin }`). Se a conta também usa o aplicativo
+   autenticador, a resposta é `{ two_factor: true, challenge }` e o **código do aplicativo** é a 3ª etapa (`/api/auth/login/2fa`), que só aceita o desafio criado depois do e-mail.
+4. *Reenviar* → `POST /api/auth/login/resend`.
+
+**Regras do código** (todas conferidas **dentro do banco**, então pedidos simultâneos não furam nenhum limite):
+
+| Regra | Valor |
+| ----- | ----- |
+| Validade | **5 minutos**, **uso único**; a tentativa toda vale 15 min |
+| Erros | **5** por código; no 5º a tentativa inteira morre (é preciso informar a senha de novo) |
+| Reenvio | só após **60 s**; no máximo **4 e-mails por tentativa**; o código novo substitui o anterior só depois que o e-mail novo realmente sai |
+| Teto por conta | **8 pedidos de código por hora que NÃO terminam em entrada** (quem entra de verdade não é limitado) |
+| Por rede | 30 e-mails de código por hora e 30 tentativas de código a cada 15 min |
+| Armazenamento | o banco guarda **só hashes**: SHA-256 do cookie da tentativa e HMAC do código (chave que só o servidor conhece, derivada da `DATABASE_URL`); o código nunca é gravado, nem aparece no registro de e-mails, em log, na URL ou em resposta da API |
+| Amarrado ao navegador | quem só leu o e-mail (ou só sabe a senha) não entra: o código só vale com o cookie do navegador que digitou a senha |
+| Troca de senha | trocar a senha da conta (por qualquer caminho), desativá-la ou excluí-la derruba a tentativa aberta |
+
+**Se o e-mail não puder ser enviado, ninguém entra**: sem SMTP configurado a resposta é `503 mail_not_configured`; com o servidor de e-mail fora do ar, `503 mail_failed` ("tente de novo em
+instantes"). Nunca se abre a sessão "por falta de e-mail". A tentativa pode ser repetida na hora (o desafio que não chegou a ser enviado é descartado).
+
+**Interruptor de emergência (`ADMIN_EMAIL_CODE=off`)**: se o e-mail da loja parar e **ninguém** conseguir entrar no painel, quem tem acesso às variáveis da Vercel pode criar
+`ADMIN_EMAIL_CODE=off` (escrito exatamente assim; qualquer outro valor deixa o código LIGADO) e fazer um novo deploy: o painel volta ao login antigo (senha e, se a conta usa, o
+aplicativo). Em *Configurações → Painel → Estado do sistema* aparece "Desligado (emergência)" em vermelho enquanto o interruptor estiver ligado, e `/api/admin/health` informa
+`admin_login_code: "off"`. **Conserte o e-mail, remova a variável e faça um novo deploy** assim que possível: com ela, o painel fica só com senha (e aplicativo).
+
+**E-mail de envio**: o código sai pelo mesmo serviço central de e-mails do site (`deliver()`, tipo `admin_login_code`: transacional, síncrono, nunca guardado nem reenviado). Hoje esse
+serviço usa o **SMTP do Gmail da loja** (as variáveis `SMTP_*` da seção [Confirmação do e-mail](#confirmação-do-e-mail-contas-de-clientes)); não existe integração com Google Apps Script
+neste projeto. O painel **não** envia por outro provedor.
+
+**Administrador autorizado** (quem pode receber o código): o e-mail cadastrado na conta administrativa. O primeiro owner é criado com `npm run admin:create -- seu@email.com "Seu Nome"`
+(use um e-mail que você **lê** de verdade: é para ele que o código vai); os demais, pelo owner em *Configurações → Administradores*. O e-mail de uma conta só muda pelo owner.
+
 ### Confirmação do e-mail (contas de clientes)
 
 **Regra:** uma conta só passa a valer depois que a pessoa **prova que lê a caixa de e-mail** informada. Formato válido,
@@ -595,9 +636,11 @@ para a CDN, exceto as duas listas públicas (10 s); o resto responde `Cache-Cont
 
 - **Segredos só no servidor**: `DATABASE_URL`, a credencial do Blob e a senha do e-mail existem apenas no servidor (nenhuma variável
   `VITE_`); o pacote do navegador não contém driver de banco, token nem segredo. O navegador só fala com `/api/*`.
-- **Login do painel**: e-mail e senha (scrypt); sessão = código aleatório num cookie `HttpOnly` + `SameSite=Lax` (+ `Secure` em https),
-  14 dias, guardado no Neon só como hash e conferido a cada chamada administrativa. Sair, trocar ou redefinir a senha, desativar ou
-  remover a pessoa (ou rodar `npm run admin:create` para ela) derruba as sessões. Sem cadastro público: administradores só o owner cria.
+- **Login do painel em duas etapas, a cada entrada** (migration `0024_admin_login_code.sql`): e-mail e senha (scrypt) e, **com a senha certa, um código de 6 dígitos
+  enviado ao e-mail da própria conta administrativa**; a sessão só abre com o código (veja [Login do painel com código por e-mail](#login-do-painel-com-código-por-e-mail)).
+  Sessão = código aleatório num cookie `HttpOnly` + `SameSite=Strict` (+ `Secure` em https), 14 dias, guardado no Neon só como hash e conferido a cada chamada
+  administrativa; o identificador é **renovado a cada login** (a sessão antiga do navegador morre). Sair, trocar ou redefinir a senha, desativar ou remover a pessoa (ou
+  rodar `npm run admin:create` para ela) derruba as sessões. Sem cadastro público: administradores só o owner cria (ou o script `admin:create`, com acesso ao banco).
 - **Senha forte** (painel: 10 caracteres ou mais; clientes: 8 ou mais): recusa senhas comuns (lista de senhas vazadas e palavras
   típicas, com variações como `brasil2026`), sequências (`1234567890`, `qwertyuiop`), repetições e o próprio e-mail ou nome com um
   enfeite. Vale ao trocar a senha, criar administrador, cadastrar cliente, "esqueci a senha" e no `npm run admin:create`
@@ -749,13 +792,16 @@ A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desl
 ([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
 A migration `0021_pickup_time.sql` acrescentou uma coluna opcional, `store_settings.pickup_time` (texto de até 30 letras). **Hoje o site não a usa**: a janela ⓘ da página
 Bebidas ficou só com horário de funcionamento e formas de pagamento, então a coluna fica vazia e sem efeito (pode ser apagada ou reaproveitada depois).
+A migration `0024_admin_login_code.sql` acrescentou a tabela `admin_email_challenges` e cinco funções (`begin_admin_email_challenge`, `finish_admin_email_challenge`, `begin_admin_email_resend`,
+`finish_admin_email_resend`, `verify_admin_email_code`) para o login do painel com código por e-mail. **Só acrescenta** (não toca em `admin_login_challenges`, que continua sendo o desafio
+do aplicativo autenticador): nenhuma função existente muda e nenhum dado é escrito ou apagado. Voltar o código para a versão anterior continua funcionando contra este banco.
 A migration `0023_login_code.sql` acrescentou a tabela `customer_login_challenges` e cinco funções (`begin_login_challenge`, `finish_login_challenge`, `begin_login_resend`,
 `finish_login_resend`, `verify_login_code`) para o login do cliente com código por e-mail. **Só acrescenta**: nenhuma função existente muda e nenhum dado é escrito ou
 apagado. Voltar o código para a versão anterior continua funcionando contra este banco (o login antigo só pede a senha).
 A migration `0022_ice_per_product.sql` acrescentou `products.ice_choice_required` e trocou `create_order` por uma versão idêntica à da 0020, exceto por
 ler a marca do **produto** (era a da categoria). Ela escreve **uma única linha de dados** (um `UPDATE` que marca os produtos que estavam em categorias que pediam o gelo, para o site
 não mudar no deploy); nenhum pedido, preço, estoque ou categoria é alterado. A coluna `categories.ice_choice_required` continua no banco, sem uso.
-As migrations 0009 a 0023 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0024 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir os produtos marcados (inicialmente, os dos copões) enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado

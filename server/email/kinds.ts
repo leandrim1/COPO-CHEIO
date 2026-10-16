@@ -11,6 +11,7 @@ export type KindName =
   | 'already_registered'
   | 'password_reset'
   | 'password_changed'
+  | 'admin_login_code'
   | 'admin_new_login'
   | 'admin_reset_notice'
   | 'mail_test'
@@ -65,6 +66,8 @@ export const KINDS: Record<KindName, KindDef> = {
   password_changed: { category: 'transactional', audience: 'customer', label: 'Aviso: senha alterada', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 5 },
   admin_reset_notice: { category: 'transactional', audience: 'customer', label: 'Aviso: a loja gerou link de nova senha', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 5 },
   // ---- Painel (equipe da loja) ----
+  // Código para ENTRAR NO PAINEL, a cada login (depois da senha certa). Vale 5 minutos; o servidor também limita 8 por hora por conta.
+  admin_login_code: { category: 'transactional', audience: 'staff', label: 'Código de acesso ao painel', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 25 },
   admin_new_login: { category: 'transactional', audience: 'staff', label: 'Aviso: novo acesso ao painel', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 10 },
   mail_test: { category: 'transactional', audience: 'staff', label: 'E-mail de teste do painel', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 10, test: true },
   deliverability_alert: { category: 'transactional', audience: 'staff', label: 'Alerta de entregabilidade', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 4, perRecipientDay: 3 },

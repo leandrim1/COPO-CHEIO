@@ -69,7 +69,7 @@ async function verifiedAccount(name, email, password, optIn) {
 }
 const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
 
-const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
+const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -81,7 +81,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   };
 
   // ---- preparação pela API ----
-  const ownerLogin = await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  const ownerLogin = await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' }, { cookieArg: true });
   const ownerCookie = ownerLogin.cookie;
   await api('PATCH', '/api/admin/store', { opening_hours: ALL_DAYS, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true }, ownerCookie);
   const cat = (await api('POST', '/api/admin/categories', { name: 'Cervejas' }, ownerCookie)).data.category;
@@ -180,6 +180,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   await m.fill('#login-email', 'dono@copocheio.local');
   await m.fill('#login-senha', 'senha-forte-123');
   await m.click('button[type=submit]');
+  await finishAdminLogin(m);
   await m.waitForURL('**/admin/dashboard');
   await m.goto(BASE + '/admin/emails', { waitUntil: 'networkidle' });
   await m.waitForSelector('text=E-mails e Entregabilidade');
@@ -305,6 +306,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   await d.fill('#login-email', 'dono@copocheio.local');
   await d.fill('#login-senha', 'senha-forte-123');
   await d.click('button[type=submit]');
+  await finishAdminLogin(d);
   await d.waitForURL('**/admin/dashboard');
   ok((await d.getByRole('link', { name: 'E-mails' }).count()) >= 1, 'o menu do painel tem "E-mails"');
   await d.getByRole('link', { name: 'E-mails' }).first().click();
@@ -322,6 +324,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   await tpage.fill('#login-email', 'atendente-e@copocheio.local');
   await tpage.fill('#login-senha', 'Atendente!Segura-2026');
   await tpage.click('button[type=submit]');
+  await finishAdminLogin(tpage);
   await tpage.waitForURL('**/admin/dashboard');
   await tpage.goto(BASE + '/admin/emails', { waitUntil: 'networkidle' });
   ok(await until(async () => /Como os e-mails saem/.test(await body(tpage))), 'administrador comum vê a visão geral');

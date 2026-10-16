@@ -69,6 +69,8 @@ add('confirmação com aviso de promoções', 'transactional', mt.verificationMe
 add('confirmação de teste do painel', 'transactional', mt.verificationMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', link: `${brand.siteUrl}/conta`, codeMinutes: 15, linkHours: 24, sample: true }));
 add('código para entrar na conta', 'transactional', mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 10 }));
 add('código para entrar (teste do painel)', 'transactional', mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 10, sample: true }));
+add('código de acesso ao painel', 'transactional', mt.adminLoginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 5, device: 'Chrome em Windows', ip: '203.0.113.9' }));
+add('código de acesso ao painel (teste)', 'transactional', mt.adminLoginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 5, device: 'Chrome em Windows', ip: '203.0.113.9', sample: true }));
 add('você já tem uma conta', 'transactional', mt.alreadyRegisteredMessage(brand, { to: 'a@exemplo.com', name: 'Ana', loginUrl: `${brand.siteUrl}/conta` }));
 add('nova senha (link)', 'transactional', mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/redefinir/TOKENTOKENTOKENTOKENTOKEN`, minutes: 30 }));
 add('senha alterada', 'transactional', mt.passwordChangedMessage(brand, { to: 'a@exemplo.com', name: 'Ana', loginUrl: `${brand.siteUrl}/conta`, when }));
@@ -290,6 +292,23 @@ test('taxa paga pelo cliente no e-mail do pedido: "Taxa de serviço do Pix" no P
   assert.match(card.html, /Taxa de processamento do cartão/);
   const none = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 21, total: 21 }));
   assert.doesNotMatch(none.html, /Taxa de serviço|Taxa de processamento/);
+});
+
+test('código do painel: o código está no assunto e no texto, vale 5 minutos, mostra aparelho e rede, avisa "Não foi você?" e NÃO traz botão nem link de acesso', () => {
+  const m = mt.adminLoginCodeMessage(brand, { to: 'a@exemplo.com', name: 'ana maria', code: '654321', codeMinutes: 5, device: 'Chrome em Windows', ip: '203.0.113.9' });
+  assert.match(m.subject, /^654321 é o seu código de acesso ao painel – /);
+  assert.match(m.text, /654321/);
+  assert.match(m.text, /5 minutos/);
+  assert.match(m.text, /Chrome em Windows/);
+  assert.match(m.text, /203\.0\.113\.9/);
+  assert.match(m.text, /Não foi você\?/);
+  assert.match(m.text, /uma vez/);
+  // Sem link de "entrar com um clique": o código só vale digitado na tela de login do painel, no navegador que informou a senha.
+  assert.ok(!/\/admin\/(login|entrar)\/[A-Za-z0-9_-]{10,}/.test(m.html), 'sem link com token');
+  assert.ok(!/<a [^>]*class="[^"]*button/i.test(m.html) && !/role="button"/i.test(m.html), 'sem botão');
+  const sample = mt.adminLoginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', codeMinutes: 5, device: 'Chrome em Windows', ip: '203.0.113.9', sample: true });
+  assert.match(sample.subject, /^\[Teste\] /);
+  assert.match(sample.text, /não abre nenhum acesso/);
 });
 
 test('código para entrar: o código está no assunto e no texto, vale 10 minutos, avisa "Não foi você?" e NÃO traz botão nem link de acesso', () => {

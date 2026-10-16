@@ -74,9 +74,9 @@ const pay = async (chargeId, eventId) => {
   return sim('webhook', { id: eventId, type: 'charge.paid', chargeId });
 };
 
-const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
+const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true });
   const img = (await api('POST', '/api/admin/upload?folder=products', fs.readFileSync(FX + '/lata.webp'), true)).data.url;
@@ -218,6 +218,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
     await admin.fill('#login-email', 'dono@copocheio.local');
     await admin.fill('#login-senha', 'senha-forte-123');
     await admin.click('button[type=submit]');
+    await finishAdminLogin(admin);
     await admin.waitForURL('**/admin/dashboard');
     await admin.waitForTimeout(1500);
     const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
@@ -273,6 +274,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
     await staff.fill('#login-email', 'atendente@copocheio.local');
     await staff.fill('#login-senha', 'senha-forte-456');
     await staff.click('button[type=submit]');
+    await finishAdminLogin(staff);
     await staff.waitForURL('**/admin/dashboard');
     ok((await staff.getByRole('link', { name: 'Pagamentos' }).count()) === 0, 'o atendente não vê "Pagamentos" no menu');
     await staff.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });

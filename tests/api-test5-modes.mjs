@@ -41,8 +41,19 @@ const fg = await new Client().post('/api/account/forgot-password', { email: 'ver
 check('recuperação de senha por e-mail: 503 mail_not_configured, com o caminho alternativo na mensagem (igual para qualquer e-mail)', fg.status === 503 && fg.data.code === 'mail_not_configured' && /Não consigo acessar meu e-mail/.test(fg.data.error) && (await new Client().post('/api/account/forgot-password', { email: 'ninguem@exemplo.com' })).data.code === 'mail_not_configured', fg);
 const dup = await new Client().post('/api/account/register', { name: 'Vera Verificada', email: 'vera.verificada@exemplo.com', phone: '34999991111', password: 'outra-senha-999' });
 check('cadastro repetido de e-mail existente também recebe 503 (não vira pista de quem tem conta)', dup.status === 503 && dup.data.code === 'mail_not_configured');
+// O código por e-mail é OBRIGATÓRIO no login do painel: sem e-mail configurado ninguém entra (nunca "entra por falta de e-mail").
+const adminClient = new Client();
+const adminNoMail = await adminClient.post('/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+check('painel sem e-mail configurado: senha certa → 503 mail_not_configured, SEM sessão', adminNoMail.status === 503 && adminNoMail.data.code === 'mail_not_configured' && (await adminClient.get('/api/auth/me')).data.admin === null && !adminNoMail.headers.getSetCookie().some((c) => c.startsWith('copocheio_admin=')), adminNoMail.data);
+check('...e a mensagem não revela o nome das variáveis nem nada da conta', !/SMTP|PASS|HOST/.test(JSON.stringify(adminNoMail.data)), adminNoMail.data);
+check('...e a senha errada segue recebendo o mesmo 401 de sempre (o 503 só aparece com a senha certa)', (await new Client().post('/api/auth/login', { email: 'dono@copocheio.local', password: 'errada-errada-1' })).status === 401);
+// Só com o interruptor de emergência ADMIN_EMAIL_CODE=off (ligado por quem tem acesso à Vercel) o painel abre sem o código; o resto do teste precisa do painel.
+process.env.ADMIN_EMAIL_CODE = 'off';
+serve({ MAIL_MODE: 'none' });
 const owner = new Client();
 await owner.login();
+const offHealth = await owner.get('/api/admin/health');
+check('interruptor de emergência: o painel abre só com senha e avisa que o código está DESLIGADO em /api/admin/health', offHealth.status === 200 && offHealth.data.admin_login_code === 'off', offHealth.data);
 const veraRow = (await owner.get('/api/admin/customers?q=vera.verificada')).data.customers[0];
 const veraLink = await owner.post(`/api/admin/customers/${veraRow.id}/reset-link`, {});
 const veraCheck = await new Client().post('/api/account/reset-check', { token: veraLink.data.token });

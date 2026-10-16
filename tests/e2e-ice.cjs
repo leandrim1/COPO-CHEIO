@@ -38,7 +38,7 @@ async function until(fn, ms = 6000) {
 const errors = [];
 async function newCtx(browser, viewport, init) {
   const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 1000, hasTouch: viewport.width < 1000 });
-  await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => { await route.fulfill({ response: await route.fetch({ url: BLOB + '/f' + new URL(route.request().url()).pathname }) }); });
+  await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => { try { await route.fulfill({ response: await route.fetch({ url: BLOB + '/f' + new URL(route.request().url()).pathname }) }); } catch {} /* a página fechou no meio do pedido */ });
   await ctx.route(/^https:\/\/www\.google\.com\/maps/, (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<!doctype html><title>mapa</title>' }));
   if (init) await ctx.addInitScript(init.fn, init.arg);
   const page = await ctx.newPage();
@@ -73,9 +73,10 @@ async function placeOrder(page) {
 }
 const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluateAll((els) => els.map((e) => e.checked));
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   // ---- dados --------------------------------------------------------------------------------------
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true });
   const img = (await api('POST', '/api/admin/upload?folder=products', fs.readFileSync(FX + '/lata.webp'), true)).data.url;
@@ -267,6 +268,7 @@ const radioState = (page) => page.getByRole('dialog').getByRole('radio').evaluat
       await a.fill('#login-email', 'dono@copocheio.local');
       await a.fill('#login-senha', 'senha-forte-123');
       await a.click('button[type=submit]');
+      await finishAdminLogin(a);
       await a.waitForURL('**/admin/dashboard');
       await a.goto(BASE + `/admin/pedidos/${number}`, { waitUntil: 'networkidle' });
       ok(await until(async () => (await a.locator('[data-ice-tag]').count()) === 4), 'painel: o pedido mostra o gelo de cada item', await a.locator('[data-ice-tag]').count());

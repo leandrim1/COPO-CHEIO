@@ -1,6 +1,7 @@
 // API do COPO CHEIO: um único handler (Request → Response) para todas as rotas /api/*.
 // Roda como função da Vercel (api/index.ts) e também no servidor de desenvolvimento do Vite.
 import { randomUUID } from 'node:crypto';
+import { adminEmailCodeEnabled } from './adminLoginCode.js';
 import { adminFromRequest } from './auth.js';
 import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
@@ -72,7 +73,8 @@ router.get('/api/health', 'public', async (ctx) => {
 router.get('/api/admin/health', 'admin', async (ctx) => {
   const status = await systemStatus(ctx.req);
   const payments = status.database === 'ok' ? await onlineReadiness().catch(() => null) : null;
-  return json({ ...status, payments });
+  // `admin_login_code`: 'on' = o login do painel exige o código enviado por e-mail (o normal); 'off' = interruptor de emergência ADMIN_EMAIL_CODE=off ligado.
+  return json({ ...status, payments, admin_login_code: adminEmailCodeEnabled() ? 'on' : 'off' });
 });
 
 registerPublic(router);

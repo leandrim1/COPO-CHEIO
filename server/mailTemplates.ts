@@ -91,6 +91,42 @@ export function loginCodeMessage(brand: Brand, o: LoginCodeData): Message {
   });
 }
 
+export type AdminLoginCodeData = {
+  to: string;
+  name: string;
+  code: string;
+  codeMinutes: number;
+  // "Chrome no Windows": o suficiente para a pessoa reconhecer se foi ela.
+  device: string;
+  // Endereço de rede (IP) de quem informou a senha: ajuda a reconhecer se foi a própria pessoa.
+  ip: string;
+  // E-mail de teste do painel: mesma aparência, com o aviso de que o código é só um exemplo.
+  sample?: boolean;
+};
+
+// Código para ENTRAR NO PAINEL (a cada login): vai só para o e-mail da conta administrativa, depois que a senha foi digitada certa.
+export function adminLoginCodeMessage(brand: Brand, o: AdminLoginCodeData): Message {
+  const hi = greetingName(o.name);
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `${o.sample ? '[Teste] ' : ''}${o.code} é o seu código de acesso ao painel – ${brand.name}`,
+    preheader: `Seu código de acesso ao painel é ${o.code}. Ele expira em ${o.codeMinutes} minutos.`,
+    eyebrow: 'Painel administrativo',
+    title: 'Seu código de acesso',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    banner: o.sample ? 'Mensagem de teste enviada pelo painel. O código abaixo é só um exemplo e não abre nenhum acesso.' : undefined,
+    blocks: [
+      { kind: 'text', text: `Alguém informou o e-mail e a senha da sua conta para entrar no painel administrativo (${o.device}, rede ${o.ip}). Para concluir, digite o código abaixo na tela de login do painel.` },
+      { kind: 'code', label: 'Seu código de acesso', value: o.code, note: `Este código expira em **${o.codeMinutes} minutos** e só pode ser usado uma vez.` },
+      {
+        kind: 'notice',
+        text: '**Não foi você?** Ignore este e-mail: sem o código ninguém entra no painel. Como a sua senha foi digitada por alguém, troque-a agora (Configurações → Painel → Minha senha, ou peça um link de nova senha a outro owner). Nunca compartilhe este código com ninguém.',
+      },
+    ],
+    reason: 'Esta mensagem foi enviada porque alguém informou o e-mail e a senha desta conta administrativa para entrar no painel.',
+  });
+}
+
 // Alguém tentou criar uma conta com um e-mail que já tem conta: o aviso vai só para a caixa do dono (a tela de quem tentou não revela nada).
 export function alreadyRegisteredMessage(brand: Brand, o: { to: string; name: string; loginUrl: string }): Message {
   const hi = greetingName(o.name);

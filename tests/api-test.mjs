@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { BASE, Client, check, section, summary } from './lib.mjs';
+import { BASE, Client, check, section, summary, loginAdmin } from './lib.mjs';
 
 // big.webp não fica no repositório: 5 MB de bytes sem sentido com cabeçalho de WebP, só para testar o limite de tamanho.
 const fx = (n) => (n === 'big.webp' ? Buffer.concat([Buffer.from('RIFF\xff\xff\xff\xffWEBPVP8 ', 'latin1'), Buffer.alloc(5 * 1024 * 1024)]) : readFileSync(new URL(`./fixtures/${n}`, import.meta.url)));
@@ -57,9 +57,9 @@ section('Rotas administrativas exigem login no servidor');
 // ------------------------------------------------------------------------------------------------
 section('Login, sessão e proteção contra força bruta');
 {
-  const bad = await new Client().post('/api/auth/login', { email: 'dono@copocheio.local', password: 'errada-errada' });
+  const bad = await loginAdmin(new Client(), { email: 'dono@copocheio.local', password: 'errada-errada' });
   check('senha errada → 401', bad.status === 401 && /incorretos/.test(bad.data.error), bad.data);
-  const unknown = await new Client().post('/api/auth/login', { email: 'ninguem@x.com', password: 'qualquer-coisa' });
+  const unknown = await loginAdmin(new Client(), { email: 'ninguem@x.com', password: 'qualquer-coisa' });
   check('e-mail desconhecido → mesma mensagem', unknown.status === 401 && unknown.data.error === bad.data.error);
   check('login sem corpo → 400', (await new Client().req('POST', '/api/auth/login', 'oi', { raw: true, headers: { 'content-type': 'application/json' } })).status === 400);
 
@@ -73,16 +73,16 @@ section('Login, sessão e proteção contra força bruta');
 
   // Força bruta: 8 erros do mesmo e-mail, da mesma rede, bloqueiam essa rede (até com a senha certa).
   const attacker = new Client(undefined, '198.51.100.201');
-  for (let i = 0; i < 8; i++) await attacker.post('/api/auth/login', { email: 'dono@copocheio.local', password: 'tentativa-' + i });
-  const blocked = await attacker.post('/api/auth/login', { email: 'dono@copocheio.local', password: 'outra-vez' });
+  for (let i = 0; i < 8; i++) await loginAdmin(attacker, { email: 'dono@copocheio.local', password: 'tentativa-' + i });
+  const blocked = await loginAdmin(attacker, { email: 'dono@copocheio.local', password: 'outra-vez' });
   check('8 falhas da mesma rede → 429', blocked.status === 429 && Number(blocked.headers.get('retry-after')) > 0, blocked.status);
-  check('...e nem a senha certa entra a partir dessa rede', (await attacker.post('/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' })).status === 429);
+  check('...e nem a senha certa entra a partir dessa rede', (await loginAdmin(attacker, { email: 'dono@copocheio.local', password: 'senha-forte-123' })).status === 429);
   // O dono, em outra rede, não é trancado para fora por quem erra a senha dele de longe.
   const stillOk = await new Client().login();
   check('o dono, em outra rede, continua entrando', stillOk.status === 200);
   const victim = 'forca@bruta.com';
-  for (let i = 0; i < 8; i++) await new Client(undefined, '198.51.100.202').post('/api/auth/login', { email: victim, password: 'tentativa-' + i });
-  check('8 falhas num e-mail desconhecido bloqueiam só essa rede também', (await new Client(undefined, '198.51.100.202').post('/api/auth/login', { email: victim, password: 'outra-vez' })).status === 429);
+  for (let i = 0; i < 8; i++) await loginAdmin(new Client(undefined, '198.51.100.202'), { email: victim, password: 'tentativa-' + i });
+  check('8 falhas num e-mail desconhecido bloqueiam só essa rede também', (await loginAdmin(new Client(undefined, '198.51.100.202'), { email: victim, password: 'outra-vez' })).status === 429);
 
   // Origem estranha não escreve.
   const cross = await owner.post('/api/admin/categories', { name: 'CSRF' }, { headers: { origin: 'https://evil.example' } });

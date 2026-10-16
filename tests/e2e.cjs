@@ -64,6 +64,7 @@ async function newPage(browser, viewport, errors) {
 const toastText = (page) => page.evaluate(() => [...document.querySelectorAll('[aria-live="polite"] [role=status], [aria-live="polite"] [role=alert]')].map((t) => t.textContent).join(' | '));
 const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
+const { finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -98,6 +99,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await a.fill('#login-email', 'dono@copocheio.local');
   await a.fill('#login-senha', 'senha-forte-123');
   await a.click('button[type=submit]');
+  await finishAdminLogin(a);
   await a.waitForURL('**/admin/dashboard', { timeout: 15000 });
   await a.waitForSelector('text=Faturamento do dia');
   ok(true, 'owner logs in → /admin/dashboard');
@@ -469,6 +471,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await m.fill('#login-email', 'dono@copocheio.local');
   await m.fill('#login-senha', 'senha-forte-123');
   await m.click('button[type=submit]');
+  await finishAdminLogin(m);
   await m.waitForURL('**/admin/dashboard');
   await m.waitForTimeout(1200);
   await m.screenshot({ path: `${SP}/e2e-m-dashboard.png`, fullPage: true });
@@ -537,6 +540,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await t.fill('#login-email', 'atendente@copocheio.local');
   await t.fill('#login-senha', 'Atendente!Segura-2026');
   await t.click('button[type=submit]');
+  await finishAdminLogin(t);
   await t.waitForURL('**/admin/dashboard');
   await t.goto(BASE + '/admin/configuracoes', { waitUntil: 'networkidle' });
   await t.getByRole('tab', { name: 'Administradores' }).click();
@@ -555,6 +559,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await rel.fill('#login-email', 'atendente@copocheio.local');
   await rel.fill('#login-senha', 'Nova#Senha-Boa-2027x');
   await rel.click('button[type=submit]');
+  await finishAdminLogin(rel);
   await rel.waitForURL('**/admin/dashboard');
   ok(true, 'login works with the changed password');
   await t.context().close();
@@ -571,6 +576,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
   await a.fill('#login-email', 'dono@copocheio.local');
   await a.fill('#login-senha', 'senha-forte-123');
   await a.click('button[type=submit]');
+  await finishAdminLogin(a);
   await a.waitForURL('**/admin/dashboard');
 
   console.log('# architecture: only /api, no Supabase, no direct storage');

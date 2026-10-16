@@ -89,12 +89,14 @@ async function adminLogin(page) {
   await page.fill('#login-email', 'dono@copocheio.local');
   await page.fill('#login-senha', 'senha-forte-123');
   await page.click('button[type=submit]');
+  await finishAdminLogin(page);
   await page.waitForURL('**/admin/dashboard', { timeout: 15000 });
 }
 const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[aria-live="polite"] [role=status], [aria-live="polite"] [role=alert]')].map((t) => t.textContent).join(' | '));
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   await clearBanners();
   const browser = await chromium.launch();
 

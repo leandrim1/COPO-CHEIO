@@ -79,7 +79,7 @@ async function fillSignup(page, { name, phone, email, password }) {
 }
 const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e receber o código/ }).click();
 
-const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
+const { finishLogin, latestLoginCode, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -367,6 +367,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   await g.getByLabel('E-mail').fill('dono@copocheio.local');
   await g.locator('#login-senha').fill('senha-forte-123');
   await g.getByRole('button', { name: 'Entrar' }).click();
+  await finishAdminLogin(g);
   await g.waitForURL('**/admin/dashboard');
   await g.goto(BASE + '/admin/clientes', { waitUntil: 'networkidle' });
   await g.waitForSelector('text=Envio de e-mails configurado');

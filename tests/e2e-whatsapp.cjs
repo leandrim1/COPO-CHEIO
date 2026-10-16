@@ -46,8 +46,9 @@ async function newCtx(browser, viewport) {
 }
 const waLinks = (page) => page.evaluate(() => [...document.querySelectorAll('a[href*="wa.me"], a[href*="whatsapp.com"]')].map((a) => ({ href: a.href, text: a.textContent.trim(), target: a.target, rel: a.rel })));
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   for (const b of (await api('GET', '/api/admin/banners')).data.banners) await api('DELETE', `/api/admin/banners/${b.id}`);
   const browser = await chromium.launch();
 
@@ -94,6 +95,7 @@ const waLinks = (page) => page.evaluate(() => [...document.querySelectorAll('a[h
     await page.fill('#login-email', 'dono@copocheio.local');
     await page.fill('#login-senha', 'senha-forte-123');
     await page.click('button[type=submit]');
+    await finishAdminLogin(page);
     await page.waitForURL('**/admin/dashboard');
     await page.goto(BASE + '/admin/configuracoes', { waitUntil: 'networkidle' });
     const field = page.getByLabel('WhatsApp da loja');

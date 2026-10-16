@@ -66,13 +66,15 @@ export function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
-// Cookie HttpOnly (o JavaScript do navegador nunca lê), SameSite=Lax e Secure em https.
-export function cookieHeader(req: Request, name: string, value: string, maxAge: number): string {
+// Cookie HttpOnly (o JavaScript do navegador nunca lê), SameSite=Lax (ou Strict, onde dá) e Secure em https.
+export function cookieHeader(req: Request, name: string, value: string, maxAge: number, sameSite: 'Lax' | 'Strict' = 'Lax'): string {
   const secure = new URL(req.url).protocol === 'https:';
-  return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
+  return `${name}=${value}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
 }
 
-export const sessionCookie = (req: Request, token: string, maxAge: number): string => cookieHeader(req, COOKIE, token, maxAge);
+// A sessão do painel é SameSite=Strict: o navegador não a manda em nenhuma requisição que nasça de outro site (nem em links). O painel é uma página
+// que, depois de aberta, chama a API do próprio site, e essas chamadas levam o cookie normalmente.
+export const sessionCookie = (req: Request, token: string, maxAge: number): string => cookieHeader(req, COOKIE, token, maxAge, 'Strict');
 
 export async function adminFromRequest(req: Request): Promise<Admin | null> {
   const token = readCookie(req, COOKIE);

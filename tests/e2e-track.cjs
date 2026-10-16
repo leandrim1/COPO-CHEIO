@@ -73,7 +73,7 @@ async function confirmEmail(page, email) {
 const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 const body = (page) => page.evaluate(() => document.body.innerText);
 
-const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
+const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -86,7 +86,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   };
 
   // ---- preparação ----
-  await admin('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(admin, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await admin('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, whatsapp: '5534988887777', delivery_time: '30 a 45 min' });
   const cat = (await admin('POST', '/api/admin/categories', { name: 'Bebidas teste' })).data.category;
@@ -221,6 +221,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
   await ad.getByLabel('E-mail').fill('dono@copocheio.local');
   await ad.locator('#login-senha').fill('senha-forte-123');
   await ad.getByRole('button', { name: 'Entrar' }).click();
+  await finishAdminLogin(ad);
   await ad.waitForURL('**/admin/dashboard');
   await ad.goto(BASE + `/admin/pedidos/${num}`, { waitUntil: 'networkidle' });
   ok(/Visitante/.test(await body(ad)) && /Pedido de visitante/.test(await body(ad)), 'admin identifies the order as a visitor order');

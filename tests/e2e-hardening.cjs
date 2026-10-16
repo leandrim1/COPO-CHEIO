@@ -65,6 +65,8 @@ async function uiLogin(page, creds = OWNER, code) {
   await page.fill('#login-email', creds.email);
   await page.fill('#login-senha', creds.password);
   await page.keyboard.press('Enter');
+  // 2º passo: código enviado por e-mail (sempre); 3º passo: código do aplicativo, só para quem ligou a verificação em duas etapas.
+  await finishAdminLogin(page);
   if (code) {
     await page.waitForSelector('#login-codigo');
     await page.fill('#login-codigo', code);
@@ -73,13 +75,14 @@ async function uiLogin(page, creds = OWNER, code) {
   await page.waitForURL('**/admin/dashboard', { timeout: 20000 });
 }
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const { load } = await import('./unit/load.mjs');
   const totp = await load('server/totp.ts');
   const browser = await chromium.launch();
   const errors = [];
 
-  const login = await api('POST', '/api/auth/login', OWNER);
+  const login = await adminLoginViaApi(api, OWNER, { cookieArg: true });
   apiCookie = login.cookies;
   const days = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: days, delivery_fee: 5, min_order: 0 });
@@ -133,6 +136,7 @@ async function uiLogin(page, creds = OWNER, code) {
   await b.fill('#login-email', OWNER.email);
   await b.fill('#login-senha', OWNER.password);
   await b.keyboard.press('Enter');
+  await finishAdminLogin(b);
   await b.waitForSelector('#login-codigo');
   ok(/verificação em duas etapas/i.test(await body(b)) && !b.url().includes('/dashboard'), 'senha certa: a tela pede o código e ainda não entra');
   await b.fill('#login-codigo', '123456');
@@ -148,6 +152,7 @@ async function uiLogin(page, creds = OWNER, code) {
   await b.fill('#login-email', OWNER.email);
   await b.fill('#login-senha', OWNER.password);
   await b.keyboard.press('Enter');
+  await finishAdminLogin(b);
   await b.waitForSelector('#login-codigo');
   await b.getByRole('button', { name: 'Usar um código de recuperação' }).click();
   await b.fill('#login-codigo', codes[0]);

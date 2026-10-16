@@ -119,12 +119,13 @@ async function fillCard(page, { number = PAN, holder = 'MARIA TESTE', expiry = '
 }
 const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o where payment_method = 'card_online' order by order_number desc limit 1`));
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const { startFakeValidaPay, FAKE, postWebhook, paymentSuccess, paymentSuccessCard } = await import(path.join(ROOT, 'tests/validapay-fake.mjs'));
   fake = await startFakeValidaPay();
   execSync(`bash ${ROOT}/tests/serve.sh`, { env: { ...process.env, PAYMENTS_SIM: 'validapay', FAKE_VALIDAPAY_URL: fake.url, FAKE_VALIDAPAY_WEBHOOK_SECRET: FAKE.webhookSecret, FAKE_VALIDAPAY_TIMEOUT_MS: '2500', FAKE_VALIDAPAY_CARD_TIMEOUT_MS: '2500' }, stdio: 'ignore' });
 
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true });
   const img = (await api('POST', '/api/admin/upload?folder=products', fs.readFileSync(FX + '/lata.webp'), true)).data.url;
@@ -153,6 +154,7 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
   await admin.fill('#login-email', 'dono@copocheio.local');
   await admin.fill('#login-senha', 'senha-forte-123');
   await admin.click('button[type=submit]');
+  await finishAdminLogin(admin);
   await admin.waitForURL('**/admin/dashboard');
   // O cartão é cobrado na SUBCONTA do estabelecimento (a mesma do Pix; só o Pix tem split): sem ela, o cartão não liga.
   await admin.goto(BASE + '/admin/pagamentos', { waitUntil: 'networkidle' });
@@ -450,6 +452,7 @@ const lastOrder = () => JSON.parse(psql(`select row_to_json(o) from orders o whe
     await staff.fill('#login-email', 'atendente@copocheio.local');
     await staff.fill('#login-senha', 'senha-forte-456');
     await staff.click('button[type=submit]');
+    await finishAdminLogin(staff);
     await staff.waitForURL('**/admin/dashboard');
     await staff.goto(BASE + `/admin/pedidos/${paidNumber}`, { waitUntil: 'networkidle' });
     const sb = await text(staff);

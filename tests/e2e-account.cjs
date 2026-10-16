@@ -55,10 +55,12 @@ async function loginOwner(page) {
   await page.fill('#login-email', 'dono@copocheio.local');
   await page.fill('#login-senha', 'senha-forte-123');
   await page.click('button[type=submit]');
+  await finishAdminLogin(page);
   await page.waitForURL('**/admin/dashboard');
 }
 const card = (page) => page.locator('dl').first();
 
+const { finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const { FAKE, postWebhook, startFakeValidaPay } = await import('./validapay-fake.mjs');
   const fake = await startFakeValidaPay();

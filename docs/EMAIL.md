@@ -54,6 +54,7 @@ rota / gatilho do banco ──► deliver() ──► regras ──► registro 
 | ---- | --------- | ---- | ------- | ------------------------- |
 | Confirmação de e-mail (código) | transacional | síncrono | sim | 12 |
 | Código para entrar na conta (a cada login) | transacional | síncrono | sim | 25 |
+| Código de acesso ao painel (a cada login de administrador; equipe) | transacional (equipe) | síncrono | sim | 25 |
 | Redefinição de senha (link) | transacional | síncrono | sim | 12 |
 | E-mail de teste do painel / teste de campanha / exemplo de modelo (botão “Enviar exemplos para mim”) | transacional (equipe); o teste de campanha leva os cabeçalhos de promoção | síncrono | — | 10 / 20 / 30 |
 | Aviso: você já tem uma conta | transacional | fila | não | 3 |

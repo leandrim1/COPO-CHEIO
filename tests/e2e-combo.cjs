@@ -60,8 +60,9 @@ const addButton = (page, name) => page.getByRole('button', { name: new RegExp(`^
 const money = (n) => n.toFixed(2).replace('.', ',');
 const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 
+const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
-  await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
+  await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
   await api('PATCH', '/api/admin/store', { opening_hours: allDays, delivery_fee: 5, min_order: 0, orders_paused: false, delivery_enabled: true, pickup_enabled: true });
   const img = (await api('POST', '/api/admin/upload?folder=products', fs.readFileSync(FX + '/lata.webp'), true)).data.url;
@@ -281,6 +282,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
     await page.fill('#login-email', 'dono@copocheio.local');
     await page.fill('#login-senha', 'senha-forte-123');
     await page.click('button[type=submit]');
+    await finishAdminLogin(page);
     await page.waitForURL('**/admin/dashboard');
     const openCombo = async (id) => {
       await page.goto(BASE + `/admin/produtos/${id}`, { waitUntil: 'networkidle' });
