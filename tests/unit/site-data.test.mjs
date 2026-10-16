@@ -66,3 +66,84 @@ test('formas de pagamento aceitas: as do painel; o cartão online só com a taxa
   assert.deepEqual(d.cardFeeRates({ bps: 537, fixed_cents: 37 }), { bps: 537, fixedCents: 37 });
   assert.equal(d.cardFeeRates(undefined), null);
 });
+
+// ---- Miniaturas das fotos (srcset) ---------------------------------------------------------------------------------------------------------
+
+test('srcset das miniaturas: 400w e 720w, só com endereço simples (https ou do próprio site)', () => {
+  assert.equal(d.imageSrcSet('https://x.blob.vercel-storage.com/products/a.webp', 'https://x.blob.vercel-storage.com/products/b.webp'), 'https://x.blob.vercel-storage.com/products/a.webp 400w, https://x.blob.vercel-storage.com/products/b.webp 720w');
+  assert.equal(d.imageSrcSet('https://x.test/a.webp', null), 'https://x.test/a.webp 400w', 'só a pequena');
+  assert.equal(d.imageSrcSet(undefined, 'https://x.test/b.webp'), 'https://x.test/b.webp 720w', 'só a média');
+  assert.equal(d.imageSrcSet('/img/bench/p-01-400.webp', '/img/bench/p-01-720.webp'), '/img/bench/p-01-400.webp 400w, /img/bench/p-01-720.webp 720w', 'caminho do próprio site');
+});
+
+test('srcset das miniaturas: sem miniatura (ou com endereço que quebraria o atributo) não há srcset', () => {
+  assert.equal(d.imageSrcSet(null, null), undefined);
+  assert.equal(d.imageSrcSet(undefined, undefined), undefined);
+  assert.equal(d.imageSrcSet('', ''), undefined);
+  for (const bad of ['http://x.test/a.webp', 'javascript:alert(1)', '//x.test/a.webp', 'https://x.test/a b.webp', 'https://x.test/a,b.webp', 'https://x.test/a.webp 2x, https://evil.test/x.webp', 42, {}, [], true]) {
+    assert.equal(d.imageSrcSet(bad, bad), undefined, String(bad));
+  }
+  assert.equal(d.imageSrcSet('https://x.test/a,b.webp', 'https://x.test/b.webp'), 'https://x.test/b.webp 720w', 'um endereço ruim não derruba o outro');
+});
+
+test('miniatura das listas (imageSm): só aceita o mesmo tipo de endereço simples; qualquer outra coisa cai na foto original', () => {
+  assert.equal(d.simpleImageUrl('https://x.blob.vercel-storage.com/products/a.webp'), 'https://x.blob.vercel-storage.com/products/a.webp');
+  assert.equal(d.simpleImageUrl('/img/bench/p-01-400.webp'), '/img/bench/p-01-400.webp', 'caminho do próprio site');
+  for (const bad of [null, undefined, '', 'http://x.test/a.webp', 'javascript:alert(1)', '//x.test/a.webp', 'https://x.test/a b.webp', 'https://x.test/a,b.webp', 'data:image/png;base64,AAAA', 42, {}, [], true])
+    assert.equal(d.simpleImageUrl(bad), undefined, String(bad));
+});
+
+// ---- Dados que não mudaram continuam sendo os mesmos objetos (a tela só redesenha o que mudou) ----------------------------------------------
+
+const prod = (id, extra = {}) => ({ id, name: `Produto ${id}`, category: 'Cervejas', categoryPosition: 0, price: 5, promoPrice: null, featured: false, soldOut: false, position: 0, iceRequired: false, swapBaseId: null, swapBasePrice: null, swapOptionIds: [], ...extra });
+const shop = (products, extra = {}) => ({ store: { store_name: 'Copo Cheio', delivery_fee: 5 }, site: { seo_title: 'x' }, hero: { title: 'y', images: [] }, banners: [], coverBanners: [], zones: [], payments: [], products, ...extra });
+
+test('buscar de novo com dados iguais devolve exatamente os mesmos objetos', () => {
+  const before = shop([prod('a'), prod('b', { swapOptionIds: ['x'] })]);
+  const after = shop([prod('a'), prod('b', { swapOptionIds: ['x'] })]);
+  const merged = d.reuseUnchanged(before, after);
+  assert.equal(merged.products, before.products, 'a lista inteira é a mesma');
+  assert.equal(merged.products[0], before.products[0]);
+  assert.equal(merged.store, before.store);
+  assert.equal(merged.site, before.site);
+  assert.equal(merged.hero, before.hero);
+  assert.equal(merged.banners, before.banners);
+});
+
+test('mudou um produto: só ele é objeto novo; os outros continuam os mesmos', () => {
+  const before = shop([prod('a'), prod('b'), prod('c')]);
+  const after = shop([prod('a'), prod('b', { price: 7.5 }), prod('c')]);
+  const merged = d.reuseUnchanged(before, after);
+  assert.notEqual(merged.products, before.products, 'a lista é nova (um item mudou)');
+  assert.equal(merged.products[0], before.products[0]);
+  assert.notEqual(merged.products[1], before.products[1]);
+  assert.equal(merged.products[1].price, 7.5, 'o valor novo vale');
+  assert.equal(merged.products[2], before.products[2]);
+});
+
+test('produto novo, removido ou fora de ordem: a lista nova vale, com o que não mudou reaproveitado', () => {
+  const before = shop([prod('a'), prod('b')]);
+  const added = d.reuseUnchanged(before, shop([prod('a'), prod('b'), prod('c')]));
+  assert.deepEqual(added.products.map((p) => p.id), ['a', 'b', 'c']);
+  assert.equal(added.products[0], before.products[0]);
+  const removed = d.reuseUnchanged(before, shop([prod('b')]));
+  assert.deepEqual(removed.products.map((p) => p.id), ['b']);
+  assert.equal(removed.products[0], before.products[1]);
+  const reordered = d.reuseUnchanged(before, shop([prod('b'), prod('a')]));
+  assert.deepEqual(reordered.products.map((p) => p.id), ['b', 'a']);
+  assert.notEqual(reordered.products, before.products);
+  assert.equal(reordered.products[0], before.products[1]);
+});
+
+test('o que mudou na loja (preço de entrega, esgotado, miniatura) aparece: nada fica velho', () => {
+  const before = shop([prod('a', { image: 'https://x.test/a.webp' })]);
+  const store = d.reuseUnchanged(before, shop([prod('a', { image: 'https://x.test/a.webp' })], { store: { store_name: 'Copo Cheio', delivery_fee: 8 } }));
+  assert.equal(store.store.delivery_fee, 8);
+  assert.equal(store.products, before.products, 'os produtos iguais seguem iguais');
+  const sold = d.reuseUnchanged(before, shop([prod('a', { image: 'https://x.test/a.webp', soldOut: true })]));
+  assert.equal(sold.products[0].soldOut, true);
+  const thumb = d.reuseUnchanged(before, shop([prod('a', { image: 'https://x.test/a.webp', imageSrcSet: 'https://x.test/a-400.webp 400w' })]));
+  assert.equal(thumb.products[0].imageSrcSet, 'https://x.test/a-400.webp 400w');
+  const none = d.reuseUnchanged(before, shop([]));
+  assert.deepEqual(none.products, [], 'cardápio vazio vale (loja tirou tudo do ar)');
+});

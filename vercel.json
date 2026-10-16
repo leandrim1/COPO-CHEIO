@@ -61,7 +61,7 @@
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
     },
     {
-      "source": "/(logo\\.png|gelo\\.webp|logo-[0-9]+\\.webp|icon-[0-9]+\\.png|apple-touch-icon\\.png)",
+      "source": "/(logo\\.png|gelo\\.webp|gelo-[0-9]+\\.webp|logo-[0-9]+\\.webp|icon-[0-9]+\\.png|apple-touch-icon\\.png|early\\.js)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
     }
   ],

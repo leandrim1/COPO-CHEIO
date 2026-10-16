@@ -25,7 +25,7 @@ export function registerPublic(r: Router) {
       [
         `select p.id, p.category_id, p.name, p.description, p.price,
                 effective_promo(p.promo_price, p.promo_starts_at, p.promo_ends_at) as promo_price,
-                p.image_url, p.featured,
+                p.image_url, p.image_sm_url, p.image_md_url, p.featured,
                 (p.sold_out or (p.stock is not null and p.stock <= 0)) as sold_out, p.position,
                 p.swap_base_product_id, p.swap_base_price,
                 -- ice_choice_required: este produto só é pedido com a escolha do gelo (o banco confere de novo ao criar o pedido).

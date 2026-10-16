@@ -1,11 +1,12 @@
 import { GlassWater, Info, Minus, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { comboNote } from '../lib/combo';
+import { DEFAULT_LOGO } from '../lib/defaults';
 import { money } from '../lib/format';
 import { ICE_INFO, iceLabel } from '../lib/ice';
 import { instagramHandle, unitPrice, useShop } from './data';
 import type { CartLine, Product } from './data';
-import { useEnergeticSwap } from './energeticSwap';
+import { useEnergeticSwap } from './energeticSwapContext';
 import { useIcePicker } from './icePicker';
 
 // Peças visuais usadas em mais de uma página do site.
@@ -52,12 +53,20 @@ export function InstagramIcon({ className = 'h-5 w-5' }: { className?: string })
   );
 }
 
+// A logo padrão tem cópias de 128 e 256 px (public/logo-*.webp): na tela ela aparece com 36 a 128 px e o arquivo de 512 px pesa 72 KB. Uma
+// logo enviada pelo painel (outro endereço) segue como está. `sizes` é a largura que a logo ocupa no lugar onde ela é usada.
+export function logoSources(logo: string, sizes: string): { src: string; srcSet?: string; sizes?: string } {
+  return logo === DEFAULT_LOGO ? { src: logo, srcSet: '/logo-128.webp 128w, /logo-256.webp 256w, /logo-512.webp 512w', sizes } : { src: logo };
+}
+
 export function IceCube({ className, delay = '0s' }: { className: string; delay?: string }) {
   return (
     <div aria-hidden="true" className={`pointer-events-none absolute cc-float ${className}`} style={{ animationDelay: delay }}>
       <div className="relative h-full w-full rotate-12">
         <img
           src="/gelo.webp"
+          srcSet="/gelo-96.webp 96w, /gelo-192.webp 192w, /gelo.webp 320w"
+          sizes="(min-width: 1024px) 80px, 48px"
           alt=""
           width={320}
           height={320}
@@ -126,8 +135,18 @@ export function ProductPrice({ product, className = '' }: { product: Product; cl
   );
 }
 
-export function ProductImage({ product, padding = 'p-3 sm:p-4' }: { product: Product; padding?: string }) {
+// A foto do produto. Nas listas (cartões, linhas do pedido) é a miniatura de 400 px: ela já é o tamanho certo para qualquer celular (88 a 128 px de
+// largura × densidade de até 3,8) e para as listas no computador (176 px × 2), e um `src` simples custa muito menos para o navegador do que um
+// `srcset` com `sizes` em cada uma das ~90 fotos (medido: ~95 ms contra ~4 ms para criar 90 <img>, com a CPU de um celular intermediário). Nos "favoritos" (cartões
+// grandes, uns poucos) vale o `srcset`, e `sizes` diz a largura do cartão em cada tela para o navegador escolher entre 400 e 720 px.
+export const IMAGE_SIZES = {
+  // "Os favoritos da galera" (FeaturedCard): 62% da tela no celular, 44% no tablet, 256/288 px no computador.
+  featured: '(min-width: 1280px) 288px, (min-width: 1024px) 256px, (min-width: 640px) 44vw, 62vw',
+} as const;
+
+export function ProductImage({ product, padding = 'p-3 sm:p-4', sizes }: { product: Product; padding?: string; sizes?: string }) {
   const [failed, setFailed] = useState(false);
+  const useSet = Boolean(sizes && product.imageSrcSet);
   if (!product.image || failed) {
     return (
       <div className="absolute inset-0 flex items-center justify-center text-[#2563FF]/60" aria-hidden="true">
@@ -137,7 +156,9 @@ export function ProductImage({ product, padding = 'p-3 sm:p-4' }: { product: Pro
   }
   return (
     <img
-      src={product.image}
+      src={useSet ? product.image : (product.imageSm ?? product.image)}
+      srcSet={useSet ? product.imageSrcSet : undefined}
+      sizes={useSet ? sizes : undefined}
       alt={product.name}
       loading="lazy"
       decoding="async"
@@ -166,7 +187,7 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
     <footer className="border-t border-white/10 bg-[#050505] py-10">
       <div className={`mx-auto flex max-w-7xl flex-col items-center gap-6 px-5 text-center sm:px-8 md:flex-row md:justify-between md:text-left ${lateral}`}>
         <a href="/" className="flex items-center gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
-          <img src={logo} alt="" width={44} height={44} loading="lazy" className="h-11 w-11 rounded-full object-contain ring-1 ring-white/15" />
+          <img {...logoSources(logo, '44px')} alt="" width={44} height={44} loading="lazy" className="h-11 w-11 rounded-full object-contain ring-1 ring-white/15" />
           <span className="flex flex-col items-start leading-none">
             <span className="text-lg font-black tracking-tight text-white">
               <BrandName name={store.store_name} accent="text-[#3B72FF]" />

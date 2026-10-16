@@ -1,4 +1,4 @@
-import { ArrowLeft, Copy, FileUp, GlassWater, MoreHorizontal, Package, Pencil, Plus, Search, Snowflake, Star, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, FileUp, GlassWater, Images, MoreHorizontal, Package, Pencil, Plus, Search, Snowflake, Star, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
@@ -6,7 +6,7 @@ import { comboNote, isEnergetico2L } from '../lib/combo';
 import { isoToLocal, localToIso, money, moneyInput, normalizeText, parseMoney, promoState } from '../lib/format';
 import { navigate } from '../lib/router';
 import type { Category, ProductRecord } from '../lib/types';
-import { commitImage, discardImages, emptyImage } from './client';
+import { commitProductPhoto, discardImages, emptyImage, generateThumbnailsFor, isStoredProductPhoto } from './client';
 import type { ImageValue } from './client';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, ImageInput, Modal, PageHeader, Skeleton, Spinner, Switch, cx, useConfirm, useToast } from './ui';
 
@@ -365,7 +365,12 @@ type Filter = 'all' | 'active' | 'inactive' | 'soldout' | 'featured' | 'ice';
 
 export function ProductsPage() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [products, setProducts] = useState<ProductRecord[] | null>(null);
+  // Geração das miniaturas das fotos que já existiam (ver `generateThumbnailsFor`): andamento enquanto roda.
+  const [thumbJob, setThumbJob] = useState<{ done: number; total: number; failed: number } | null>(null);
+  const mounted = useRef(true);
+  useEffect(() => () => void (mounted.current = false), []);
   const [categories, setCategories] = useState<Category[]>([]);
   const [featuredLimit, setFeaturedLimit] = useState(4);
   const [error, setError] = useState(false);
@@ -403,6 +408,42 @@ export function ProductsPage() {
       setProducts((list) => list?.map((x) => (x.id === p.id ? p : x)) ?? null);
       toast.error('Não foi possível salvar o produto.', friendlyError(err, ''));
     }
+  };
+
+  // Fotos do Blob da loja que ainda não têm miniatura (as cadastradas antes das miniaturas existirem).
+  const withoutThumbs = useMemo(() => (products ?? []).filter((p) => isStoredProductPhoto(p.image_url) && !p.image_sm_url), [products]);
+
+  const generateThumbs = async () => {
+    const queue = withoutThumbs;
+    const go = await confirm({
+      title: 'Gerar miniaturas das fotos',
+      description: `${queue.length} foto(s) ainda não têm miniatura. Com elas, o cardápio do site baixa umas 7 vezes menos dados no celular (cada foto da lista passa de ~150 KB para ~15 KB) e rola mais leve. A foto original não muda. Pode levar alguns minutos: deixe esta página aberta. Se fechar, é só voltar e clicar de novo: continua de onde parou.`,
+      confirmLabel: 'Gerar agora',
+      tone: 'primary',
+    });
+    if (!go) return;
+    let done = 0;
+    let failed = 0;
+    let reason = '';
+    setThumbJob({ done, total: queue.length, failed });
+    for (const p of queue) {
+      if (!mounted.current) return;
+      try {
+        const made = await generateThumbnailsFor(p.image_url!);
+        // `thumbnails_for`: o servidor só aceita se a foto do produto ainda é esta (se foi trocada nesse meio tempo, recusa).
+        const { product } = await api.patch<{ product: ProductRecord }>(`/api/admin/products/${p.id}`, { image_sm_url: made.sm, image_md_url: made.md, thumbnails_for: p.image_url });
+        if (mounted.current) setProducts((list) => list?.map((x) => (x.id === p.id ? { ...x, image_sm_url: product.image_sm_url, image_md_url: product.image_md_url } : x)) ?? null);
+      } catch (err) {
+        failed += 1;
+        reason ||= err instanceof Error ? err.message : '';
+      }
+      done += 1;
+      if (mounted.current) setThumbJob({ done, total: queue.length, failed });
+    }
+    if (!mounted.current) return;
+    setThumbJob(null);
+    if (failed === 0) toast.success('Miniaturas geradas.', `${done} foto(s) prontas: o site já usa as versões leves.`);
+    else toast.error(`${failed} de ${done} foto(s) ficaram sem miniatura.`, reason ? `${reason} Depois de resolver, clique em "Gerar miniaturas" de novo.` : 'Clique em "Gerar miniaturas" de novo para tentar as que faltam.');
   };
 
   const featuredCount = products?.filter((p) => p.featured && p.active).length ?? 0;
@@ -463,6 +504,11 @@ export function ProductsPage() {
         description={products ? `${products.length} produto(s) · ${featuredCount} de ${featuredLimit} destaques no site` : undefined}
         actions={
           <>
+            {(withoutThumbs.length > 0 || thumbJob) && (
+              <Button variant="secondary" icon={<Images className="h-4 w-4" aria-hidden="true" />} loading={Boolean(thumbJob)} onClick={() => void generateThumbs()}>
+                {thumbJob ? `Gerando miniaturas… ${thumbJob.done}/${thumbJob.total}` : `Gerar miniaturas (${withoutThumbs.length})`}
+              </Button>
+            )}
             <Button variant="secondary" icon={<FileUp className="h-4 w-4" aria-hidden="true" />} onClick={() => setImporting(true)}>
               Importar
             </Button>
@@ -559,7 +605,7 @@ export function ProductsPage() {
                   <tr key={p.id} className={cx('hover:bg-white/[0.02]', !p.active && 'opacity-60')}>
                     <td className="px-4 py-2.5">
                       <a href={`/admin/produtos/${p.id}`} title={p.name} className="flex items-center gap-3">
-                        <Thumb url={p.image_url} name={p.name} soldOut={isSoldOut(p)} />
+                        <Thumb url={p.image_sm_url ?? p.image_url} name={p.name} soldOut={isSoldOut(p)} />
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-semibold text-white hover:text-[#8FB1FF]">{p.name}</p>
                           {p.sku && <p className="truncate text-xs text-white/60">SKU {p.sku}</p>}
@@ -617,7 +663,7 @@ export function ProductsPage() {
               <li key={p.id} className={cx('rounded-2xl border border-white/[0.08] bg-[#0C1018] p-3', !p.active && 'opacity-70')}>
                 <div className="flex items-start gap-3">
                   <a href={`/admin/produtos/${p.id}`} className="flex min-w-0 flex-1 items-start gap-3">
-                    <Thumb url={p.image_url} name={p.name} soldOut={isSoldOut(p)} />
+                    <Thumb url={p.image_sm_url ?? p.image_url} name={p.name} soldOut={isSoldOut(p)} />
                     <span className="min-w-0">
                       <span className="block truncate font-semibold text-white">{p.name}</span>
                       <span className="block text-xs text-white/60">
@@ -851,9 +897,10 @@ export function ProductFormPage({ id }: { id: string }) {
     }
 
     setSaving(true);
-    let image: Awaited<ReturnType<typeof commitImage>>;
+    let photo: Awaited<ReturnType<typeof commitProductPhoto>>;
     try {
-      image = await commitImage(form.image, 'products', 1200);
+      // A foto (até 1200 px) e as duas miniaturas (400 e 720 px) que o site usa nas listas.
+      photo = await commitProductPhoto(form.image);
     } catch (err) {
       setSaving(false);
       toast.error('Não foi possível enviar a imagem.', friendlyError(err, err instanceof Error ? err.message : ''));
@@ -879,7 +926,9 @@ export function ProductFormPage({ id }: { id: string }) {
       active: form.active,
       sold_out: form.sold_out,
       position,
-      image_url: image.url,
+      image_url: photo.url,
+      // Foto nova: as miniaturas dela. Sem foto nova, as que já estão salvas continuam valendo (o servidor zera se a foto sair ou mudar).
+      ...(photo.changed ? { image_sm_url: photo.sm, image_md_url: photo.md } : {}),
     };
     const send = (extra: { confirm_duplicate?: boolean } = {}) =>
       // A URL do Blob fica no Neon; o servidor apaga do Blob a foto antiga que ficou sem uso.
@@ -898,7 +947,7 @@ export function ProductFormPage({ id }: { id: string }) {
           });
           if (!again) {
             setSaving(false);
-            if (image.uploaded) await discardImages([image.url]);
+            await discardImages(photo.uploaded);
             return;
           }
           await send({ confirm_duplicate: true });
@@ -906,12 +955,15 @@ export function ProductFormPage({ id }: { id: string }) {
       }
     } catch (err) {
       setSaving(false);
-      if (image.uploaded) await discardImages([image.url]);
+      await discardImages(photo.uploaded);
       toast.error('Não foi possível salvar o produto.', friendlyError(err, ''));
       return;
     }
     setSaving(false);
-    toast.success(isNew ? 'Produto cadastrado.' : 'Produto salvo.', row.active ? 'Já está no site.' : 'Está desativado: não aparece no site.');
+    toast.success(
+      isNew ? 'Produto cadastrado.' : 'Produto salvo.',
+      row.active ? (photo.changed && !photo.sm ? 'Já está no site (sem miniatura da foto: use "Gerar miniaturas" na lista).' : 'Já está no site.') : 'Está desativado: não aparece no site.',
+    );
     navigate('/admin/produtos');
   };
 

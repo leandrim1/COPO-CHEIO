@@ -18,6 +18,9 @@ const productSpec: Spec = {
   promo_starts_at: dateTime('Início da promoção', { nullable: true }),
   promo_ends_at: dateTime('Fim da promoção', { nullable: true }),
   image_url: imageUrl('Imagem'),
+  // Miniaturas da mesma foto (400 px e 720 px de largura; migration 0025). Sempre pertencem à foto atual: ver `keepThumbnailsInStep`.
+  image_sm_url: imageUrl('Miniatura pequena'),
+  image_md_url: imageUrl('Miniatura média'),
   sku: text('SKU', { max: 40, nullable: true }),
   stock: int('Estoque', { nullable: true }),
   featured: bool('Destaque'),
@@ -131,6 +134,21 @@ async function checkSwapOptions(ids: string[]) {
   if (found?.n !== ids.length) throw new HttpError(400, 'Energéticos da troca: algum produto não foi encontrado.', { code: 'swap_options_missing' });
 }
 
+// As miniaturas só valem para a foto de que foram feitas. Foto nova (ou removida) sem miniaturas novas na mesma requisição — um cliente
+// antigo do painel, uma importação, a API — zera as duas, para o site nunca mostrar a miniatura da foto anterior. Sem foto, não há miniatura.
+function keepThumbnailsInStep(values: Row, before?: Row) {
+  const photoChanged = 'image_url' in values && (!before || values.image_url !== before.image_url);
+  if (photoChanged) {
+    if (!('image_sm_url' in values)) values.image_sm_url = null;
+    if (!('image_md_url' in values)) values.image_md_url = null;
+  }
+  const finalPhoto = 'image_url' in values ? values.image_url : before?.image_url;
+  if (!finalPhoto) {
+    if ('image_sm_url' in values || before?.image_sm_url) values.image_sm_url = null;
+    if ('image_md_url' in values || before?.image_md_url) values.image_md_url = null;
+  }
+}
+
 const withOptions = (id: string) => one<Row>(`select p.*, ${SWAP_OPTIONS_SQL} from products p where p.id = $1`, [id]);
 
 const duplicateError = (found: { id: string; name: string }) =>
@@ -170,6 +188,7 @@ export function registerCatalog(r: Router) {
       const found = await duplicateOf(String(values.name), (values.category_id as string | null) ?? null);
       if (found) throw duplicateError(found);
     }
+    keepThumbnailsInStep(values);
     await checkSwapBase(values.swap_base_product_id);
     const optionIds = swapOptionIds(body);
     await checkSwapOptions(optionIds ?? []);
@@ -193,6 +212,11 @@ export function registerCatalog(r: Router) {
       values.promo_starts_at = null;
       values.promo_ends_at = null;
     }
+    // "Gerar miniaturas" manda de qual foto elas foram feitas: se a foto do produto mudou nesse meio tempo, as miniaturas não servem mais.
+    if (typeof body.thumbnails_for === 'string' && body.thumbnails_for !== before.image_url) {
+      throw new HttpError(409, 'A foto deste produto mudou enquanto as miniaturas eram geradas.', { code: 'photo_changed' });
+    }
+    keepThumbnailsInStep(values, before);
     await checkSwapBase(values.swap_base_product_id, id);
     const optionIds = swapOptionIds(body, id);
     await checkSwapOptions(optionIds ?? []);
@@ -218,7 +242,10 @@ export function registerCatalog(r: Router) {
       }
     }
     const product = await withOptions(id);
-    if ('image_url' in values) await releaseImages([before.image_url as string | null]);
+    // O arquivo antigo (foto e miniaturas) só sai do Blob se nenhum produto o usa mais.
+    if ('image_url' in values || 'image_sm_url' in values || 'image_md_url' in values) {
+      await releaseImages([before.image_url as string | null, before.image_sm_url as string | null, before.image_md_url as string | null]);
+    }
     const diff = changedFields(before, values, PRODUCT_LABELS);
     const summary = [diff?.text, optionsText].filter(Boolean).join('; ');
     if (summary) await audit(ctx, { action: 'product.update', summary: `Produto “${before.name}”: ${summary}`, entity: 'product', entityId: id, details: diff?.details });
@@ -227,9 +254,12 @@ export function registerCatalog(r: Router) {
 
   r.delete('/api/admin/products/:id', 'admin', async (ctx) => {
     const id = uuidParam(ctx);
-    const removed = await one<{ image_url: string | null; name: string; price: number }>('delete from products where id = $1 returning image_url, name, price', [id]);
+    const removed = await one<{ image_url: string | null; image_sm_url: string | null; image_md_url: string | null; name: string; price: number }>(
+      'delete from products where id = $1 returning image_url, image_sm_url, image_md_url, name, price',
+      [id],
+    );
     if (!removed) throw new HttpError(404, 'Produto não encontrado.');
-    await releaseImages([removed.image_url]);
+    await releaseImages([removed.image_url, removed.image_sm_url, removed.image_md_url]);
     await audit(ctx, { action: 'product.delete', summary: `Excluiu o produto “${removed.name}” (${brl(Number(removed.price))})`, entity: 'product', entityId: id });
     return json({ ok: true });
   });
@@ -238,8 +268,8 @@ export function registerCatalog(r: Router) {
   // o arquivo só sai do Blob quando nenhum produto o usa mais.
   r.post('/api/admin/products/:id/duplicate', 'admin', async (ctx) => {
     const product = await one<{ id: string; name: string }>(
-      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required)
-       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required
+      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required)
+       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required
          from products where id = $1
        returning *`,
       [uuidParam(ctx)],

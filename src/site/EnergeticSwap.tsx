@@ -6,7 +6,7 @@ import { money } from '../lib/format';
 import { plainCount, swappedCount } from '../lib/ice';
 import { unitPrice, useShop } from './data';
 import type { Product } from './data';
-import { EnergeticSwapContext } from './energeticSwap';
+import { EnergeticSwapContext } from './energeticSwapContext';
 import { BLUE_BUTTON, ProductImage, SoldOutBadge } from './ui';
 
 // "QUERO TROCAR O ENERGÉTICO" (combos): lista os energéticos de 2L do site. Escolher um troca UMA unidade do combo pelo energético

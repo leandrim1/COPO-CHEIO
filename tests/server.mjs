@@ -62,6 +62,15 @@ const blobStore = http.createServer(async (req, res) => {
 });
 await new Promise((r) => blobStore.listen(Number(process.env.BLOB_PORT ?? 0), '127.0.0.1', r));
 process.env.VERCEL_BLOB_API_URL = `http://127.0.0.1:${blobStore.address().port}`;
+// A rota /api/admin/image-source (painel → "Gerar miniaturas") busca a foto no endereço público do Blob. No teste esse endereço não existe
+// na internet: aqui ele aponta para o armazenamento falso (arquivos enviados pelo próprio teste).
+const realFetch = globalThis.fetch;
+globalThis.fetch = (input, init) => {
+  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+  const url = new URL(href);
+  if (url.hostname === 'teststore.public.blob.vercel-storage.com') return realFetch(`http://127.0.0.1:${blobStore.address().port}/f/${url.pathname.slice(1)}`, init);
+  return realFetch(input, init);
+};
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 const FAKE_OIDC = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({ sub: 'owner:team:project:copocheio:environment:production', exp: Math.floor(Date.now() / 1000) + 3600 })}.sig`;
 if (process.env.BLOB_MODE === 'oidc') {

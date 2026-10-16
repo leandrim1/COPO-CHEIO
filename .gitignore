@@ -16,3 +16,6 @@ tests/node_modules
 tests/build
 tests/server.log
 tests/unit/.build
+
+# Medição de desempenho: fotos sintéticas geradas
+tests/perf/.data

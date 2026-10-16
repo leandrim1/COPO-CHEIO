@@ -196,6 +196,14 @@ produto e envie a foto.
   válidos, até 12 000 px de lado e 50 milhões de pixels, 4 MB; SVG nunca — e grava no Blob. O Neon guarda só a URL. Quando uma
   imagem deixa de ser usada (troca, exclusão), o servidor a apaga do Blob; produto duplicado compartilha a imagem até o último
   uso sumir.
+  - **Miniaturas das fotos de produto** (migration `0025`, `products.image_sm_url` / `image_md_url`): além da foto de até 1200 px, o painel
+    grava duas cópias da **mesma** foto, com **400 px** e **720 px** de largura (WebP, a partir da própria foto escolhida). O site usa a de 400 px direto
+    nas listas (cerca de 1/7 dos bytes da foto original) e deixa o navegador escolher entre as duas (`srcset` + `sizes`) nos "favoritos", que são
+    poucos cartões grandes (o `srcset` nas dezenas de fotos da lista custava mais CPU do que economizava). Produto sem
+    miniatura continua mostrando a foto original, como antes. O servidor garante que as miniaturas **sempre pertencem à foto atual** (trocar ou
+    tirar a foto zera as duas) e as libera do Blob junto com ela. **Fotos que já existem** ganham miniatura pelo botão **Gerar miniaturas (N)**
+    em *Produtos* (uma vez, depois do deploy da 0025: o navegador busca cada foto pelo servidor, gera as duas cópias e grava; pode parar e continuar).
+    Detalhes e números em [`docs/DESEMPENHO.md`](docs/DESEMPENHO.md).
 - **Estoque**: vazio = não controla. Com controle, cada pedido desconta; chegou a 0, vira ESGOTADO; repôs, volta a vender. Mexer na
   quantidade de um produto que **não** controla estoque exige ativar o controle de propósito (botão "Começar a controlar" em
   *Estoque*); o banco não deixa o estoque ficar negativo.
@@ -856,6 +864,15 @@ de verdade (nem o provedor de e-mail opcional: ele é um simulador). Como prepar
 Variáveis de ambiente, previews × produção, deploy e migrations, monitoramento, backup e restauração, o que fazer quando algo dá
 errado (login bloqueado, 2FA perdido, e-mail que não chega, pedido de privacidade, troca de segredos) e por quanto tempo cada dado é
 guardado: [`docs/OPERACAO.md`](docs/OPERACAO.md).
+
+## Desempenho
+
+O site foi medido e otimizado **sem mudar o visual nem nenhuma função**: cardápio que só redesenha o cartão tocado, busca que não trava a digitação, nada de
+salto de layout na primeira visita, fotos das listas com 1/7 dos bytes (miniaturas), cardápio e foto principal (capa, promoção, primeira bebida) pedidos já na
+leitura do HTML, slides escondidos dos carrosséis sem disputar a rede com a foto que aparece, finalização do pedido e vídeo da página inicial carregados só
+quando servem, e partida a frio da função mais leve. O relatório (o que foi medido, antes × depois, o que **não** dá para medir
+daqui, o que fica pendente e o que o dono precisa conferir) está em [`docs/DESEMPENHO.md`](docs/DESEMPENHO.md); as ferramentas de medição, em
+[`tests/perf/`](tests/perf/README.md).
 
 ## Estrutura
 

@@ -10,7 +10,6 @@
 //   SMTP_SECURE  "true"/"false"; padrão: true na porta 465, false nas outras            (opcional)
 //   MAIL_FROM    remetente, ex.: Copo Cheio <loja@seudominio.com.br>; se faltar e SMTP_USER for um
 //                e-mail, usa "Copo Cheio <SMTP_USER>"                                  (opcional)
-import nodemailer from 'nodemailer';
 import { MissingConfig } from './env.js';
 
 export type MailConfig = { host: string; port: number; secure: boolean; user: string; pass: string; from: string };
@@ -70,6 +69,9 @@ export async function smtpSend(
 ): Promise<SmtpInfo> {
   const config = mailConfig();
   if (!config) throw new MissingConfig(mailMissing(), `Envio de e-mail não configurado. Faltam: ${mailMissing().join(', ')}.`);
+  // O nodemailer só é carregado no primeiro envio: levava ~100 ms para iniciar na partida a frio da função, e a maioria das chamadas da API
+  // (cardápio, textos do site, pedidos...) nunca envia e-mail.
+  const { default: nodemailer } = await import('nodemailer');
   const transport = nodemailer.createTransport({
     host: config.host,
     port: config.port,

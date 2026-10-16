@@ -11,6 +11,11 @@
       content="COPO CHEIO – Disk Bebidas. Bebidas bem geladas, variedade e entrega rápida na sua casa."
     />
     <title>COPO CHEIO – Disk Bebidas</title>
+    <!-- Pedido adiantado: /early.js começa a pedir o cardápio e os textos do site assim que o HTML é lido, enquanto o JavaScript principal (bem
+         maior) ainda baixa; antes, esses pedidos só saíam depois de o site inteiro baixar e iniciar. `fetchShop` (src/site/data.tsx) usa essas
+         respostas e, se faltarem ou vierem com erro, pede sozinho como sempre. Em "/" e "/bebidas" o mesmo arquivo também adianta a foto principal
+         (capa, 1ª promoção, 1ª bebida). Arquivo à parte (e não inline) porque a política de segurança do site não aceita script dentro do HTML. -->
+    <script src="/early.js" async></script>
   </head>
   <body class="bg-[#050505]">
     <div id="root"></div>

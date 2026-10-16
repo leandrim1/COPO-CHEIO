@@ -52,7 +52,7 @@ function StockRow({ product, category, onChanged }: { product: ProductRecord; ca
     <li className="grid gap-3 px-3 py-3 sm:px-5 md:grid-cols-[1fr_auto_auto] md:items-center">
       <div className="flex min-w-0 items-center gap-3">
         <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-white/[0.04] ring-1 ring-white/[0.06]">
-          {product.image_url ? <img src={product.image_url} alt="" className={cx('h-full w-full object-contain p-1', soldOut && 'opacity-50 grayscale')} /> : <Boxes className="h-5 w-5 text-white/55" aria-hidden="true" />}
+          {product.image_url ? <img src={product.image_sm_url ?? product.image_url} alt="" className={cx('h-full w-full object-contain p-1', soldOut && 'opacity-50 grayscale')} /> : <Boxes className="h-5 w-5 text-white/55" aria-hidden="true" />}
         </span>
         <div className="min-w-0">
           <p className="truncate font-semibold text-white">{product.name}</p>

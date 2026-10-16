@@ -18,6 +18,10 @@ export type Product = {
   promoPrice: number | null;
   description?: string;
   image?: string;
+  // Miniaturas da mesma foto (migration 0025). `imageSm`: a de 400 px de largura, que é a foto das listas (cartões, linhas do pedido);
+  // `imageSrcSet`: a de 400 e a de 720 px no formato do atributo srcset do <img>, para os "favoritos" (cartões grandes). Vazio = só a foto original.
+  imageSm?: string;
+  imageSrcSet?: string;
   featured: boolean;
   soldOut: boolean;
   position: number;
@@ -152,6 +156,9 @@ function readCache(): ShopData | null {
       // A cópia salva por uma versão de antes da troca de energético não tem esse campo.
       .map((p) => ({
         ...p,
+        // A cópia salva por uma versão de antes das miniaturas não tem estes campos.
+        imageSm: typeof p.imageSm === 'string' ? p.imageSm : undefined,
+        imageSrcSet: typeof p.imageSrcSet === 'string' ? p.imageSrcSet : undefined,
         swapBaseId: typeof p.swapBaseId === 'string' ? p.swapBaseId : null,
         swapBasePrice: Number.isFinite(Number(p.swapBasePrice)) && p.swapBasePrice !== null ? Number(p.swapBasePrice) : null,
         swapOptionIds: Array.isArray(p.swapOptionIds) ? p.swapOptionIds.filter((x): x is string => typeof x === 'string') : [],
@@ -170,6 +177,8 @@ type ProductRowFromDb = {
   price: number;
   promo_price: number | null;
   image_url: string | null;
+  image_sm_url?: string | null;
+  image_md_url?: string | null;
   featured: boolean;
   sold_out: boolean;
   position: number;
@@ -178,6 +187,18 @@ type ProductRowFromDb = {
   swap_option_ids?: string[] | null;
   ice_choice_required?: boolean;
 };
+
+// As miniaturas viram o `srcset` do <img> (a largura de cada uma é a de quando o painel as gera: 400 e 720). Endereço com vírgula ou espaço
+// quebraria o atributo, então só entra o que é um link simples: https ou um caminho do próprio site (/img/...).
+const SRCSET_URL = /^(?:https:\/\/|\/(?!\/))[^\s,]+$/;
+export const simpleImageUrl = (value: unknown): string | undefined => (typeof value === 'string' && SRCSET_URL.test(value) ? value : undefined);
+export function imageSrcSet(sm: unknown, md: unknown): string | undefined {
+  const parts = [simpleImageUrl(sm) ? `${sm} 400w` : '', simpleImageUrl(md) ? `${md} 720w` : ''].filter(Boolean);
+  return parts.length ? parts.join(', ') : undefined;
+}
+
+// Um colador só (o `localeCompare(…, 'pt-BR')` de cada comparação montava um novo): mesma ordem, bem menos trabalho em celular fraco.
+const collator = new Intl.Collator('pt-BR');
 
 function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[] {
   const byId = new Map(categories.map((c) => [c.id, c]));
@@ -194,6 +215,8 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         promoPrice: row.promo_price === null ? null : Number(row.promo_price),
         description: row.description?.trim() || undefined,
         image: row.image_url || undefined,
+        imageSm: row.image_url ? simpleImageUrl(row.image_sm_url) : undefined,
+        imageSrcSet: row.image_url ? imageSrcSet(row.image_sm_url, row.image_md_url) : undefined,
         featured: row.featured,
         soldOut: row.sold_out,
         position: row.position,
@@ -206,18 +229,64 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
     .sort(
       (a, b) =>
         a.categoryPosition - b.categoryPosition ||
-        a.category.localeCompare(b.category, 'pt-BR') ||
+        collator.compare(a.category, b.category) ||
         a.position - b.position ||
-        a.name.localeCompare(b.name, 'pt-BR'),
+        collator.compare(a.name, b.name),
     );
+}
+
+// Depois de buscar de novo, o que não mudou continua sendo o MESMO objeto: a tela só redesenha o que de fato mudou. A cópia salva no
+// navegador costuma ser igual ao que chega da API, e 90 cartões de produto não precisam ser refeitos à toa (nem o pedido reajustado).
+const sameValue = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+export function reuseUnchanged(prev: ShopData, next: ShopData): ShopData {
+  const before = new Map(prev.products.map((p) => [p.id, p]));
+  const products = next.products.map((p) => {
+    const old = before.get(p.id);
+    return old && sameValue(old, p) ? old : p;
+  });
+  const keep = <K extends keyof ShopData>(key: K): ShopData[K] => (sameValue(prev[key], next[key]) ? prev[key] : next[key]);
+  return {
+    store: keep('store'),
+    site: keep('site'),
+    hero: keep('hero'),
+    banners: keep('banners'),
+    coverBanners: keep('coverBanners'),
+    zones: keep('zones'),
+    payments: keep('payments'),
+    products: products.length === prev.products.length && products.every((p, i) => p === prev.products[i]) ? prev.products : products,
+  };
+}
+
+declare global {
+  interface Window {
+    // Preenchido por public/early.js (cardápio e textos do site, pedidos assim que o HTML foi lido); usado uma vez, pela primeira carga.
+    __copoEarly?: { products: Promise<Response>; site: Promise<Response> };
+  }
+}
+
+// A resposta que `public/early.js` já foi buscar enquanto o JavaScript baixava (só a primeira carga a usa, uma vez). Resposta com erro ou
+// que não abre como JSON volta a ser pedida do jeito de sempre, para o erro mostrado ser o mesmo de antes.
+async function fromEarly<T>(early: Promise<Response> | undefined, path: string): Promise<T> {
+  if (early) {
+    try {
+      const response = await early;
+      if (response.ok) return (await response.json()) as T;
+    } catch {
+      /* cai no pedido normal */
+    }
+  }
+  return api.get<T>(path);
 }
 
 // `bypassCache`: pede direto ao servidor, sem a cópia de poucos segundos que a borda da Vercel guarda (usado quando o preço mudou).
 async function fetchShop(bypassCache = false): Promise<ShopData> {
   const bust = bypassCache ? `?t=${Date.now()}` : '';
+  const early = bypassCache ? undefined : window.__copoEarly;
+  window.__copoEarly = undefined;
   const [catalog, content] = await Promise.all([
-    api.get<{ categories?: Category[]; products?: ProductRowFromDb[] }>(`/api/products${bust}`),
-    api.get<ContentFromApi>(`/api/site${bust}`),
+    fromEarly<{ categories?: Category[]; products?: ProductRowFromDb[] }>(early?.products, `/api/products${bust}`),
+    fromEarly<ContentFromApi>(early?.site, `/api/site${bust}`),
   ]);
   const categories = list<Category>(catalog.categories, (c) => isObject(c) && typeof c.id === 'string' && typeof c.name === 'string');
   const visibleCategories = new Set(categories.map((c) => c.id));
@@ -244,7 +313,7 @@ function useShopData() {
     lastFetch.current = Date.now();
     try {
       const data = await fetchShop(bypassCache);
-      setState({ data, fresh: true, cached: true, failed: false });
+      setState((s) => ({ data: reuseUnchanged(s.data, data), fresh: true, cached: true, failed: false }));
       try {
         localStorage.setItem(CACHE_KEY, JSON.stringify(data));
       } catch {

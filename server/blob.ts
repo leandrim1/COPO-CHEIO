@@ -1,6 +1,5 @@
 // Imagens no Vercel Blob (copocheio-uploads). A credencial fica só no ambiente do servidor (token clássico ou
 // OIDC + BLOB_STORE_ID); no Neon fica só a URL pública do arquivo.
-import { BlobError, del, put } from '@vercel/blob';
 import { randomUUID } from 'node:crypto';
 import { query } from './db.js';
 import { MissingConfig, blobConfigured, blobToken } from './env.js';
@@ -19,6 +18,10 @@ export function sniffImage(b: Uint8Array): string | null {
   return inspectImage(b)?.type ?? null;
 }
 
+// O SDK do Blob só é carregado quando uma imagem é enviada ou apagada: levava ~100 ms para iniciar na partida a frio da função, e o cardápio
+// e a maioria das chamadas da API nunca falam com o Blob.
+const sdk = () => import('@vercel/blob');
+
 // Com token clássico passa o token; sem ele o SDK usa OIDC + BLOB_STORE_ID sozinho.
 const auth = () => {
   const token = blobToken();
@@ -32,6 +35,7 @@ export async function uploadImage(folder: Folder, bytes: Uint8Array): Promise<{ 
   const info = inspectImage(bytes);
   if (!info) throw new HttpError(400, 'O arquivo não é uma imagem válida (ou é grande demais em pixels). Envie uma imagem JPG, PNG, WebP, GIF ou AVIF.');
   const type = info.type;
+  const { BlobError, put } = await sdk();
   try {
     const blob = await put(`${folder}/${randomUUID()}.${EXTENSION[type]}`, Buffer.from(bytes), {
       ...auth(),
@@ -72,7 +76,7 @@ export async function releaseImages(urls: (string | null | undefined)[]): Promis
   for (const url of unique) {
     const used = await query<{ used: boolean }>(
       `select (
-         exists (select 1 from products where image_url = $1)
+         exists (select 1 from products where image_url = $1 or image_sm_url = $1 or image_md_url = $1)
          or exists (select 1 from banners where image_desktop_url = $1 or image_mobile_url = $1)
          or exists (select 1 from site_settings where logo_url = $1 or og_image_url = $1 or favicon_url = $1)
          or exists (select 1 from hero_settings where images ? $1)
@@ -83,6 +87,7 @@ export async function releaseImages(urls: (string | null | undefined)[]): Promis
   }
   if (!orphans.length) return;
   try {
+    const { del } = await sdk();
     await del(orphans, auth());
   } catch (error) {
     // Arquivo sobrando no Blob não afeta o site; só registra.

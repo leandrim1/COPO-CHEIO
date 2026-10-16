@@ -76,6 +76,9 @@ export type ProductRecord = {
   price: number;
   promo_price: number | null;
   image_url: string | null;
+  // Miniaturas da mesma foto (400 px e 720 px de largura), geradas pelo painel; vazias = só a foto original (migration 0025).
+  image_sm_url?: string | null;
+  image_md_url?: string | null;
   sku: string | null;
   stock: number | null;
   featured: boolean;

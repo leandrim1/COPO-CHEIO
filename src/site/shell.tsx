@@ -1,7 +1,7 @@
 import { ArrowLeft } from 'lucide-react';
 import { useId } from 'react';
 import type { ReactNode } from 'react';
-import { Footer } from './ui';
+import { Footer, logoSources } from './ui';
 import { useShop } from './data';
 
 // Peças compartilhadas pelas páginas do cliente (checkout, acompanhamento, conta).
@@ -57,7 +57,7 @@ export function PageShell({ back, backLabel, children }: { back: string; backLab
           {backLabel}
         </a>
         <a href="/" className="flex items-center gap-2 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white" aria-label={`${store.store_name} – início`}>
-          <img src={logo} alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_24px_rgba(20,92,255,0.55)]" />
+          <img {...logoSources(logo, '40px')} alt="" width={40} height={40} className="h-10 w-10 rounded-full object-contain ring-1 ring-white/15 shadow-[0_0_24px_rgba(20,92,255,0.55)]" />
         </a>
       </header>
       <main className="relative mx-auto w-full max-w-5xl px-4 pb-24 pt-6 sm:px-6">{children}</main>

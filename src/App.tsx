@@ -16,14 +16,13 @@ import {
   TriangleAlert,
   X,
 } from 'lucide-react';
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent, ReactNode, RefObject } from 'react';
 import { DEFAULT_FAVICON, DEFAULT_SHARE_IMAGE } from './lib/defaults';
 import { money, normalizeText } from './lib/format';
 import { hoursLines } from './lib/hours';
 import { useLinkInterception, usePathname } from './lib/router';
 import { ICE_REQUIRED_MESSAGE } from './lib/ice';
-import { CheckoutPage } from './site/Checkout';
 import type { CustomerPage } from './site/CustomerPages';
 import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
 import type { Product } from './site/data';
@@ -44,12 +43,14 @@ import {
   InstagramIcon,
   NAV_HREF,
   NAV_LINKS,
+  IMAGE_SIZES,
   Price,
   ProductImage,
   ProductPrice,
   SoldOutBadge,
   WHATSAPP_BUTTON,
   WhatsAppIcon,
+  logoSources,
 } from './site/ui';
 import type { Banner } from './lib/types';
 
@@ -57,6 +58,10 @@ import type { Banner } from './lib/types';
 const AdminApp = lazy(() => import('./admin/AdminApp'));
 // Acompanhamento de pedidos e conta do cliente: pacote à parte, fora do caminho da página inicial.
 const CustomerPages = lazy(() => import('./site/CustomerPages'));
+// A finalização do pedido também: quem só olha o cardápio não baixa o formulário (a página já o pede ao navegador em segundo plano
+// assim que o primeiro item entra no pedido, para o "Finalizar" abrir sem espera).
+const loadCheckout = () => import('./site/Checkout').then((m) => ({ default: m.CheckoutPage }));
+const CheckoutPage = lazy(loadCheckout);
 
 const VIDEO_URL =
   'https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260508_215831_c6a8989c-d716-4d8d-8745-e972a2eec711.mp4';
@@ -211,12 +216,25 @@ function useVideoFraming(
 
 // Stacks every drink in the same spot and cross-fades between them; the dots below pick one.
 // The rotation pauses while a mouse hovers the dots or a keyboard user is focused on them.
-function DrinkShowcase({ drinks }: { drinks: { src: string; alt: string }[] }) {
+function DrinkShowcase({ drinks, onFirstLoaded }: { drinks: { src: string; alt: string }[]; onFirstLoaded?: () => void }) {
   const [active, setActive] = useState(0);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const paused = hovered || focused;
   const current = active < drinks.length ? active : 0;
+  // As outras bebidas só começam a baixar depois que a primeira (a que aparece) chegou (ou se passaram 3 s): até lá elas disputariam a
+  // rede com a foto que define a velocidade da página. Elas só aparecem na troca, 4,5 s depois.
+  const firstSrc = drinks[0]?.src;
+  const [firstDone, setFirstDone] = useState<string | undefined>(undefined);
+  const restReady = drinks.length < 2 || firstDone === firstSrc || current > 0;
+  useEffect(() => {
+    const timer = window.setTimeout(() => setFirstDone(firstSrc), 3000);
+    return () => window.clearTimeout(timer);
+  }, [firstSrc]);
+  const firstReady = firstDone !== undefined;
+  useEffect(() => {
+    if (firstReady) onFirstLoaded?.();
+  }, [firstReady, onFirstLoaded]);
 
   useEffect(() => {
     if (paused || drinks.length < 2) return;
@@ -228,6 +246,7 @@ function DrinkShowcase({ drinks }: { drinks: { src: string; alt: string }[] }) {
     <>
       <div className="absolute inset-0 cc-float drop-shadow-[0_30px_50px_rgba(0,0,0,0.55)]">
         {drinks.map((drink, i) => {
+          if (i > 0 && !restReady) return null;
           const isActive = i === current;
           return (
             <img
@@ -239,6 +258,8 @@ function DrinkShowcase({ drinks }: { drinks: { src: string; alt: string }[] }) {
               height={1100}
               decoding="async"
               fetchPriority={i === 0 ? 'high' : 'low'}
+              onLoad={i === 0 ? () => setFirstDone(drink.src) : undefined}
+              onError={i === 0 ? () => setFirstDone(drink.src) : undefined}
               className={`absolute inset-0 h-full w-full object-contain transition-[opacity,transform] duration-700 ease-out motion-reduce:transition-opacity ${
                 isActive
                   ? 'translate-y-0 scale-100 opacity-100'
@@ -465,7 +486,12 @@ function AddControl({
   );
 }
 
-function ProductDetails({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: (qty: number) => void; onPick?: () => void }) {
+// Os cartões da lista recebem funções que nunca mudam de identidade (e a quantidade atual do produto): assim, ao mexer no pedido, só o cartão
+// daquele produto é redesenhado, e não os 90 da lista. `from` é a quantidade que o cartão mostra; `to`, a que a pessoa pediu.
+type ChangeQty = (product: Product, from: number, to: number) => void;
+type PickIce = (product: Product) => void;
+
+function ProductDetails({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: ChangeQty; onPick?: PickIce }) {
   return (
     <div className="flex flex-1 flex-col px-1 pb-1 pt-3">
       <h3 className="line-clamp-2 min-h-[2.5rem] text-[15px] font-bold leading-tight text-white sm:min-h-[2.6rem] sm:text-base">
@@ -477,14 +503,14 @@ function ProductDetails({ product, qty, onChange, onPick }: { product: Product; 
       <div className="mt-auto pt-3">
         <ProductPrice product={product} className="text-xl sm:text-2xl" />
         <div className="mt-2.5">
-          <AddControl qty={qty} name={product.name} onChange={onChange} onPick={onPick} soldOut={product.soldOut} />
+          <AddControl qty={qty} name={product.name} onChange={(to) => onChange(product, qty, to)} onPick={onPick && (() => onPick(product))} soldOut={product.soldOut} />
         </div>
       </div>
     </div>
   );
 }
 
-function FeaturedCard({
+const FeaturedCard = memo(function FeaturedCard({
   product,
   qty,
   onChange,
@@ -493,8 +519,8 @@ function FeaturedCard({
 }: {
   product: Product;
   qty: number;
-  onChange: (qty: number) => void;
-  onPick?: () => void;
+  onChange: ChangeQty;
+  onPick?: PickIce;
   className?: string;
 }) {
   return (
@@ -507,13 +533,13 @@ function FeaturedCard({
           FAVORITO
         </span>
         <div className="relative aspect-square overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.6),rgba(20,92,255,0.12)_55%,transparent_78%)]">
-          <ProductImage product={product} />
+          <ProductImage product={product} sizes={IMAGE_SIZES.featured} />
         </div>
         <ProductDetails product={product} qty={qty} onChange={onChange} onPick={onPick} />
       </div>
     </li>
   );
-}
+});
 
 function SkeletonRow() {
   return (
@@ -530,9 +556,25 @@ function SkeletonRow() {
 
 // ---- Banners (cadastrados no painel) -----------------------------------------------------------
 
+// Os slides que ainda não aparecem ficam empilhados sob o da vez (opacidade 0), mas DENTRO da tela, e o navegador não sabe que estão escondidos: ele baixa a
+// foto de todos de uma vez, junto com a que aparece, e em rede lenta a que importa (a primeira, quase sempre a maior da tela) espera as outras. Por isso os demais
+// slides só pedem a foto depois que a primeira terminou (carregou ou falhou), e com prioridade baixa. O prazo de 8 s é só uma garantia, caso o aviso da primeira
+// nunca chegue. Para quem vê, nada muda: no ritmo normal os slides já estão prontos antes da vez deles.
+function useRestReady(waitForFirst: boolean): [boolean, () => void] {
+  const [opened, setOpened] = useState(false);
+  const open = useCallback(() => setOpened(true), []);
+  useEffect(() => {
+    if (!waitForFirst || opened) return;
+    const timer = window.setTimeout(open, 8000);
+    return () => window.clearTimeout(timer);
+  }, [waitForFirst, opened, open]);
+  return [opened || !waitForFirst, open];
+}
+
 function BannerCarousel({ banners, className = '' }: { banners: Banner[]; className?: string }) {
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [restReady, openRest] = useRestReady(Boolean(banners[0] && (banners[0].image_desktop_url ?? banners[0].image_mobile_url)));
   const current = active < banners.length ? active : 0;
 
   useEffect(() => {
@@ -557,14 +599,17 @@ function BannerCarousel({ banners, className = '' }: { banners: Banner[]; classN
         const external = banner.link?.startsWith('https://');
         const content = (
           <>
-            {image && (
+            {image && (i === 0 || isActive || restReady) && (
               <picture>
                 {banner.image_mobile_url && <source media="(max-width: 639px)" srcSet={banner.image_mobile_url} />}
                 <img
                   src={image}
                   alt={hasText ? '' : (banner.title ?? 'Promoção')}
                   loading={i === 0 ? 'eager' : 'lazy'}
+                  fetchPriority={i === 0 ? 'high' : 'low'}
                   decoding="async"
+                  onLoad={i === 0 ? openRest : undefined}
+                  onError={i === 0 ? openRest : undefined}
                   className="absolute inset-0 h-full w-full object-cover"
                 />
               </picture>
@@ -643,7 +688,21 @@ function CoverDecoration({ visible }: { visible: boolean }) {
 }
 
 // Uma imagem de capa. Entra aos poucos quando termina de carregar; se não abrir, avisa para sair da vez.
-function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isActive: boolean; first: boolean; onBroken: (banner: Banner) => void }) {
+function CoverSlide({
+  banner,
+  isActive,
+  first,
+  mount,
+  onSettled,
+  onBroken,
+}: {
+  banner: Banner;
+  isActive: boolean;
+  first: boolean;
+  mount: boolean; // false: o slide existe, mas ainda não pede a foto (ver useRestReady)
+  onSettled?: () => void; // a foto terminou de carregar (ou falhou)
+  onBroken: (banner: Banner) => void;
+}) {
   const [loaded, setLoaded] = useState(false);
   const imgRef = useRef<HTMLImageElement>(null);
   const external = banner.link?.startsWith('https://');
@@ -651,10 +710,13 @@ function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isA
   // Imagem que o navegador já tinha pode ter terminado de carregar antes de o React ouvir o evento.
   useEffect(() => {
     const img = imgRef.current;
-    if (img?.complete && img.naturalWidth > 0) setLoaded(true);
-  }, []);
+    if (img?.complete && img.naturalWidth > 0) {
+      setLoaded(true);
+      onSettled?.();
+    }
+  }, [mount, onSettled]);
 
-  const picture = (
+  const picture = !mount ? null : (
     <picture>
       {banner.image_mobile_url && <source media="(max-width: 639px)" srcSet={banner.image_mobile_url} />}
       <img
@@ -662,17 +724,23 @@ function CoverSlide({ banner, isActive, first, onBroken }: { banner: Banner; isA
         src={(banner.image_desktop_url ?? banner.image_mobile_url)!}
         alt={banner.title || 'Promoção'}
         loading={first ? 'eager' : 'lazy'}
-        fetchPriority={first ? 'high' : 'auto'}
+        fetchPriority={first ? 'high' : 'low'}
         decoding="async"
-        onLoad={() => setLoaded(true)}
-        onError={() => onBroken(banner)}
+        onLoad={() => {
+          setLoaded(true);
+          onSettled?.();
+        }}
+        onError={() => {
+          onBroken(banner);
+          onSettled?.();
+        }}
         className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 motion-reduce:transition-none lg:object-contain ${loaded ? 'opacity-100' : 'opacity-0'}`}
       />
     </picture>
   );
   // No computador (a partir de 1024 px) a capa é larga e mostra a imagem inteira, sem cortes; o que sobra nos lados é
   // preenchido com a própria imagem desfocada. No celular e no tablet este elemento nem existe na tela (display: none).
-  const backdrop = (
+  const backdrop = !mount ? null : (
     <span
       aria-hidden="true"
       className="absolute inset-0 hidden scale-110 bg-cover bg-center opacity-70 blur-2xl lg:block"
@@ -724,6 +792,7 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
     () => banners.filter((b) => (b.image_desktop_url || b.image_mobile_url) && !broken.includes(coverKey(b))),
     [banners, broken],
   );
+  const [restReady, openRest] = useRestReady(slides.length > 0);
   const current = active < slides.length ? active : 0;
 
   useEffect(() => {
@@ -751,6 +820,8 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
           banner={banner}
           isActive={i === current}
           first={i === 0}
+          mount={i === 0 || i === current || restReady}
+          onSettled={i === 0 ? openRest : undefined}
           onBroken={(b) => setBroken((list) => (list.includes(coverKey(b)) ? list : [...list, coverKey(b)]))}
         />
       ))}
@@ -787,9 +858,9 @@ const WIDE = 'lg:mx-auto lg:max-w-[120rem] lg:px-10 xl:px-14 2xl:px-20';
 
 const categoryId = (name: string) => `cat-${normalizeText(name).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
 
-function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: (qty: number) => void; onPick?: () => void }) {
+const ProductRow = memo(function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty: number; onChange: ChangeQty; onPick?: PickIce }) {
   return (
-    <li className="group relative flex gap-3 rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.02] p-3.5 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-[#2563FF]/50 hover:shadow-[0_22px_50px_-24px_rgba(37,99,255,0.75)] motion-reduce:transform-none sm:gap-5 sm:p-4">
+    <li className="group relative flex gap-3 rounded-3xl border border-white/10 bg-gradient-to-br from-white/[0.07] to-white/[0.02] p-3.5 transition-all duration-300 hover:-translate-y-0.5 hover:border-[#2563FF]/50 hover:shadow-[0_22px_50px_-24px_rgba(37,99,255,0.75)] motion-reduce:transform-none sm:gap-5 sm:p-4">
       <div className="flex min-w-0 flex-1 flex-col">
         <h3 className={`text-[15px] font-bold leading-snug sm:text-base ${product.soldOut ? 'text-white/60' : 'text-white'}`}>{product.name}</h3>
         {product.description && (
@@ -798,7 +869,7 @@ function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty:
         {/* Preço e controle sempre na mesma linha, em todos os cards (sem quebrar para baixo). */}
         <div className="mt-auto flex flex-nowrap items-center justify-between gap-2 pt-3">
           <ProductPrice product={product} className={`text-base min-[360px]:text-lg min-[480px]:text-xl sm:text-2xl ${product.soldOut ? 'opacity-60' : ''}`} />
-          <AddControl qty={qty} name={product.name} onChange={onChange} onPick={onPick} compact soldOut={product.soldOut} />
+          <AddControl qty={qty} name={product.name} onChange={(to) => onChange(product, qty, to)} onPick={onPick && (() => onPick(product))} compact soldOut={product.soldOut} />
         </div>
       </div>
       <div className="relative h-32 w-[5.5rem] shrink-0 self-start overflow-hidden rounded-2xl bg-[radial-gradient(circle_at_50%_58%,rgba(37,99,255,0.4),rgba(20,92,255,0.07)_55%,transparent_78%)] min-[360px]:w-[6.5rem] min-[480px]:w-32 sm:h-44 sm:w-44">
@@ -807,27 +878,32 @@ function ProductRow({ product, qty, onChange, onPick }: { product: Product; qty:
       </div>
     </li>
   );
-}
+});
 
 function BebidasPage() {
   const { ready, fresh, failed, offline, refresh, products, cart, store, site, banners, coverBanners, zones, logo } = useShop();
   const { setTotal, countOf, announce } = cart;
   // O contador do cartão soma todas as linhas do produto (um combo pode ter unidades com energético trocado): aumentar entra na linha
-  // normal e diminuir tira primeiro dela. Aumentar um produto com observação (combo) mostra o aviso na hora.
-  const changeQty = (product: Product, qty: number) => {
-    if (qty > countOf(product.id)) announce(product);
-    setTotal(product.id, qty);
-  };
+  // normal e diminuir tira primeiro dela. Aumentar um produto com observação (combo) mostra o aviso na hora. `from` é a quantidade que o
+  // cartão mostrava (a mesma que `countOf` dava quando ele foi desenhado). A função não muda de identidade, para os cartões não serem
+  // redesenhados à toa (ver `memo` em ProductRow).
+  const changeQty = useCallback(
+    (product: Product, from: number, to: number) => {
+      if (to > from) announce(product);
+      setTotal(product.id, to);
+    },
+    [announce, setTotal],
+  );
   const picker = useIcePicker();
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
   const chipsRef = useRef<HTMLDivElement>(null);
 
-  const term = normalizeText(query.trim());
-  const matches = useMemo(
-    () => (term ? products.filter((p) => normalizeText(`${p.name} ${p.description ?? ''} ${p.category}`).includes(term)) : products),
-    [products, term],
-  );
+  // A busca é adiada: o campo responde na hora e a lista (até 90 cartões) é refeita logo depois, sem travar a digitação em celular fraco.
+  const term = normalizeText(useDeferredValue(query).trim());
+  // O texto de busca de cada produto é preparado uma vez por cardápio (e não a cada letra digitada).
+  const haystacks = useMemo(() => products.map((p) => normalizeText(`${p.name} ${p.description ?? ''} ${p.category}`)), [products]);
+  const matches = useMemo(() => (term ? products.filter((_, i) => haystacks[i].includes(term)) : products), [products, haystacks, term]);
   const groups = useMemo(() => {
     const byCategory = new Map<string, Product[]>();
     for (const product of matches) {
@@ -884,14 +960,15 @@ function BebidasPage() {
   const loadFailed = failed && products.length === 0;
   const hasBanners = banners.length > 0;
 
-  // Só no computador (a partir de 1024 px) e só na primeira visita (sem cópia do cardápio salva): até os dados chegarem, os textos da
-  // loja e os brilhos de fundo (que acompanham a altura da página) ficam escondidos, em vez de aparecer com valores provisórios e
-  // pular de lugar quando o cardápio chega (isso media 0,21 a 0,28 de salto de layout). No celular e para quem já visitou nada muda.
+  // Só na primeira visita (sem cópia do cardápio salva): até os dados chegarem, os brilhos de fundo (que acompanham a altura da página:
+  // ficam a 1/3 e a 2/3 dela e "andavam" mais de 5 000 px quando o cardápio chegava) não aparecem, e a linha de situação da loja (aberto/
+  // fechado, informações) já ocupa o seu lugar. Sem isso o navegador media 0,38 a 0,60 de salto de layout no celular. No computador, os
+  // textos da loja também ficam escondidos até os dados chegarem (0,21 a 0,28). Para quem já visitou nada muda.
   const hold = ready ? '' : 'lg:invisible';
 
   return (
     <div className="relative min-h-[100dvh] overflow-x-clip bg-[#050505]">
-      <div aria-hidden="true" className={`pointer-events-none absolute inset-0 overflow-hidden ${ready ? '' : 'lg:hidden'}`}>
+      <div aria-hidden="true" className={`pointer-events-none absolute inset-0 overflow-hidden ${ready ? '' : 'hidden'}`}>
         <div className="absolute -left-40 top-1/3 h-96 w-96 rounded-full bg-[#145CFF]/[0.12] blur-3xl cc-glow" />
         <div className="absolute -right-40 top-2/3 h-96 w-96 rounded-full bg-[#2563FF]/10 blur-3xl cc-glow [animation-delay:2s]" />
       </div>
@@ -921,7 +998,7 @@ function BebidasPage() {
         >
           <div className="contents lg:col-start-1 lg:row-start-1 lg:block">
           <img
-            src={logo}
+            {...logoSources(logo, '(min-width: 1024px) 128px, 96px')}
             alt={`${store.store_name.toUpperCase()} – ${store.tagline}`}
             width={96}
             height={96}
@@ -952,7 +1029,7 @@ function BebidasPage() {
                 ))}
               </ul>
             )}
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <div className={`flex flex-wrap items-center gap-x-3 gap-y-1.5 ${ready ? '' : 'min-h-7'}`}>
               {fresh && !offline && <OpenStatus />}
               {ready && !offline && <StoreInfoButton />}
             </div>
@@ -1023,15 +1100,18 @@ function BebidasPage() {
           </div>
         )}
 
-        <div className={`px-4 pb-32 pt-2 sm:px-6 ${WIDE}`}>
-          {!ready && !loadFailed && (
+        {/* O esqueleto fica num bloco só dele (com `key` próprio): quando o cardápio chega, ele sai e o bloco do cardápio entra já no
+            lugar final. O navegador só conta como salto de layout o que já estava na tela e mudou de lugar, não o que aparece. */}
+        {!ready && !loadFailed ? (
+          <div key="esqueleto" className={`px-4 pb-32 pt-2 sm:px-6 ${WIDE}`}>
             <ul className="mt-6 space-y-3 lg:grid lg:grid-cols-2 lg:gap-4 lg:space-y-0 min-[1800px]:grid-cols-3" aria-busy="true">
               {Array.from({ length: 5 }, (_, i) => (
                 <SkeletonRow key={i} />
               ))}
             </ul>
-          )}
-
+          </div>
+        ) : (
+        <div key="cardapio" className={`px-4 pb-32 pt-2 sm:px-6 ${WIDE}`}>
           {loadFailed && (
             <div className="mt-8 rounded-[2rem] border border-white/10 bg-gradient-to-b from-white/[0.06] to-transparent p-8 text-center sm:p-12 lg:mx-auto lg:max-w-3xl" role="alert">
               <h3 className="text-xl font-black text-white">Não conseguimos carregar o cardápio</h3>
@@ -1093,8 +1173,8 @@ function BebidasPage() {
                     key={product.id}
                     product={product}
                     qty={countOf(product.id)}
-                    onChange={(qty) => changeQty(product, qty)}
-                    onPick={product.iceRequired ? () => picker.pick(product) : undefined}
+                    onChange={changeQty}
+                    onPick={product.iceRequired ? picker.pick : undefined}
                     className="w-[62%] shrink-0 snap-start sm:w-[44%] lg:w-72 xl:w-80"
                   />
                 ))}
@@ -1114,14 +1194,15 @@ function BebidasPage() {
                     key={product.id}
                     product={product}
                     qty={countOf(product.id)}
-                    onChange={(qty) => changeQty(product, qty)}
-                    onPick={product.iceRequired ? () => picker.pick(product) : undefined}
+                    onChange={changeQty}
+                    onPick={product.iceRequired ? picker.pick : undefined}
                   />
                 ))}
               </ul>
             </section>
           ))}
         </div>
+        )}
       </main>
 
       <Footer wide />
@@ -1222,7 +1303,7 @@ function ContatoSection() {
                 <IceCube className="left-[9%] top-[12%] h-9 w-9 opacity-60" delay="-2s" />
                 <IceCube className="right-[9%] top-[16%] h-11 w-11 opacity-55" delay="-4s" />
                 <img
-                  src={logo}
+                  {...logoSources(logo, '(min-width: 640px) 128px, 112px')}
                   alt=""
                   width={128}
                   height={128}
@@ -1335,7 +1416,7 @@ function StickyNav({ visible, count, onOrder }: { visible: boolean; count: numbe
         className="flex w-full max-w-4xl items-center justify-between gap-3 rounded-full border border-white/15 bg-[#080A0F]/75 py-2 pl-2.5 pr-2 shadow-[0_10px_40px_-14px_rgba(20,92,255,0.6)] backdrop-blur-xl"
       >
         <a href="#inicio" aria-label={`${store.store_name.toUpperCase()} – início`} className="flex items-center gap-2.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF]">
-          <img src={logo} alt="" width={36} height={36} className="h-9 w-9 rounded-full object-contain ring-1 ring-white/15" />
+          <img {...logoSources(logo, '36px')} alt="" width={36} height={36} className="h-9 w-9 rounded-full object-contain ring-1 ring-white/15" />
           <span className="text-[15px] font-black tracking-tight text-white">
             <BrandName name={store.store_name} />
           </span>
@@ -1537,8 +1618,41 @@ function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
   );
 }
 
+// O vídeo de fundo é só decoração e é o item mais pesado da página inicial. Ele começa a baixar quando o resto da página já terminou de
+// carregar (a foto da bebida, a logo e os textos não disputam a rede com ele) e não é baixado por quem ligou a economia de dados ou
+// está numa rede 2G (ficam o fundo escuro e a foto da bebida). Quem pediu menos movimento vê só o primeiro quadro, parado.
+type VideoPlan = { src: string | undefined; autoPlay: boolean };
+
+function useBackgroundVideo(cupReady: boolean): VideoPlan {
+  const [plan, setPlan] = useState<VideoPlan>({ src: undefined, autoPlay: true });
+  const [late, setLate] = useState(false);
+  // Se a foto da bebida demorar (ou falhar), o vídeo não fica esperando para sempre.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setLate(true), 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const go = cupReady || late;
+  useEffect(() => {
+    if (!go) return;
+    const connection = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (connection?.saveData || connection?.effectiveType === 'slow-2g' || connection?.effectiveType === '2g') return;
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const start = () => setPlan(still ? { src: `${VIDEO_URL}#t=0.001`, autoPlay: false } : { src: VIDEO_URL, autoPlay: true });
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(start, { timeout: 1500 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(start, 200);
+    return () => window.clearTimeout(id);
+  }, [go]);
+  return plan;
+}
+
 function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [cupReady, setCupReady] = useState(false);
+  const markCupReady = useCallback(() => setCupReady(true), []);
+  const video = useBackgroundVideo(cupReady);
   const { handMask, cupBox } = useVideoFraming(rootRef, videoRef);
   const overHand = cupBox !== null;
   const { store, hero, logo } = useShop();
@@ -1556,12 +1670,12 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
         ref={videoRef}
         className="absolute inset-0 w-full h-full object-cover object-left"
         style={{ maskImage: handMask, WebkitMaskImage: handMask }}
-        src={VIDEO_URL}
-        autoPlay
+        src={video.src}
+        autoPlay={video.autoPlay}
         muted
-        loop
+        loop={video.autoPlay}
         playsInline
-        preload="auto"
+        preload={video.autoPlay ? 'auto' : 'metadata'}
         aria-hidden="true"
         tabIndex={-1}
       />
@@ -1598,7 +1712,7 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
             className="flex items-center gap-2.5 sm:gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF] focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           >
             <img
-              src={logo}
+              {...logoSources(logo, '(min-width: 640px) 48px, 40px')}
               alt=""
               width={48}
               height={48}
@@ -1685,7 +1799,7 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
               </>
             )}
 
-            <DrinkShowcase drinks={drinks} />
+            <DrinkShowcase drinks={drinks} onFirstLoaded={markCupReady} />
 
             <InfoChip
               className={overHand ? 'left-[82%] top-[30%]' : 'left-[-6%] top-[36%]'}
@@ -1710,7 +1824,7 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
         >
           <div className="max-w-xl">
             <img
-              src={logo}
+              {...logoSources(logo, '(min-width: 1024px) 112px, 96px')}
               alt={brand}
               width={112}
               height={112}
@@ -1906,6 +2020,19 @@ function PublicSite({ pathname }: { pathname: string }) {
   const closeOrder = useCallback(() => setOrderOpen(false), []);
   useSeo(PAGE_TITLE[page.name], NOINDEX.has(page.name));
 
+  // Com itens no pedido, a finalização é baixada em segundo plano (quando o navegador está ocioso): o "Finalizar" abre sem espera.
+  const hasItems = count > 0;
+  useEffect(() => {
+    if (!hasItems) return;
+    const warm = () => void loadCheckout().catch(() => undefined);
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const id = window.setTimeout(warm, 2000);
+    return () => window.clearTimeout(id);
+  }, [hasItems]);
+
   // "Pedir agora": with items in the order it opens the order; otherwise the link goes to Bebidas.
   const startOrder = (e: MouseEvent<HTMLAnchorElement>) => {
     if (count > 0) {
@@ -1935,7 +2062,11 @@ function PublicSite({ pathname }: { pathname: string }) {
           {VIEWPORT_STYLES}
         </style>
         {page.name === 'bebidas' && <BebidasPage />}
-        {page.name === 'checkout' && <CheckoutPage />}
+        {page.name === 'checkout' && (
+          <Suspense fallback={<CustomerLoading />}>
+            <CheckoutPage />
+          </Suspense>
+        )}
         {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
         {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
           <Suspense fallback={<CustomerLoading />}>
