@@ -1,5 +1,6 @@
 import { Check, Info, LoaderCircle, TriangleAlert, XCircle } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { suggestEmail } from './emailHint';
 import { BLUE_BUTTON } from './ui';
 
 // Peças de tela compartilhadas pelas páginas da conta do cliente (Account.tsx e EmailPreferences.tsx).
@@ -71,3 +72,33 @@ export const Title = ({ children, sub }: { children: ReactNode; sub?: string }) 
     {sub && <p className="mt-2 max-w-2xl text-white/60">{sub}</p>}
   </>
 );
+
+// Campo de e-mail de qualquer provedor. Teclado de e-mail, sem maiúscula automática nem autocorreção (o iPhone e o Android, por padrão, trocam
+// letras de endereços como "joao.silva@icloud.com"): o endereço chega ao servidor exatamente como foi digitado.
+export const EMAIL_INPUT = {
+  type: 'email',
+  inputMode: 'email',
+  autoComplete: 'email',
+  autoCapitalize: 'none',
+  autoCorrect: 'off',
+  spellCheck: false,
+  maxLength: 254,
+} as const;
+
+export const ANY_PROVIDER_HINT = 'Pode ser de qualquer provedor: Gmail, iCloud, Outlook, Hotmail, Yahoo ou o e-mail da sua empresa. Não precisa ter Gmail nem instalar nenhum aplicativo.';
+
+// "Você quis dizer maria@gmail.com?" — só aparece quando o domínio parece um erro de digitação de um provedor popular. É uma sugestão: o endereço
+// digitado continua valendo se a pessoa ignorar (qualquer provedor ou empresa é aceito).
+export function EmailSuggestion({ email, show, onUse }: { email: string; show: boolean; onUse: (corrected: string) => void }) {
+  const suggestion = show ? suggestEmail(email) : null;
+  if (!suggestion) return null;
+  return (
+    <p role="status" className="mt-1.5 text-xs text-amber-100" data-email-suggestion>
+      Você quis dizer{' '}
+      <button type="button" onClick={() => onUse(suggestion)} className="font-bold text-[#8FB1FF] underline underline-offset-2 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+        {suggestion}
+      </button>
+      ?
+    </p>
+  );
+}

@@ -55,7 +55,7 @@ export function deliveryError(result: DeliverResult): HttpError {
     return new HttpError(429, 'Já enviamos vários e-mails para este endereço hoje. Aguarde um pouco e tente de novo mais tarde.', { code: 'rate_limited' });
   }
   if (result.blocked || (result.failure?.kind === 'recipient' && !result.failure.retryable)) {
-    return new HttpError(400, 'Esse endereço de e-mail não pôde receber a mensagem. Confira se digitou certo.', { code: 'mail_recipient_rejected' });
+    return new HttpError(400, 'O servidor de e-mail desse endereço recusou a mensagem. Confira se digitou certo ou use outro e-mail (de qualquer provedor).', { code: 'mail_recipient_rejected' });
   }
   return mailFailure();
 }

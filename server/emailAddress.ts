@@ -16,7 +16,7 @@ const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TLD = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
 const INVISIBLE = /[​-‍⁠﻿]/g;
 
-const FORMAT = 'Confira o e-mail: ele precisa ter o formato nome@dominio.com (por exemplo, maria@gmail.com).';
+const FORMAT = 'Confira o e-mail: ele precisa ter o formato nome@provedor.com, de qualquer provedor ou empresa (por exemplo, maria@dominio.com.br).';
 const bad = (message: string) => new HttpError(400, message, { code: 'invalid_email' });
 
 export function parseEmail(input: unknown): ParsedEmail {
@@ -41,7 +41,7 @@ export function parseEmail(input: unknown): ParsedEmail {
   const domain = domainToASCII(rawDomain);
   const labels = domain.split('.');
   if (!domain || domain.length > 253 || labels.length < 2 || !labels.every((label) => LABEL.test(label)) || !TLD.test(labels[labels.length - 1])) {
-    throw bad('Confira o domínio do e-mail (a parte depois do @), por exemplo gmail.com ou hotmail.com.');
+    throw bad('Confira o domínio do e-mail (a parte depois do @): ele precisa ter um ponto e terminar como .com, .com.br ou parecido.');
   }
 
   return { email: `${local.toLowerCase()}@${domain}`, local: local.toLowerCase(), domain };

@@ -14,6 +14,7 @@ import type { DeliveryType, PaymentMethod, PublicOrder } from '../lib/types';
 import { useCustomer } from './customer';
 import { acceptedPayments, cardFeeRates, fullAddress, useShop } from './data';
 import { Field, PageShell } from './shell';
+import { EMAIL_INPUT } from './accountUi';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
 
 // ---- Peças do formulário -----------------------------------------------------------------------
@@ -466,7 +467,7 @@ export function CheckoutPage() {
                 hint={payment === 'card_online' ? 'A operadora do cartão exige o e-mail para enviar o comprovante.' : undefined}
               >
                 {(p) => (
-                  <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />
+                  <input {...p} {...EMAIL_INPUT} value={form.email} onChange={(e) => set('email', e.target.value)} className={FIELD} placeholder="voce@email.com" />
                 )}
               </Field>
             </div>

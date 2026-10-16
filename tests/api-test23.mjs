@@ -43,7 +43,7 @@ const A = await newAccount('ana');
   const browser = new Client();
   const first = await browser.post('/api/account/login', { email: A.email, password: PASS });
   check('senha certa: 202 "code_required", sem dados do cliente', first.status === 202 && first.data.status === 'code_required' && !('customer' in first.data), first.data);
-  check('a resposta traz o e-mail mascarado (nunca inteiro), a espera do reenvio (60 s) e a validade do código (10 min)', String(first.data.email_masked).includes('*') && !String(first.data.email_masked).includes('ana.1@') && first.data.resend_in === 60 && first.data.code_minutes === 10, first.data);
+  check('a resposta traz o e-mail mascarado (nunca inteiro), a espera do reenvio (60 s) e a validade do código (5 min)', String(first.data.email_masked).includes('*') && !String(first.data.email_masked).includes('ana.1@') && first.data.resend_in === 60 && first.data.code_minutes === 5, first.data);
   const names = cookieNames(first);
   check('NENHUM cookie de sessão foi entregue; só o cookie do desafio de login', names.includes('copocheio_login') && !names.includes('copocheio_cliente'), names);
   const line = cookieLine(first, 'copocheio_login');
@@ -53,7 +53,7 @@ const A = await newAccount('ana');
   const mails = await loginMails(A.email);
   check('chegou UM e-mail "código para entrar", para o e-mail da conta', mails.length === 1 && /^\d{6} é o seu código para entrar/.test(mails[0].subject), mails.map((m) => m.subject));
   const code = codeFrom(mails[0]);
-  check('o e-mail traz o código de 6 dígitos, a validade e o aviso "Não foi você?" (sem link de confirmação nem de senha)', /^\d{6}$/.test(code) && /10 minutos/.test(mails[0].text) && /Não foi você/.test(mails[0].text) && !/\/conta\/(verificar|redefinir)\//.test(mails[0].html), mails[0].text.slice(0, 300));
+  check('o e-mail traz o código de 6 dígitos, a validade e o aviso "Não foi você?" (sem link de confirmação nem de senha)', /^\d{6}$/.test(code) && /5 minutos/.test(mails[0].text) && /Não foi você/.test(mails[0].text) && !/\/conta\/(verificar|redefinir)\//.test(mails[0].html), mails[0].text.slice(0, 300));
   check('é e-mail automático de conta (Auto-Submitted) e sem descadastro de promoção', mails[0].headers['auto-submitted'] === 'auto-generated' && !mails[0].headers['list-unsubscribe'], mails[0].headers);
 
   const row = challenge(A.id);
@@ -148,14 +148,14 @@ section('4. Código errado: 5 erros e o desafio inteiro deixa de valer (é preci
 }
 
 // ------------------------------------------------------------------------------------------------
-section('5. Validade: o código vale 10 minutos e o desafio 30');
+section('5. Validade: o código vale 5 minutos e o desafio 30');
 {
   const E = await newAccount('fabi');
   const b = new Client();
   await b.post('/api/account/login', { email: E.email, password: PASS });
   const code = await lastLoginCode(E.email);
   const [row] = challenge(E.id);
-  check('banco: código vale 10 min e o desafio 30 min', Math.abs((Date.parse(row.code_expires_at) - Date.parse(row.created_at)) / 60000 - 10) < 0.5 && Math.abs((Date.parse(row.expires_at) - Date.parse(row.created_at)) / 60000 - 30) < 0.5, row);
+  check('banco: código vale 5 min e o desafio 30 min', Math.abs((Date.parse(row.code_expires_at) - Date.parse(row.created_at)) / 60000 - 5) < 0.5 && Math.abs((Date.parse(row.expires_at) - Date.parse(row.created_at)) / 60000 - 30) < 0.5, row);
   psql(`update customer_login_challenges set code_expires_at = now() - interval '1 second' where customer_id = ${lit(E.id)}`);
   const late = await b.post('/api/account/login/code', { code });
   check('código vencido (mesmo certo): 400 e sem sessão', late.status === 400 && (await b.get('/api/account/me')).data.customer === null, late.data);
@@ -178,7 +178,7 @@ section('6. Reenviar o código: espera de 60 s, o código novo substitui o antig
   const age = () => psql(`update customer_login_challenges set last_sent_at = last_sent_at - interval '2 minutes' where customer_id = ${lit(F.id)}`);
   age();
   const rs = await b.post('/api/account/login/resend', {});
-  check('depois de 60 s: 200, e chega o e-mail novo', rs.status === 200 && rs.data.ok === true && rs.data.resend_in === 60 && rs.data.code_minutes === 10 && (await loginMails(F.email)).length === 2, rs.data);
+  check('depois de 60 s: 200, e chega o e-mail novo', rs.status === 200 && rs.data.ok === true && rs.data.resend_in === 60 && rs.data.code_minutes === 5 && (await loginMails(F.email)).length === 2, rs.data);
   const second = await lastLoginCode(F.email);
   check('o código novo é outro', second !== first, [first, second]);
   // o antigo deixa de valer, o novo vale

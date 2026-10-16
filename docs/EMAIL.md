@@ -106,13 +106,63 @@ com o link **“Não quero e-mails sobre pedidos neste endereço”**.
 
 ## 4. Login, códigos de verificação e senhas
 
-Já eram sólidos (README, “Confirmação do e-mail”) e foram **preservados**: código de 6 dígitos gerado no servidor (`crypto.randomInt`), vale 15 minutos, uso único, 5
+Já eram sólidos (README, “Confirmação do e-mail”) e foram **preservados**: código de 6 dígitos gerado no servidor (`crypto.randomInt`), vale 15 minutos na confirmação do cadastro (e **5 minutos** no código de login), uso único, 5
 erros inutilizam o código, guardado só como HMAC; link de 256 bits (só o hash no banco); reenvio a cada 60 s, 5/h e 10/dia por conta; mensagens iguais para qualquer
 e-mail (não revela quem tem conta); cadastro preso ao navegador; nenhum segredo em log. O que mudou:
 
 - o envio passa pelo serviço central: fica **registrado** (sem o código) e **medido**;
 - o aviso de segurança que antes se perdia em silêncio (“senha alterada”, “novo acesso ao painel”) agora **espera na fila e tenta de novo**;
 - código e link de senha **nunca** vão para a fila nem para o registro.
+
+### 4.1 E-mail de qualquer provedor (e como investigar quando um provedor não recebe)
+
+**O que o cadastro e o login exigem do endereço**, e nada além disso:
+
+| Camada | O que barra | O que **não** barra |
+| ------ | ----------- | ------------------- |
+| Formato (`server/emailAddress.ts`) | texto que não é um endereço (sem `@`, espaços, pontos duplicados, IP no lugar do domínio, domínio sem ponto ou com `_`) | qualquer domínio bem formado: `gmail.com`, `icloud.com`, `outlook.com.br`, `empresa.com.br`, `.edu.br`, `.gov.br`, domínio novo comprido (`.technology`), domínio com acento (vira *punycode* igual na internet), `+etiqueta`, maiúsculas |
+| E-mail temporário (`server/disposableDomains.ts`) | serviços de caixa que some em minutos (mailinator etc.); os apelidos de privacidade (Hide My Email, SimpleLogin, addy.io, Firefox Relay) estão liberados | todo provedor de verdade, conhecido ou não |
+| DNS (`server/mailDomain.ts`) | domínio que **comprovadamente** não existe ou que declara não receber e-mail (MX nulo) | qualquer domínio com MX, ou só com A/AAAA (regra do protocolo); falha, lentidão ou DNS fora do ar **deixam passar** (a prova de verdade é o código) |
+| Confirmação | conta que não prova que lê a caixa | — |
+
+Não há (nem deve haver) lista de domínios permitidos. A tela de cadastro e a de login dizem que **qualquer provedor serve** e o campo de e-mail desliga a maiúscula e a
+autocorreção dos celulares. A dica *"Você quis dizer maria@gmail.com?"* (`src/site/emailHint.ts`) é só uma sugestão para erro de digitação; o endereço digitado vale se a pessoa ignorar.
+
+**O que mudou nesta versão**
+
+- **Código de login: 5 minutos** (era 10). A confirmação do cadastro continua com 15 minutos (e link de 24 h), porque o e-mail de quem acabou de abrir uma conta pode demorar mais.
+- **Endereço que já foi recusado um dia não fica trancado.** Antes, uma única devolução definitiva (`hard_bounce`) punha o endereço na lista de supressão **para sempre**, e a
+  lista barra todos os tipos de e-mail, inclusive o código que a própria pessoa pediu: o cliente nunca mais conseguia criar a conta nem entrar, mesmo depois de a caixa ser
+  consertada. Agora **código e link pedidos pela própria pessoa** (confirmar e-mail, entrar, nova senha, entrar no painel; `survivesAutoSuppression` em `server/email/kinds.ts`)
+  passam por cima de uma supressão **automática** antiga (devolução definitiva ou repetida): se o servidor do destinatário ainda recusar, o erro aparece na hora; se aceitar e a pessoa
+  digitar o código (ou abrir o link), a supressão automática é **apagada**. Continuam valendo: o **bloqueio manual** do owner, a supressão para promoções e avisos, e os tetos por endereço.
+- **"Corrigir ou trocar o e-mail"** na tela do código devolve o endereço digitado, selecionado, para a pessoa consertar o erro de digitação.
+- Mensagens de erro sem exemplo de provedor (nada de "use Gmail, Outlook ou Yahoo").
+
+**Remetente × destinatário.** O remetente é a conta que a loja usa para enviar (hoje o **Gmail da loja pelo SMTP**: `SMTP_*`); o destinatário é o endereço de qualquer cliente. Não existe
+integração com **Google Apps Script** neste projeto (se um dia for criada, é um transporte novo em `server/email/transport.ts`, ao lado do SMTP e do Resend opcional). Dois
+fatos valem para o Gmail como remetente, por SMTP ou por Apps Script:
+
+1. **O Gmail aceita a mensagem e só depois tenta entregar.** O SMTP responde "aceito" mesmo quando o servidor do destinatário recusa depois (caixa inexistente, bloqueio de spam). A
+   recusa chega como e-mail **“Mail Delivery Subsystem / Delivery Status Notification”** na caixa do Gmail da loja. O sistema registra **"aceito pelo servidor"**, nunca "entregue", e a
+   tela do cliente nunca promete entrega: diz que o e-mail pode demorar e manda olhar spam, lixo eletrônico e promoções.
+2. **Limites de envio.** O Gmail pessoal permite cerca de 500 envios por dia (o sistema usa 450 como teto, `EMAIL_DAILY_LIMIT`; ao passar do limite o Gmail devolve `550 5.4.5`). No Apps Script, a
+   cota por dia é bem menor em conta pessoal: **100 destinatários** em `MailApp` (1.500 em Google Workspace), segundo a
+   [documentação de cotas do Apps Script](https://developers.google.com/apps-script/guides/services/quotas). Cada cadastro gasta 1 e-mail de código e cada entrada outro, mais os de pedido:
+   com bastante movimento, uma conta Gmail pessoal fica apertada; o caminho é um provedor transacional (veja a seção 9) ou o Gmail de um Google Workspace.
+
+**Roteiro para "o cliente do provedor X não recebe o código"** (nesta ordem; só a última mexe no código):
+
+1. **Painel → E-mails → Mensagens**: busque o endereço. *Falhou* mostra o código do servidor (`550 5.1.1` = caixa não existe: erro de digitação; `5.7.x` = o provedor recusou por política, spam ou
+   autenticação do remetente). *Bloqueado* mostra o motivo. *Aceito* = o servidor de e-mail da loja entregou ao provedor (próximo passo).
+2. **Painel → E-mails → visão geral → "Principais domínios de destino"** (por provedor): um provedor só com falhas ou só com "aceito" e reclamação de clientes aponta o problema por provedor.
+3. Abra a caixa **do Gmail da loja** e procure por *Mail Delivery Subsystem*: o texto da devolução diz a causa exata (endereço inexistente, caixa cheia, mensagem recusada como spam).
+4. Peça ao cliente para olhar **spam / lixo eletrônico / promoções** (Gmail), **Lixo eletrônico** (Outlook, iCloud) e **a pasta "Outros"** do Outlook, e para conferir o endereço (tela *"Corrigir ou trocar o e-mail"*).
+5. **Painel → E-mails → Autenticação → "Enviar exemplos para mim"** para uma conta sua no mesmo provedor: abra "Mostrar original" (Gmail) ou os cabeçalhos e confira **SPF, DKIM e DMARC = PASS** (seção 8).
+   Com o Gmail como remetente os três são do próprio Gmail; com um domínio próprio, é preciso configurá-los.
+6. Se o limite diário do Gmail foi atingido (alerta de teto), os códigos continuam saindo até o teto de segurança; espere 24 h ou use um provedor transacional.
+7. Só depois, se tudo isso estiver certo e **só um provedor** continuar recusando, investigue o conteúdo do e-mail (assunto, links) e a reputação do remetente. Não crie lista de provedores permitidos nem desligue a
+   confirmação: o código é a prova de que a pessoa lê a caixa.
 
 ## 5. Promoções, consentimento e descadastro
 
@@ -291,7 +341,7 @@ comportamento de cada leitor de e-mail com o seu layout.
 | “Teto diário atingido” | Códigos de login continuam saindo; pedidos e promoções esperam. Para mais volume, use um provedor transacional |
 | “Recusas por política (5.7.x)” | Reputação ou autenticação do remetente: veja **Autenticação** e a seção 8 |
 | Cliente diz que não recebeu | Procure o e-mail dele em **Mensagens**: *Aceito* (peça para olhar o spam), *Bloqueado* (veja o motivo), *Falhou* (veja o motivo), ou nada (o endereço não chegou a ser usado) |
-| Endereço digitado errado por engano e suprimido | **Supressões → Liberar** (owner) |
+| Endereço digitado errado por engano e suprimido | **Supressões → Liberar** (owner). Para códigos de cadastro e login isso já não é preciso: a supressão **automática** não os impede e é apagada quando a pessoa confirma o código (seção 4.1) |
 | Aparece na caixa do Gmail da loja um aviso “Mail Delivery Subsystem” / “Delivery Status Notification” | É uma **devolução depois do envio** (o servidor do destinatário recusou). O sistema **não lê** essa caixa (SMTP não avisa devolução): se o endereço não existe, coloque-o em **Supressões**. Com o provedor opcional (seção 9) isso é automático |
 | Apareceu algo estranho nos e-mails de pedido (texto errado, e-mails repetidos, reclamação de cliente) | **Pause** só os e-mails de pedido: cadastre `EMAIL_ORDER_NOTICES=off` na Vercel e faça um novo deploy. Códigos de login, nova senha e promoções continuam. Depois de corrigir, apague a variável |
 | Cron diário falhando com 401 | Falta `CRON_SECRET` na Vercel (o cron só liga com ele) |

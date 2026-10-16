@@ -7,6 +7,7 @@ import { batch, one, query, updateRow } from '../db.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
 import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
+import { clearAutoSuppression } from '../email/ledger.js';
 import { confirmPendingMarketing, setMarketingPending } from '../email/preferences.js';
 import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
 import { mailConfigured } from '../mail.js';
@@ -156,7 +157,8 @@ export function registerAccount(r: Router) {
     await reserve('verify-email', email, WINDOW, 5, tooMany, 'too_many_attempts');
     const checked = await checkCodeBound(email, code, registrationHash(ctx.req));
     if (checked.result === 'ok') {
-      await Promise.all([refund('verify-ip', ctx.ip), clearAttempts('verify-email', email), confirmPendingMarketing(email).catch(() => false)]);
+      // Digitou o código que chegou nesta caixa: ela recebe e-mail, então uma devolução automática antiga não vale mais.
+      await Promise.all([refund('verify-ip', ctx.ip), clearAttempts('verify-email', email), confirmPendingMarketing(email).catch(() => false), clearAutoSuppression(email).catch(() => undefined)]);
       // Confirmou de outro navegador que não o do cadastro: a senha do cadastro foi descartada e a pessoa cria uma agora.
       const setPassword = checked.bound === false && checked.customer_id ? await setPasswordLink(checked.customer_id) : null;
       return json({ ok: true, verified: true, ...(setPassword ? { set_password_token: setPassword } : {}) }, 200, { 'set-cookie': registrationCookie(ctx.req, '', 0) });
@@ -175,7 +177,7 @@ export function registerAccount(r: Router) {
       throw new HttpError(400, 'Este link não vale mais: ele expirou, já foi usado ou foi trocado por um código mais novo. Entre na sua conta para receber um novo código.', { code: 'invalid_link' });
     }
     await refund('verify-ip', ctx.ip);
-    await confirmPendingMarketing(verified.email.toLowerCase()).catch(() => false);
+    await Promise.all([confirmPendingMarketing(verified.email.toLowerCase()).catch(() => false), clearAutoSuppression(verified.email).catch(() => undefined)]);
     // Abriu o link de outro navegador que não o do cadastro: a senha do cadastro foi descartada e a pessoa cria uma agora.
     const setPassword = verified.bound ? null : await setPasswordLink(verified.customer_id);
     return json({ ok: true, verified: true, email: verified.email, email_masked: maskEmail(verified.email), ...(setPassword ? { set_password_token: setPassword } : {}) }, 200, {
@@ -271,7 +273,8 @@ export function registerAccount(r: Router) {
       throw new HttpError(400, 'Código incorreto ou expirado. Confira os 6 dígitos ou peça um novo código.', { code: 'invalid_code' });
     }
     await refund(CODE_TRY_BUCKET, ctx.ip);
-    await query('update customers set last_login_at = now() where id = $1', [checked.customer_id]);
+    const who = await one<{ email: string }>('update customers set last_login_at = now() where id = $1 returning email', [checked.customer_id]);
+    if (who) await clearAutoSuppression(who.email).catch(() => undefined);
     const { token, maxAge } = await createCustomerSession(checked.customer_id);
     const customer = await one(`select ${CUSTOMER_COLUMNS} from customers c where c.id = $1`, [checked.customer_id]);
     return json({ customer }, 200, { 'set-cookie': [clearLoginCookie(ctx.req), customerCookie(ctx.req, token, maxAge)] });
@@ -382,7 +385,7 @@ export function registerAccount(r: Router) {
     // Mais tolerante que o cadastro: contas antigas podem ter e-mails que o formato novo recusaria.
     const email = normalizeLoginEmail(body.email);
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-      throw new HttpError(400, 'Confira o e-mail: ele precisa ter o formato nome@dominio.com (por exemplo, maria@gmail.com).', { code: 'invalid_email' });
+      throw new HttpError(400, 'Confira o e-mail: ele precisa ter o formato nome@provedor.com, de qualquer provedor ou empresa.', { code: 'invalid_email' });
     }
     await limit('forgot-ip', ctx.ip, 3600, 10, 'Muitos pedidos de recuperação desta rede. Aguarde um pouco e tente de novo.');
     await assertMailBudget(ctx.ip);
@@ -430,6 +433,7 @@ export function registerAccount(r: Router) {
     await refund('cust-reset', ctx.ip);
     // Quem ficou bloqueado por errar a senha muitas vezes volta a poder entrar com a senha nova.
     await Promise.all([clearAttempts('cust-login-email', done.email.toLowerCase()), clearAttemptsByPrefix('cust-login-pair', `${done.email.toLowerCase()}|`)]);
+    if (done.via === 'email') await clearAutoSuppression(done.email).catch(() => undefined);
     if (done.via === 'email' && done.active && done.confirmed) await sendPasswordChangedNotice(ctx.req, done);
     return json({ ok: true, email: done.email, email_masked: maskEmail(done.email), verified: done.verified });
   });

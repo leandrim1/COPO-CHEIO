@@ -20,7 +20,7 @@ import { cleanCode, deliveryError, newCode } from './verification.js';
 
 export { cleanCode };
 
-export const LOGIN_CODE_MINUTES = 10;
+export const LOGIN_CODE_MINUTES = 5;
 export const LOGIN_RESEND_SECONDS = 60;
 // O desafio todo vale 30 minutos (o cookie some junto).
 const LOGIN_COOKIE = 'copocheio_login';

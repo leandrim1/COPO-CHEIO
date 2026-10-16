@@ -93,12 +93,13 @@ const bad = 'naoexiste-17@exemplo.com';
   check('o endereço entrou na lista de supressão (hard_bounce, visto pelo SMTP)', sup?.reason === 'hard_bounce' && sup.source === 'smtp', sup);
   const afterFirst = await mailStats();
   check('o servidor de e-mail foi procurado 1 vez', afterFirst.rcpt === before.rcpt + 1, [before, afterFirst]);
-  // Segunda tentativa: nem chega ao servidor.
+  // Segunda tentativa: o cadastro é um CÓDIGO que a própria pessoa pediu, então a supressão automática antiga não o impede (a caixa pode ter sido consertada):
+  // o servidor de e-mail é procurado de novo e, se ainda recusar, o erro aparece na hora. Pedidos, avisos e promoções continuam bloqueados (api-test18 e api-test19).
   const again = await new Client().post('/api/account/register', { name: 'Caixa Inexistente', email: bad, phone: '34999990002', password: PASS });
   const afterSecond = await mailStats();
-  check('segunda tentativa: 400 sem procurar o servidor de e-mail de novo (já está na lista)', again.status === 400 && afterSecond.rcpt === afterFirst.rcpt, [again.status, afterFirst, afterSecond]);
+  check('segunda tentativa de cadastro: o código é tentado de novo (a supressão automática não o impede) e o erro aparece na hora', again.status === 400 && again.data.code === 'mail_recipient_rejected' && afterSecond.rcpt === afterFirst.rcpt + 1, [again.status, afterFirst, afterSecond]);
   const blocked = rows(`recipient_email = ${lit(bad)} and status = 'blocked'`);
-  check('...e o registro mostra "bloqueada: endereço suprimido"', blocked.length === 1 && blocked[0].block_reason === 'suppressed', blocked);
+  check('...sem registro de "bloqueada" (nada foi barrado pela lista) e a supressão continua registrada', blocked.length === 0 && psql(`select count(*) from email_suppressions where email = ${lit(bad)}`) === '1', blocked);
   const sups = await staff.get('/api/admin/emails/suppressions');
   check('a lista de supressão aparece no painel (administrador comum só vê)', sups.status === 200 && sups.data.suppressions.some((s) => s.email === bad && s.reason === 'hard_bounce'), sups.data);
   // O owner tira o endereço da lista (ex.: a caixa foi criada depois).

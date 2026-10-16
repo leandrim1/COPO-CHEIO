@@ -163,6 +163,12 @@ export async function suppress(email: string, reason: Suppression['reason'], sou
   );
 }
 
+// A pessoa provou que lê esta caixa de e-mail (digitou o código ou abriu o link que chegou nela): uma devolução ou bloqueio automático antigo
+// não vale mais. Reclamação e bloqueio manual ficam (são decisões da pessoa ou do dono da loja).
+export async function clearAutoSuppression(email: string): Promise<void> {
+  await query(`delete from email_suppressions where email = $1 and reason in ('hard_bounce', 'repeated_soft')`, [email.toLowerCase()]);
+}
+
 export async function unsuppress(email: string): Promise<boolean> {
   const row = await one<{ email: string }>('delete from email_suppressions where email = $1 returning email', [email]);
   return Boolean(row);

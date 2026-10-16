@@ -113,11 +113,12 @@ async function dnsVerdict(domain: string, resolver: Resolver): Promise<DomainChe
   return { ok: false, reason: gone ? 'nxdomain' : 'no-mail' };
 }
 
-// Mensagens para o cliente.
+// Mensagens para o cliente. Nenhuma privilegia um provedor: o cadastro aceita o e-mail de QUALQUER provedor ou empresa; só não aceita e-mail
+// temporário (que some sozinho), domínio que não existe ou que declara não receber mensagens.
 export const DOMAIN_MESSAGE: Record<DomainProblem, string> = {
-  disposable: 'E-mails temporários ou descartáveis não são aceitos. Use o seu e-mail de uso pessoal (Gmail, Outlook, Yahoo, etc.).',
-  reserved: 'Esse domínio de e-mail não é válido. Use o seu e-mail pessoal (Gmail, Outlook, Yahoo, etc.).',
-  nxdomain: 'Não encontramos esse domínio de e-mail. Confira se digitou certo (por exemplo, maria@gmail.com).',
-  'no-mail': 'Esse domínio não recebe e-mails. Confira se digitou certo ou use outro endereço.',
-  'null-mx': 'Esse domínio não recebe e-mails. Confira se digitou certo ou use outro endereço.',
+  disposable: 'E-mails temporários ou descartáveis não são aceitos (a caixa some depois de alguns minutos). Use o seu e-mail de verdade, de qualquer provedor ou da sua empresa.',
+  reserved: 'Esse domínio de e-mail não é válido. Use o seu e-mail de verdade, de qualquer provedor ou da sua empresa.',
+  nxdomain: 'Não encontramos esse domínio de e-mail. Confira se digitou certo a parte depois do @.',
+  'no-mail': 'Esse domínio não recebe e-mails. Confira se digitou certo a parte depois do @ ou use outro endereço.',
+  'null-mx': 'Esse domínio não recebe e-mails. Confira se digitou certo a parte depois do @ ou use outro endereço.',
 };

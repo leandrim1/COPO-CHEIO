@@ -119,7 +119,7 @@ for (const email of [123, null, ['a@gmail.com'], { a: 1 }, true, undefined]) {
 check(`${invalid.length + 6} entradas inválidas: todas 400 invalid_email`, odd.length === 0, odd);
 check('nenhuma conta criada e nenhum e-mail enviado por formato inválido', customers() === before2.accounts && (await mailsTo('')).length === before2.mails);
 const msg2 = (await reg(c2, { email: 'abc' })).data.error;
-check('mensagem clara em português, com exemplo', /Confira o e-mail/.test(msg2) && /maria@gmail\.com/.test(msg2), msg2);
+check('mensagem clara em português, com exemplo e sem preferir um provedor', /Confira o e-mail/.test(msg2) && /nome@provedor\.com/.test(msg2) && /qualquer provedor/.test(msg2) && !/gmail/i.test(msg2), msg2);
 
 const normal = [
   ['  Ana.Souza@GMAIL.com  ', 'ana.souza@gmail.com'],

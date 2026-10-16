@@ -7,6 +7,7 @@ import { money } from '../lib/format';
 import type { CustomerPayment, PublicOrder } from '../lib/types';
 import { storeWhatsappUrl, useShop } from './data';
 import { Field, PageShell } from './shell';
+import { EMAIL_INPUT } from './accountUi';
 import { BLUE_BUTTON, FIELD, GHOST_BUTTON, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
 
 // Pagamento do pedido por cartão de crédito (/pagar/<código do pedido>).
@@ -466,7 +467,7 @@ export function CardPaymentPage({ token }: { token: string }) {
                   {(p) => <input {...p} name="document" value={fields.document} onChange={(e) => set('document', maskDocument(e.target.value))} inputMode="numeric" autoComplete="off" maxLength={18} className={FIELD} placeholder="000.000.000-00" data-card-document />}
                 </Field>
                 <Field label="E-mail do comprovante *" error={errors.email}>
-                  {(p) => <input {...p} name="email" type="email" value={fields.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
+                  {(p) => <input {...p} {...EMAIL_INPUT} name="email" value={fields.email} onChange={(e) => set('email', e.target.value)} className={FIELD} placeholder="voce@email.com" />}
                 </Field>
               </div>
 

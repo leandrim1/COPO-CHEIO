@@ -246,7 +246,7 @@ const { finishLogin, latestLoginCode, finishAdminLogin } = require('./e2e-code.c
   await c.waitForSelector('text=Olá, Eva!');
   ok(true, 'confirming from the login flow logs in with the password just typed');
 
-  // "Usar outro e-mail"
+  // "Corrigir ou trocar o e-mail"
   await clearMail();
   const ctxD = await newContext(browser);
   const d = track(await ctxD.newPage());
@@ -254,9 +254,9 @@ const { finishLogin, latestLoginCode, finishAdminLogin } = require('./e2e-code.c
   await fillSignup(d, { name: 'Fabio Troca', phone: '34944443333', email: 'fabio@exemplo.com', password: 'fabio-senha-123' });
   await submitSignup(d);
   await d.waitForSelector('text=Confirme seu e-mail');
-  await d.getByRole('button', { name: 'Usar outro e-mail' }).click();
+  await d.getByRole('button', { name: 'Corrigir ou trocar o e-mail' }).click();
   await d.waitForSelector('text=Criar minha conta');
-  ok((await d.getByLabel('E-mail *').inputValue()) === '' && (await d.getByLabel('Nome *').inputValue()) === 'Fabio Troca', '"Usar outro e-mail" returns to the form with the e-mail cleared and the rest kept');
+  ok((await d.getByLabel('E-mail *').inputValue()) === 'fabio@exemplo.com' && (await d.getByLabel('Nome *').inputValue()) === 'Fabio Troca', '"Corrigir ou trocar o e-mail" returns to the form with the typed e-mail kept (to fix a typo) and the rest kept');
   await d.getByLabel('E-mail *').fill('fabio.novo@exemplo.com');
   await submitSignup(d);
   await d.waitForSelector('text=Confirme seu e-mail');

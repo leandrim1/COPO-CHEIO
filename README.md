@@ -345,7 +345,7 @@ checkout. Comprar como visitante continua sempre possível.
   sessão). Sair e entrar de novo pede outro código; uma sessão que já está aberta continua valendo (30 dias) até a pessoa sair.
   - *Amarrado ao navegador*: junto com o `202` o servidor entrega um cookie secreto (`copocheio_login`, `HttpOnly`, 30 min) que identifica a tentativa; o código só vale
     **vindo desse mesmo navegador**. Quem só leu o e-mail (ou o código) não entra, e quem só sabe a senha também não.
-  - *Regras do código*: vale **10 min**, **uso único**, **5 erros** inutilizam a tentativa (é preciso informar a senha de novo), **reenvio só depois de 60 s**
+  - *Regras do código*: vale **5 min**, **uso único**, **5 erros** inutilizam a tentativa (é preciso informar a senha de novo), **reenvio só depois de 60 s**
     (`POST /api/account/login/resend`), no máximo **5 e-mails por tentativa** e **10 por hora por conta**, e até 40 por hora por rede. O banco guarda só o hash do cookie
     e um HMAC do código (chave que só o servidor conhece); tudo isso é conferido **dentro do banco**, então pedidos simultâneos não furam nenhum limite.
   - *Trocar a senha derruba a tentativa aberta* (por qualquer caminho); conta desativada ou excluída também. Entrar de novo **logo em seguida, no mesmo navegador**,
@@ -403,6 +403,12 @@ neste projeto. O painel **não** envia por outro provedor.
 
 **Regra:** uma conta só passa a valer depois que a pessoa **prova que lê a caixa de e-mail** informada. Formato válido,
 domínio que existe e e-mail que não é descartável são camadas extras; **nenhuma delas substitui a confirmação**.
+
+**Qualquer provedor de e-mail serve.** Gmail, iCloud, Outlook, Hotmail, Yahoo, UOL, Proton, o e-mail de uma empresa ou de um domínio próprio: o cliente **não
+precisa ter Gmail, um iPhone ou Android específico, nem instalar aplicativo** para receber o código. Não existe lista de domínios permitidos: o cadastro só barra o que
+**nunca receberia o código** (formato impossível, domínio que não existe ou que declara não receber e-mail, e serviço de e-mail **temporário**, que some em minutos). O
+remetente (o Gmail da loja, hoje pelo SMTP) e o destinatário (qualquer endereço) são coisas diferentes. Detalhes, o que o sistema consegue saber da entrega e como
+investigar um provedor que não recebe: [docs/EMAIL.md](docs/EMAIL.md), seção 4.1.
 
 **Fluxo**
 

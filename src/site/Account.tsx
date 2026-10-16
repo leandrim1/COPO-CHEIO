@@ -8,7 +8,7 @@ import { isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
 import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
-import { ErrorLine, InfoLine, OkLine, Panel, Spinner, Submit, Title } from './accountUi';
+import { ANY_PROVIDER_HINT, EMAIL_INPUT, EmailSuggestion, ErrorLine, InfoLine, OkLine, Panel, Spinner, Submit, Title } from './accountUi';
 import { EmailPrefsPanel } from './EmailPreferences';
 import { getLoginPrefill, getRecoverPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, setRecoverPrefill, useCustomer } from './customer';
 import { useShop } from './data';
@@ -44,7 +44,7 @@ type LoginResponse = { customer?: CustomerAccount; status?: 'code_required'; ema
 const challengeFrom = (res: LoginResponse, fallbackMask: string, notice?: string): LoginChallenge => ({
   emailMasked: typeof res.email_masked === 'string' ? res.email_masked : fallbackMask,
   resendIn: number(res.resend_in, 60),
-  codeMinutes: number(res.code_minutes, 10),
+  codeMinutes: number(res.code_minutes, 5),
   notice: notice ?? `Enviamos um código de 6 dígitos para ${typeof res.email_masked === 'string' ? res.email_masked : fallbackMask}. Digite-o abaixo para entrar.`,
 });
 
@@ -72,6 +72,8 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
   const [sending, setSending] = useState(false);
   const [resends, setResends] = useState(0);
   const [left, restart] = useCountdown(pending.resendIn);
+  // Quanto falta para o código vencer (só aviso na tela: quem decide se vale é o servidor).
+  const [validLeft, restartValid] = useCountdown(pending.codeMinutes * 60);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
@@ -92,7 +94,7 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
       verified = await api.post<{ set_password_token?: string }>('/api/account/verify-email', { email: pending.email, code });
     } catch (err) {
       setBusy(false);
-      setError(friendlyError(err, 'Não foi possível confirmar agora. Tente de novo em instantes.'));
+      setError(err instanceof ApiError && err.code === 'invalid_code' && validLeft === 0 ? 'Este código expirou. Toque em “Reenviar código” para receber um novo.' : friendlyError(err, 'Não foi possível confirmar agora. Tente de novo em instantes.'));
       setCode('');
       input.current?.focus();
       return;
@@ -122,6 +124,7 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
     try {
       const data = await api.post<{ resend_in?: number }>('/api/account/resend-verification', { email: pending.email });
       restart(number(data.resend_in, 60));
+      restartValid(pending.codeMinutes * 60);
       setResends((n) => n + 1);
       setCode('');
       setInfo(`Pedimos um novo código para ${pending.email}. Ele costuma chegar em até 1 minuto, e o código anterior só deixa de valer quando o novo chegar.`);
@@ -136,7 +139,11 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
   return (
     <form onSubmit={submit} noValidate className="space-y-4">
       <InfoLine tone={pending.mailAvailable ? 'info' : 'warn'}>{pending.notice}</InfoLine>
-      <Field label="Código de confirmação" error={undefined} hint={`Os 6 dígitos do e-mail. O código vale por ${pending.codeMinutes} minutos e só pode ser usado uma vez.`}>
+      <Field
+        label="Código de confirmação"
+        error={undefined}
+        hint={validLeft > 0 ? `Os 6 dígitos do e-mail. O código vale por ${pending.codeMinutes} minutos (restam ${mmss(validLeft)}) e só pode ser usado uma vez.` : 'Este código expirou. Toque em “Reenviar código” para receber um novo.'}
+      >
         {(p) => (
           <input
             {...p}
@@ -170,11 +177,11 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
           {left > 0 ? `Reenviar código em ${mmss(left)}` : 'Reenviar código'}
         </button>
         <button type="button" onClick={onBack} className="text-sm font-semibold text-white/60 underline-offset-4 hover:text-white hover:underline">
-          Usar outro e-mail
+          Corrigir ou trocar o e-mail
         </button>
       </div>
       <p className="text-xs leading-relaxed text-white/60">
-        Não chegou? Veja a caixa de spam ou lixo eletrônico e confira se o e-mail está certo.
+        O e-mail pode levar alguns minutos para chegar, em qualquer provedor. Não chegou? Veja a caixa de spam, lixo eletrônico ou promoções e confira se o endereço está certo.
         {resends >= 2 && ' Por segurança, limitamos quantos códigos podem ser enviados por hora: se ainda não chegou, aguarde um pouco e tente de novo.'} Sua conta só é ativada depois que o código for confirmado.
       </p>
     </form>
@@ -189,6 +196,8 @@ function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChalleng
   const [sending, setSending] = useState(false);
   const [resends, setResends] = useState(0);
   const [left, restart] = useCountdown(challenge.resendIn);
+  // Quanto falta para o código vencer (só aviso na tela: quem decide se vale é o servidor).
+  const [validLeft, restartValid] = useCountdown(challenge.codeMinutes * 60);
   const input = useRef<HTMLInputElement>(null);
   useEffect(() => {
     input.current?.focus();
@@ -214,7 +223,7 @@ function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChalleng
         onBack(err.message);
         return;
       }
-      setError(friendlyError(err, 'Não foi possível conferir o código agora. Tente de novo em instantes.'));
+      setError(err instanceof ApiError && err.code === 'invalid_code' && validLeft === 0 ? 'Este código expirou. Toque em “Reenviar código” para receber um novo.' : friendlyError(err, 'Não foi possível conferir o código agora. Tente de novo em instantes.'));
       setCode('');
       input.current?.focus();
     }
@@ -227,6 +236,7 @@ function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChalleng
     try {
       const data = await api.post<{ resend_in?: number }>('/api/account/login/resend', {});
       restart(number(data.resend_in, 60));
+      restartValid(challenge.codeMinutes * 60);
       setResends((n) => n + 1);
       setCode('');
       setInfo(`Enviamos um novo código para ${challenge.emailMasked}. O código anterior só deixa de valer quando o novo chegar.`);
@@ -246,7 +256,11 @@ function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChalleng
   return (
     <form onSubmit={submit} noValidate className="space-y-4" data-login-code-form>
       <InfoLine tone="info">{challenge.notice}</InfoLine>
-      <Field label="Código de acesso" error={undefined} hint={`Os 6 dígitos do e-mail. O código vale por ${challenge.codeMinutes} minutos e só pode ser usado uma vez.`}>
+      <Field
+        label="Código de acesso"
+        error={undefined}
+        hint={validLeft > 0 ? `Os 6 dígitos do e-mail. O código vale por ${challenge.codeMinutes} minutos (restam ${mmss(validLeft)}) e só pode ser usado uma vez.` : 'Este código expirou. Toque em “Reenviar código” para receber um novo.'}
+      >
         {(p) => (
           <input
             {...p}
@@ -280,11 +294,11 @@ function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChalleng
           {left > 0 ? `Reenviar código em ${mmss(left)}` : 'Reenviar código'}
         </button>
         <button type="button" onClick={() => onBack()} className="text-sm font-semibold text-white/60 underline-offset-4 hover:text-white hover:underline">
-          Voltar
+          Voltar e corrigir o e-mail
         </button>
       </div>
       <p className="text-xs leading-relaxed text-white/60">
-        Não chegou? Veja a caixa de spam ou lixo eletrônico.
+        O e-mail pode levar alguns minutos para chegar, em qualquer provedor. Não chegou? Veja a caixa de spam, lixo eletrônico ou promoções.
         {resends >= 2 && ' Por segurança, limitamos quantos códigos podem ser enviados por hora: se ainda não chegou, aguarde um pouco e tente de novo.'} Sem o código, ninguém entra na sua conta, mesmo sabendo a sua senha.
       </p>
     </form>
@@ -300,6 +314,8 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
   const [form, setForm] = useState(() => ({ name: '', email: getLoginPrefill(), phone: '', password: '' }));
+  // A dica "Você quis dizer…?" só aparece depois que a pessoa sai do campo (não atrapalha enquanto digita).
+  const [emailTouched, setEmailTouched] = useState(false);
   // "Quero receber novidades e promoções": desmarcada por padrão. Marcar só faz o pedido; ele vale depois que o e-mail for confirmado.
   const [marketing, setMarketing] = useState(false);
   const set = (key: keyof typeof form, value: string) => {
@@ -403,11 +419,18 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
     setNotice('E-mail confirmado! Agora entre com o seu e-mail e a sua senha.');
   };
 
+  // "Corrigir ou trocar o e-mail": volta ao formulário com o endereço digitado, selecionado, para consertar um erro de digitação ou escrever outro.
   const useOtherEmail = () => {
+    const typed = pending?.email ?? '';
     setPending(null);
     setTab('cadastro');
-    setForm((f) => ({ ...f, email: '' }));
-    requestAnimationFrame(() => document.querySelector<HTMLElement>('input[type="email"]')?.focus());
+    setEmailTouched(false);
+    setForm((f) => ({ ...f, email: typed }));
+    requestAnimationFrame(() => {
+      const field = document.querySelector<HTMLInputElement>('input[type="email"]');
+      field?.focus();
+      field?.select();
+    });
   };
 
   // Voltar da tela do código: de volta ao e-mail e à senha (a senha precisa ser digitada de novo para receber outro código).
@@ -467,8 +490,17 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
             </Field>
           </>
         )}
-        <Field label="E-mail *" error={errors.email} hint={tab === 'cadastro' ? 'Enviaremos um código para confirmar que o e-mail é seu.' : undefined}>
-          {(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
+        <Field
+          label="E-mail *"
+          error={errors.email}
+          hint={tab === 'cadastro' ? `${ANY_PROVIDER_HINT} Enviaremos um código para confirmar que o e-mail é seu.` : `${ANY_PROVIDER_HINT} Mandaremos um código de acesso para ele.`}
+        >
+          {(p) => (
+            <>
+              <input {...p} {...EMAIL_INPUT} value={form.email} onChange={(e) => set('email', e.target.value)} onBlur={() => setEmailTouched(true)} className={FIELD} placeholder="voce@email.com" />
+              <EmailSuggestion email={form.email} show={emailTouched} onUse={(corrected) => set('email', corrected)} />
+            </>
+          )}
         </Field>
         <Field label="Senha *" error={errors.password} hint={tab === 'cadastro' ? 'Pelo menos 8 caracteres. Evite senhas óbvias.' : undefined}>
           {(p) => (
@@ -1122,7 +1154,7 @@ function RecoverByOrder({ initialEmail, onDone }: { initialEmail: string; onDone
     <>
       <p className="mb-4 text-sm text-white/60">Sem o e-mail, você prova que a conta é sua com o telefone cadastrado e um pedido que já está nela.</p>
       <form onSubmit={submit} noValidate className="space-y-4">
-        <Field label="E-mail da conta">{(p) => <input {...p} type="email" value={form.email} onChange={(e) => set('email', e.target.value)} autoComplete="email" className={FIELD} />}</Field>
+        <Field label="E-mail da conta">{(p) => <input {...p} {...EMAIL_INPUT} value={form.email} onChange={(e) => set('email', e.target.value)} className={FIELD} />}</Field>
         <Field label="Telefone cadastrado">{(p) => <input {...p} type="tel" value={form.phone} onChange={(e) => set('phone', maskPhone(e.target.value))} autoComplete="tel-national" className={FIELD} placeholder="(34) 99999-0000" />}</Field>
         <div className="grid gap-4 sm:grid-cols-[8rem_1fr]">
           <Field label="Nº do pedido">{(p) => <input {...p} value={form.number} onChange={(e) => set('number', e.target.value)} inputMode="numeric" autoComplete="off" className={FIELD} placeholder="#1001" />}</Field>
@@ -1270,7 +1302,7 @@ export function RecoverPage() {
                   <form onSubmit={submit} noValidate className="space-y-4">
                     {mailDown && <InfoLine tone="warn">A recuperação por e-mail está indisponível no momento, porque o envio de e-mails da loja ainda não foi configurado. Use a opção abaixo ou fale com a loja pelo WhatsApp.</InfoLine>}
                     <Field label="E-mail da conta" error={emailError}>
-                      {(p) => <input {...p} type="email" value={email} onChange={(e) => { setEmail(e.target.value); setEmailError(''); }} autoComplete="email" maxLength={254} className={FIELD} placeholder="voce@email.com" />}
+                      {(p) => <input {...p} {...EMAIL_INPUT} value={email} onChange={(e) => { setEmail(e.target.value); setEmailError(''); }} className={FIELD} placeholder="voce@email.com" />}
                     </Field>
                     <ErrorLine>{error}</ErrorLine>
                     <Submit busy={busy}>

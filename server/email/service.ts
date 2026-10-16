@@ -90,7 +90,9 @@ async function verdict(kind: KindName, def: KindDef, to: string | null, excludeI
   if (!to) return 'no_recipient';
   // Interruptor de segurança da loja: pedido e pagamento não saem (código de login, senha, avisos de segurança e promoções seguem as suas regras).
   if (def.group === 'order' && orderNoticesPaused()) return 'paused';
-  if (await ledger.suppressionOf(to)) return 'suppressed';
+  const suppression = await ledger.suppressionOf(to);
+  // Código ou link pedido pela própria pessoa: só o bloqueio manual do dono da loja vale (ver survivesAutoSuppression em kinds.ts).
+  if (suppression && !(def.survivesAutoSuppression && suppression.reason !== 'manual')) return 'suppressed';
   if (def.category === 'promotional' || (def.respectsOrderPref && !def.userInitiated)) {
     const prefs = await getPreferences(to);
     if (def.category === 'promotional' && (!prefs || !prefs.marketing || !(await isVerifiedCustomerEmail(to)))) return 'no_consent';
