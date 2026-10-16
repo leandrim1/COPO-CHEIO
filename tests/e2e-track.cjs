@@ -67,10 +67,13 @@ async function confirmEmail(page, email) {
   const code = /\b(\d{6})\b/.exec(list[list.length - 1].text)[1];
   await page.getByLabel('Código de confirmação').fill(code);
   await page.getByRole('button', { name: 'Confirmar e-mail' }).click();
+  // O login pede o código de acesso (outro e-mail): conclui a entrada.
+  await finishLogin(page);
 }
 const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
 const body = (page) => page.evaluate(() => document.body.innerText);
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -503,6 +506,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
   ok(/E-mail ou senha incorretos/.test(await k.locator('[role=alert]').innerText()), 'old password no longer works');
   await k.getByLabel('Senha *').fill('nova-senha-456');
   await k.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(k);
   await k.waitForSelector('text=Olá, Ana!');
   ok(true, 'new password works');
   await k.goto(resetLink, { waitUntil: 'networkidle' });

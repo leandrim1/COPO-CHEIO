@@ -32,8 +32,11 @@ const rs = await c.post('/api/account/resend-verification', { email: 'pia.penden
 check('reenvio: 503 mail_not_configured', rs.status === 503 && rs.data.code === 'mail_not_configured', rs);
 const lp = await new Client().post('/api/account/login', { email: 'pia.pendente@exemplo.com', password: PASS });
 check('login de conta pendente: 403 email_not_verified, avisando que o envio está indisponível, sem sessão, sem erro 500', lp.status === 403 && lp.data.code === 'email_not_verified' && lp.data.mail_available === false && lp.data.sent === false, lp);
-const lv = await new Client().post('/api/account/login', { email: 'vera.verificada@exemplo.com', password: PASS });
-check('conta já confirmada continua entrando normalmente (login não depende do e-mail)', lv.status === 200 && lv.data.customer.email === 'vera.verificada@exemplo.com', lv);
+const lvClient = new Client();
+const lv = await lvClient.post('/api/account/login', { email: 'vera.verificada@exemplo.com', password: PASS });
+check('conta confirmada, sem e-mail configurado: o login com código NÃO funciona (503 mail_not_configured, com o caminho sem conta), e nunca vira sessão sem o código', lv.status === 503 && lv.data.code === 'mail_not_configured' && /sem conta/.test(lv.data.error) && (await lvClient.get('/api/account/me')).data.customer === null, lv);
+const lwrong = await new Client().post('/api/account/login', { email: 'vera.verificada@exemplo.com', password: 'senha-errada-999' });
+check('...e a senha errada segue recebendo o mesmo 401 de sempre (o 503 só aparece com a senha certa)', lwrong.status === 401, lwrong);
 const fg = await new Client().post('/api/account/forgot-password', { email: 'vera.verificada@exemplo.com' });
 check('recuperação de senha por e-mail: 503 mail_not_configured, com o caminho alternativo na mensagem (igual para qualquer e-mail)', fg.status === 503 && fg.data.code === 'mail_not_configured' && /Não consigo acessar meu e-mail/.test(fg.data.error) && (await new Client().post('/api/account/forgot-password', { email: 'ninguem@exemplo.com' })).data.code === 'mail_not_configured', fg);
 const dup = await new Client().post('/api/account/register', { name: 'Vera Verificada', email: 'vera.verificada@exemplo.com', phone: '34999991111', password: 'outra-senha-999' });
@@ -44,7 +47,7 @@ const veraRow = (await owner.get('/api/admin/customers?q=vera.verificada')).data
 const veraLink = await owner.post(`/api/admin/customers/${veraRow.id}/reset-link`, {});
 const veraCheck = await new Client().post('/api/account/reset-check', { token: veraLink.data.token });
 const veraReset = await new Client().post('/api/account/reset', { token: veraLink.data.token, password: 'senha-redefinida-1' });
-check('sem e-mail configurado, o link gerado pela loja continua funcionando (consultar e redefinir), sem tentar mandar aviso por e-mail', veraCheck.status === 200 && veraReset.status === 200 && (await new Client().post('/api/account/login', { email: 'vera.verificada@exemplo.com', password: 'senha-redefinida-1' })).status === 200, [veraCheck.status, veraReset.status]);
+check('sem e-mail configurado, o link gerado pela loja continua funcionando (consultar e redefinir), sem tentar mandar aviso por e-mail (a senha nova é aceita: o login pede o código e responde 503 porque não há como enviá-lo)', veraCheck.status === 200 && veraReset.status === 200 && (await new Client().post('/api/account/login', { email: 'vera.verificada@exemplo.com', password: 'senha-redefinida-1' })).status === 503, [veraCheck.status, veraReset.status]);
 const info = await owner.get('/api/admin/mail');
 check('painel: configured=false e lista exatamente o que falta', info.status === 200 && info.data.configured === false && JSON.stringify(info.data.missing) === JSON.stringify(['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS']), info.data);
 const test = await owner.post('/api/admin/mail/test', {});

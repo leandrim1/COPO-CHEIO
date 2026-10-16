@@ -69,6 +69,7 @@ async function verifiedAccount(name, email, password, optIn) {
 }
 const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -118,6 +119,7 @@ const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', '
   ok(/promoções/i.test(joanaMail.text) && /Ao confirmar o seu e-mail/.test(joanaMail.text), 'o e-mail do código cita a escolha de receber promoções');
   await a.getByLabel('Código de confirmação').fill(codeOf(joanaMail));
   await a.getByRole('button', { name: 'Confirmar e-mail' }).click();
+  await finishLogin(a);
   await a.waitForSelector('text=Olá, Joana!');
   ok(psql("select marketing::text || ':' || marketing_consent_source || ':' || marketing_consent_text from email_preferences where email = 'joana@exemplo.com'") === 'true:cadastro:v1', 'banco: confirmando o código, vira consentimento (origem cadastro, texto v1)');
 

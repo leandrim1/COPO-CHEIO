@@ -37,6 +37,17 @@ type Pending = {
 
 type RegisterResponse = VerificationInfo & { status: 'pending_verification' };
 
+// Login em dois passos: senha certa → o servidor manda um código de 6 dígitos para o e-mail da conta → só com o código a sessão é aberta.
+type LoginChallenge = { emailMasked: string; resendIn: number; codeMinutes: number; notice: string };
+type LoginResponse = { customer?: CustomerAccount; status?: 'code_required'; email_masked?: string; resend_in?: number; code_minutes?: number };
+
+const challengeFrom = (res: LoginResponse, fallbackMask: string, notice?: string): LoginChallenge => ({
+  emailMasked: typeof res.email_masked === 'string' ? res.email_masked : fallbackMask,
+  resendIn: number(res.resend_in, 60),
+  codeMinutes: number(res.code_minutes, 10),
+  notice: notice ?? `Enviamos um código de 6 dígitos para ${typeof res.email_masked === 'string' ? res.email_masked : fallbackMask}. Digite-o abaixo para entrar.`,
+});
+
 const number = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
 const mmss = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -53,7 +64,7 @@ function useCountdown(initial: number) {
   return [left, (seconds: number) => setUntil(Date.now() + seconds * 1000)] as const;
 }
 
-function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConfirmed: (customer: CustomerAccount | null) => void; onBack: () => void }) {
+function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConfirmed: (customer: CustomerAccount | null, challenge?: LoginChallenge) => void; onBack: () => void }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
@@ -93,10 +104,12 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
       navigate(`/conta/redefinir/${verified.set_password_token}`);
       return;
     }
-    // E-mail confirmado. Entra sozinho com a senha que acabou de ser digitada; se não der, a tela pede o login.
+    // E-mail confirmado. Segue com a senha que acabou de ser digitada: o login pede um código de acesso (outro e-mail, já a caminho); se não
+    // der para seguir, a tela pede o login.
     try {
-      const { customer } = await api.post<{ customer: CustomerAccount }>('/api/account/login', { email: pending.email, password: pending.password });
-      onConfirmed(customer);
+      const res = await api.post<LoginResponse>('/api/account/login', { email: pending.email, password: pending.password });
+      if (res.status === 'code_required') onConfirmed(null, challengeFrom(res, pending.email, `E-mail confirmado! Para entrar, enviamos um código de acesso para ${res.email_masked ?? pending.email}. Digite-o abaixo.`));
+      else onConfirmed(res.customer ?? null);
     } catch {
       onConfirmed(null);
     }
@@ -168,6 +181,116 @@ function VerifyStep({ pending, onConfirmed, onBack }: { pending: Pending; onConf
   );
 }
 
+function LoginCodeStep({ challenge, onDone, onBack }: { challenge: LoginChallenge; onDone: (customer: CustomerAccount) => void; onBack: (message?: string) => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [resends, setResends] = useState(0);
+  const [left, restart] = useCountdown(challenge.resendIn);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    if (code.length !== 6) {
+      setError('Digite os 6 dígitos do código que enviamos por e-mail.');
+      input.current?.focus();
+      return;
+    }
+    setBusy(true);
+    try {
+      const { customer } = await api.post<{ customer: CustomerAccount }>('/api/account/login/code', { code });
+      onDone(customer);
+    } catch (err) {
+      setBusy(false);
+      // A tentativa de login acabou (tempo esgotado ou erros demais): volta para o e-mail e a senha, com a explicação.
+      if (err instanceof ApiError && (err.code === 'login_expired' || err.code === 'code_locked')) {
+        onBack(err.message);
+        return;
+      }
+      setError(friendlyError(err, 'Não foi possível conferir o código agora. Tente de novo em instantes.'));
+      setCode('');
+      input.current?.focus();
+    }
+  };
+
+  const resend = async () => {
+    setError('');
+    setInfo('');
+    setSending(true);
+    try {
+      const data = await api.post<{ resend_in?: number }>('/api/account/login/resend', {});
+      restart(number(data.resend_in, 60));
+      setResends((n) => n + 1);
+      setCode('');
+      setInfo(`Enviamos um novo código para ${challenge.emailMasked}. O código anterior só deixa de valer quando o novo chegar.`);
+      input.current?.focus();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'login_expired') {
+        onBack(err.message);
+        return;
+      }
+      if (err instanceof ApiError && err.code === 'cooldown' && typeof err.data.retry_after === 'number') restart(err.data.retry_after);
+      setError(friendlyError(err, 'Não foi possível reenviar agora. Tente de novo em instantes.'));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <form onSubmit={submit} noValidate className="space-y-4" data-login-code-form>
+      <InfoLine tone="info">{challenge.notice}</InfoLine>
+      <Field label="Código de acesso" error={undefined} hint={`Os 6 dígitos do e-mail. O código vale por ${challenge.codeMinutes} minutos e só pode ser usado uma vez.`}>
+        {(p) => (
+          <input
+            {...p}
+            ref={input}
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+              setError('');
+            }}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            autoComplete="one-time-code"
+            maxLength={12}
+            spellCheck={false}
+            placeholder="000000"
+            className={`${FIELD} text-center font-mono text-2xl font-bold tracking-[0.35em]`}
+          />
+        )}
+      </Field>
+      <ErrorLine>{error}</ErrorLine>
+      <OkLine>{info}</OkLine>
+      <Submit busy={busy}>Entrar</Submit>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <button
+          type="button"
+          onClick={() => void resend()}
+          disabled={left > 0 || sending}
+          className="inline-flex items-center justify-center gap-2 rounded-full px-1 py-1 text-sm font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline disabled:cursor-not-allowed disabled:text-white/60 disabled:no-underline"
+        >
+          {sending && <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />}
+          {left > 0 ? `Reenviar código em ${mmss(left)}` : 'Reenviar código'}
+        </button>
+        <button type="button" onClick={() => onBack()} className="text-sm font-semibold text-white/60 underline-offset-4 hover:text-white hover:underline">
+          Voltar
+        </button>
+      </div>
+      <p className="text-xs leading-relaxed text-white/60">
+        Não chegou? Veja a caixa de spam ou lixo eletrônico.
+        {resends >= 2 && ' Por segurança, limitamos quantos códigos podem ser enviados por hora: se ainda não chegou, aguarde um pouco e tente de novo.'} Sem o código, ninguém entra na sua conta, mesmo sabendo a sua senha.
+      </p>
+    </form>
+  );
+}
+
 function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const [tab, setTab] = useState(initial);
   const [error, setError] = useState('');
@@ -175,6 +298,7 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
   const [form, setForm] = useState(() => ({ name: '', email: getLoginPrefill(), phone: '', password: '' }));
   // "Quero receber novidades e promoções": desmarcada por padrão. Marcar só faz o pedido; ele vale depois que o e-mail for confirmado.
   const [marketing, setMarketing] = useState(false);
@@ -214,8 +338,13 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
     setBusy(true);
     try {
       if (tab === 'entrar') {
-        const { customer } = await api.post<{ customer: CustomerAccount }>('/api/account/login', { email, password: form.password });
-        done(customer);
+        const res = await api.post<LoginResponse>('/api/account/login', { email, password: form.password });
+        // Senha certa: o servidor mandou um código para o e-mail da conta e a sessão só abre com ele (a cada entrada).
+        if (res.status === 'code_required') {
+          setChallenge(challengeFrom(res, email));
+          // A senha não fica na tela nem na memória do formulário depois deste passo.
+          setForm((f) => ({ ...f, email, password: '' }));
+        } else if (res.customer) done(res.customer);
       } else {
         // A conta nasce "pendente": nada de sessão até confirmar o código que o servidor manda por e-mail.
         const res = await api.post<RegisterResponse>('/api/account/register', { name: form.name.trim(), email, phone: onlyDigits(form.phone), password: form.password, marketing_opt_in: marketing });
@@ -257,8 +386,16 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
     }
   };
 
-  const confirmed = (customer: CustomerAccount | null) => {
+  const confirmed = (customer: CustomerAccount | null, next?: LoginChallenge) => {
     if (customer) return done(customer);
+    if (next) {
+      // E-mail confirmado e o código de acesso já está a caminho: vai direto para a tela dele.
+      setForm((f) => ({ ...f, email: pending?.email ?? f.email, password: '' }));
+      setPending(null);
+      setTab('entrar');
+      setChallenge(next);
+      return;
+    }
     // E-mail confirmado, mas não foi possível entrar sozinho: pede o login normal.
     setForm((f) => ({ ...f, email: pending?.email ?? f.email, password: '' }));
     setPending(null);
@@ -272,6 +409,22 @@ function AuthForms({ initial }: { initial: 'entrar' | 'cadastro' }) {
     setForm((f) => ({ ...f, email: '' }));
     requestAnimationFrame(() => document.querySelector<HTMLElement>('input[type="email"]')?.focus());
   };
+
+  // Voltar da tela do código: de volta ao e-mail e à senha (a senha precisa ser digitada de novo para receber outro código).
+  const backToPassword = (message?: string) => {
+    setChallenge(null);
+    setForm((f) => ({ ...f, password: '' }));
+    setError(message ?? '');
+    requestAnimationFrame(() => document.querySelector<HTMLElement>('input[type="password"]')?.focus());
+  };
+
+  if (challenge) {
+    return (
+      <Panel id="codigo-acesso" title="Confirme que é você" subtitle="Por segurança, o login pede um código enviado para o seu e-mail a cada entrada.">
+        <LoginCodeStep challenge={challenge} onDone={done} onBack={backToPassword} />
+      </Panel>
+    );
+  }
 
   if (pending) {
     return (

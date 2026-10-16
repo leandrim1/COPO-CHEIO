@@ -71,6 +71,7 @@ async function verifiedAccount(name, email, password) {
 }
 const age = (email) => psql(`update customer_password_resets set sent_at = sent_at - interval '2 minutes', created_at = created_at - interval '2 minutes' where email = '${email}'`);
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -152,6 +153,7 @@ const age = (email) => psql(`update customer_password_resets set sent_at = sent_
   await oldDevice.getByLabel('E-mail *').fill('ana.recupera@exemplo.com');
   await oldDevice.getByLabel('Senha *').fill('senha-antiga-123');
   await oldDevice.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(oldDevice);
   await oldDevice.waitForSelector('text=Olá, Ana!');
 
   const ctxC = await newContext(browser);
@@ -184,6 +186,7 @@ const age = (email) => psql(`update customer_password_resets set sent_at = sent_
   ok(/E-mail ou senha incorretos/.test(await c.locator('[role=alert]').first().innerText()), 'a senha antiga não entra mais');
   await c.getByLabel('Senha *').fill('senha-nova-456');
   await c.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(c);
   await c.waitForSelector('text=Olá, Ana!');
   ok(true, 'a senha nova entra');
 
@@ -232,6 +235,7 @@ const age = (email) => psql(`update customer_password_resets set sent_at = sent_
   await e.getByRole('link', { name: 'Entrar' }).last().click();
   await e.getByLabel('Senha *').fill('senha-nova-do-paulo');
   await e.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(e);
   await e.waitForSelector('text=Olá, Paulo!');
   ok(true, 'entra direto com a senha nova (sem pedir código de confirmação)');
   await ctxE.close();

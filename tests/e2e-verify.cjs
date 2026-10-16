@@ -79,6 +79,7 @@ async function fillSignup(page, { name, phone, email, password }) {
 }
 const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e receber o código/ }).click();
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
   const errors = [];
@@ -172,6 +173,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   await codeInput.fill(right.slice(0, 3) + ' ' + right.slice(3));
   ok((await codeInput.inputValue()) === right, 'spaces/dashes are not accepted in the field (digits only)');
   await a.getByRole('button', { name: 'Confirmar e-mail' }).click();
+  await finishLogin(a);
   await a.waitForSelector('text=Olá, Carla!');
   ok(true, 'right code: account confirmed and logged in automatically');
   ok(psql("select status from customers where email='carla@exemplo.com'") === 'active' && psql("select email_verified_at is not null from customers where email='carla@exemplo.com'") === 't', 'database: status active + verification date saved');
@@ -211,6 +213,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   } else ok(true, 'first code equals the second (1 in a million): skipped');
   await b.getByLabel('Código de confirmação').fill(codeOf(two[1]));
   await b.getByRole('button', { name: 'Confirmar e-mail' }).click();
+  await finishLogin(b);
   await b.waitForSelector('text=Olá, Davi!');
   ok(true, 'the newest code confirms the account');
   await ctxB.close();
@@ -239,6 +242,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   ok(evaMails.length === 1, 'a fresh code was sent when the pending owner tried to log in');
   await c.getByLabel('Código de confirmação').fill(codeOf(evaMails[0]));
   await c.getByRole('button', { name: 'Confirmar e-mail' }).click();
+  await finishLogin(c);
   await c.waitForSelector('text=Olá, Eva!');
   ok(true, 'confirming from the login flow logs in with the password just typed');
 
@@ -288,6 +292,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   ok((await e.getByLabel('E-mail *').inputValue()) === 'fabio.novo@exemplo.com', 'login e-mail is pre-filled after confirming by link');
   await e.getByLabel('Senha *').fill('fabio-senha-123');
   await e.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(e);
   await e.waitForSelector('text=Olá, Fabio!');
   ok(true, 'login works after confirming by link');
   // o mesmo link não vale duas vezes
@@ -326,6 +331,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
   await phone.waitForURL(BASE + '/conta');
   await phone.getByLabel('Senha *').fill('Hugo!Senha-Nova-2026');
   await phone.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+  await finishLogin(phone);
   await phone.waitForSelector('text=Olá, Hugo!');
   ok(true, 'the person sets their own password and logs in');
   await ctxHugo.close();

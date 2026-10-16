@@ -102,6 +102,25 @@ export async function mailMode(failure = null, delayMs = 0) {
   await fetch(`${BASE}/__mail/mode`, { method: 'POST', body: JSON.stringify({ failure, delayMs }) });
 }
 
+// Login do cliente em DOIS passos (e-mail + senha → código enviado por e-mail → sessão). Devolve a resposta final (a do código: 200 com
+// o cliente e o cookie da sessão); se o primeiro passo falhar (senha errada, e-mail não confirmado, limite...), devolve a resposta dele, igual ao
+// que o servidor respondeu. Serve para trocar, sem mudar o resto do teste, qualquer `client.post('/api/account/login', { email, password })`.
+export async function loginCustomer(client, body, opts) {
+  const email = String(body?.email ?? '').trim();
+  const before = email ? (await mailsTo(email)).length : 0;
+  const first = await client.post('/api/account/login', body, opts);
+  if (first.status !== 202 || first.data?.status !== 'code_required') return first;
+  let code;
+  for (let i = 0; i < 50 && !code; i++) {
+    const list = await mailsTo(email);
+    if (list.length > before) code = codeFrom(list[list.length - 1]);
+    else await new Promise((r) => setTimeout(r, 100));
+  }
+  // Pedido repetido logo em seguida pelo mesmo navegador: vale o código que já tinha sido enviado (nenhum e-mail novo).
+  if (!code) code = await lastCode(email);
+  return client.post('/api/account/login/code', { code });
+}
+
 // Cadastra, confirma o e-mail com o código recebido e entra. Devolve a resposta do login.
 export async function registerVerified(client, { name, email, phone, password }) {
   const reg = await client.post('/api/account/register', { name, email, phone, password });
@@ -109,7 +128,7 @@ export async function registerVerified(client, { name, email, phone, password })
   const code = await lastCode(email);
   const ver = await client.post('/api/account/verify-email', { email, code });
   if (ver.status !== 200) throw new Error(`confirmação falhou: ${ver.status} ${JSON.stringify(ver.data)}`);
-  const login = await client.post('/api/account/login', { email, password });
+  const login = await loginCustomer(client, { email, password });
   if (login.status !== 200) throw new Error(`login falhou: ${login.status} ${JSON.stringify(login.data)}`);
   return login;
 }

@@ -67,6 +67,7 @@ async function nextMail(to, ms = 8000) {
   return null;
 }
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   // Cardápio com bastante coisa, para a página rolar e dar para pôr algo no carrinho.
   psql(`insert into categories(name, position) values ('Copão', 0), ('Cervejas', 1);
@@ -152,6 +153,12 @@ async function nextMail(to, ms = 8000) {
   // ---------------------------------------------------------------------------------------------------------------------------------
   console.log('# 3. o clique abre o fluxo de entrada existente; criar conta e confirmar o e-mail a partir dele');
   const email = 'maria.login@exemplo.com';
+  // Login da conta de teste pela API, nos dois passos (senha → código do e-mail → sessão); devolve a resposta do segundo passo.
+  const apiLogin = async (ctx) => {
+    const first = await ctx.request.post(BASE + '/api/account/login', { data: { email, password: 'maria-senha-123' } });
+    if (first.status() !== 202) return first;
+    return ctx.request.post(BASE + '/api/account/login/code', { data: { code: await latestLoginCode(email) } });
+  };
   let cookies = [];
   {
     const { ctx, page } = await newCtx(browser, { width: 1280, height: 800 });
@@ -185,8 +192,13 @@ async function nextMail(to, ms = 8000) {
     const code = /\b(\d{6})\b/.exec(mail.text)[1];
     await page.getByLabel('Código de confirmação').fill(code);
     await page.getByRole('button', { name: 'Confirmar e-mail' }).click();
+    // O login pede o código de acesso (outro e-mail, já a caminho): a tela do código aparece direto, sem voltar ao formulário.
+    await page.getByLabel('Código de acesso').waitFor();
+    ok(/Confirme que é você/.test(await page.innerText('body')) && /E-mail confirmado/.test(await page.innerText('body')), 'depois de confirmar o e-mail, a tela pede o código de acesso (o login pede o código a cada entrada)');
+    ok((await (await fetch(BASE + '/api/account/me')).json()).customer === null, '...e ainda não há sessão até o código ser digitado');
+    await finishLogin(page, email);
     await page.waitForSelector('text=Olá, Maria!');
-    ok(new URL(page.url()).pathname === '/conta', 'depois de confirmar, o cliente já está dentro da conta (área útil), sem passar pelo login de novo');
+    ok(new URL(page.url()).pathname === '/conta', 'com o código, o cliente entra na conta (área útil)');
     ok(psql(`select status from customers where email='${email}'`) === 'active', 'banco: conta ativa');
     const body = await page.innerText('body');
     ok(/Meus pedidos/.test(body) && /Sair/.test(body) && !/Entrar na minha conta/.test(body), 'na conta: "Meus pedidos" e "Sair", e o formulário de login não aparece de novo');
@@ -224,6 +236,9 @@ async function nextMail(to, ms = 8000) {
     await page.getByLabel('E-mail *').fill(email);
     await page.getByLabel('Senha *').fill('maria-senha-123');
     await page.getByRole('button', { name: 'Entrar', exact: true }).last().click();
+    await page.getByLabel('Código de acesso').waitFor();
+    ok((await (await fetch(BASE + '/api/account/me')).json()).customer === null, 'entrar de novo pelo botão: a senha certa sozinha NÃO abre a conta (pede o código)');
+    await finishLogin(page, email);
     await page.waitForSelector('text=Olá, Maria!');
     ok(new URL(page.url()).pathname === '/conta', 'login de conta válida pelo botão: entra e fica na conta (sem laço entre login e Bebidas)');
     await ctx.close();
@@ -233,7 +248,7 @@ async function nextMail(to, ms = 8000) {
   console.log('# 4. quem já tem sessão nunca vê "Login" piscar enquanto o servidor responde');
   {
     const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
-    const r = await ctx.request.post(BASE + '/api/account/login', { data: { email, password: 'maria-senha-123' } });
+    const r = await apiLogin(ctx);
     ok(r.ok(), 'sessão criada para o teste');
     await page.route('**/api/account/me', async (route) => {
       await wait(1500);
@@ -337,7 +352,7 @@ async function nextMail(to, ms = 8000) {
     // logado: as duas telas das imagens (Acompanhar pedido com a conta, e "Olá, ...!")
     {
       const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
-      const r = await ctx.request.post(BASE + '/api/account/login', { data: { email, password: 'maria-senha-123' } });
+      const r = await apiLogin(ctx);
       ok(r.ok(), 'sessão criada para o teste');
       await check(page, '/conta', 'logado, conta (Olá, ...!)');
       await check(page, '/acompanhar-pedido', 'logado, acompanhar pedido (Você entrou como ...)');

@@ -339,6 +339,24 @@ checkout. Comprar como visitante continua sempre possível.
 - Sessão do cliente: cookie `HttpOnly` + `SameSite=Lax` próprio (`copocheio_cliente`, 30 dias), só o hash no Neon; é
   outro mundo que a sessão do painel (uma não abre a outra). Senha com scrypt (mínimo de 8 caracteres, sem senhas comuns).
   Limites de login: 8 erros por e-mail + rede e 30 por rede a cada 15 min, e 100 tentativas por hora por e-mail.
+- **Login com código por e-mail, a CADA entrada** (migration `0023_login_code.sql`): a senha certa **sozinha não abre sessão**. Em `/conta` a pessoa informa
+  e-mail e senha; com a senha certa o servidor manda um **código de 6 dígitos** para o e-mail da conta, a tela muda para **"Confirme que é você"** e só o código
+  certo abre a sessão (`POST /api/account/login` → `202 { status: "code_required", ... }` e `POST /api/account/login/code { code }` → `200 { customer }` com o cookie de
+  sessão). Sair e entrar de novo pede outro código; uma sessão que já está aberta continua valendo (30 dias) até a pessoa sair.
+  - *Amarrado ao navegador*: junto com o `202` o servidor entrega um cookie secreto (`copocheio_login`, `HttpOnly`, 30 min) que identifica a tentativa; o código só vale
+    **vindo desse mesmo navegador**. Quem só leu o e-mail (ou o código) não entra, e quem só sabe a senha também não.
+  - *Regras do código*: vale **10 min**, **uso único**, **5 erros** inutilizam a tentativa (é preciso informar a senha de novo), **reenvio só depois de 60 s**
+    (`POST /api/account/login/resend`), no máximo **5 e-mails por tentativa** e **10 por hora por conta**, e até 40 por hora por rede. O banco guarda só o hash do cookie
+    e um HMAC do código (chave que só o servidor conhece); tudo isso é conferido **dentro do banco**, então pedidos simultâneos não furam nenhum limite.
+  - *Trocar a senha derruba a tentativa aberta* (por qualquer caminho); conta desativada ou excluída também. Entrar de novo **logo em seguida, no mesmo navegador**,
+    não manda outro e-mail (vale o código já enviado).
+  - *Quem erra a senha nunca chega ao código*: nenhum e-mail sai e a resposta (`401`) é a mesma de sempre, então ninguém enche a caixa de e-mail de um cliente sem
+    saber a senha dele. Conta com e-mail ainda não confirmado segue no fluxo de confirmação (`403 email_not_verified`).
+  - *Sem e-mail configurado (SMTP), ninguém entra na conta*: com a senha certa o servidor responde `503 mail_not_configured` (o cadastro já era assim). Fazer pedidos e
+    acompanhá-los **sem conta** continua funcionando. O mesmo vale se o servidor de e-mail estiver fora do ar na hora (`503 mail_failed`: nada de sessão sem o código).
+  - *Recém-cadastrado*: depois de confirmar o e-mail do cadastro, a tela segue direto para o código de acesso (um segundo e-mail, já a caminho).
+  - O e-mail do código é o tipo `login_code` (transacional, síncrono, nunca guardado nem reenviado: só o nome do tipo vai para o registro de e-mails). O painel (`/admin/login`)
+    não muda: continua com senha e, se a conta usar, o código do aplicativo (2FA).
 
 ### Confirmação do e-mail (contas de clientes)
 
@@ -731,10 +749,13 @@ A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desl
 ([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
 A migration `0021_pickup_time.sql` acrescentou uma coluna opcional, `store_settings.pickup_time` (texto de até 30 letras). **Hoje o site não a usa**: a janela ⓘ da página
 Bebidas ficou só com horário de funcionamento e formas de pagamento, então a coluna fica vazia e sem efeito (pode ser apagada ou reaproveitada depois).
+A migration `0023_login_code.sql` acrescentou a tabela `customer_login_challenges` e cinco funções (`begin_login_challenge`, `finish_login_challenge`, `begin_login_resend`,
+`finish_login_resend`, `verify_login_code`) para o login do cliente com código por e-mail. **Só acrescenta**: nenhuma função existente muda e nenhum dado é escrito ou
+apagado. Voltar o código para a versão anterior continua funcionando contra este banco (o login antigo só pede a senha).
 A migration `0022_ice_per_product.sql` acrescentou `products.ice_choice_required` e trocou `create_order` por uma versão idêntica à da 0020, exceto por
 ler a marca do **produto** (era a da categoria). Ela escreve **uma única linha de dados** (um `UPDATE` que marca os produtos que estavam em categorias que pediam o gelo, para o site
 não mudar no deploy); nenhum pedido, preço, estoque ou categoria é alterado. A coluna `categories.ice_choice_required` continua no banco, sem uso.
-As migrations 0009 a 0022 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
+As migrations 0009 a 0023 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir os produtos marcados (inicialmente, os dos copões) enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado

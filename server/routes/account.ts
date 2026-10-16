@@ -10,6 +10,7 @@ import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
 import { confirmPendingMarketing, setMarketingPending } from '../email/preferences.js';
 import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
 import { mailConfigured } from '../mail.js';
+import { CODE_TRY_BUCKET, LOGIN_CODE_MINUTES, challengeHash, checkLoginCode, clearLoginCookie, cleanCode as cleanLoginCode, expiredChallenge, resendLoginCode, startLoginChallenge } from '../loginCode.js';
 import { RESET_MINUTES, RESET_RESEND_SECONDS, assertMailBudget, padResponse, resetMailUnavailable, sendPasswordChangedNotice, sendPasswordResetEmail } from '../passwordReset.js';
 import { NOT_FOUND, normalizeToken, hashToken } from '../tracking.js';
 import { digits, parse, text } from '../validate.js';
@@ -242,10 +243,45 @@ export function registerAccount(r: Router) {
       }, { 'set-cookie': registrationCookie(ctx.req, nonce) });
     }
 
-    await query('update customers set last_login_at = now() where id = $1', [row.id]);
-    const { token, maxAge } = await createCustomerSession(row.id);
-    const customer = await one(`select ${CUSTOMER_COLUMNS} from customers c where c.id = $1`, [row.id]);
-    return json({ customer }, 200, { 'set-cookie': customerCookie(ctx.req, token, maxAge) });
+    // Senha certa e e-mail confirmado: AINDA SEM SESSÃO. O servidor manda um código de 6 dígitos para o e-mail da conta e só abre a sessão
+    // quando ele voltar certo, do mesmo navegador (POST /api/account/login/code). É assim a CADA entrada. Quem erra a senha nunca chega aqui,
+    // então ninguém consegue encher a caixa de e-mail de um cliente sem saber a senha dele.
+    const started = await startLoginChallenge(ctx.req, ctx.ip, row);
+    return json(
+      { status: 'code_required', email_masked: maskEmail(row.email), resend_in: started.resendIn, code_minutes: LOGIN_CODE_MINUTES },
+      202,
+      started.cookie ? { 'set-cookie': started.cookie } : {},
+    );
+  });
+
+  // Segundo passo do login: o código de 6 dígitos que chegou no e-mail. Só vale vindo do navegador que digitou a senha (cookie do desafio).
+  r.post('/api/account/login/code', 'public', async (ctx) => {
+    const body = await readJson(ctx.req, 2 * 1024);
+    const code = cleanLoginCode(body.code);
+    if (!code) throw new HttpError(400, 'Digite os 6 dígitos do código que enviamos por e-mail.', { code: 'invalid_code_format' });
+    const nonceHash = challengeHash(ctx.req);
+    if (!nonceHash) throw expiredChallenge();
+    // A vaga é reservada ANTES de conferir (atômico) e devolvida se o código estava certo. Além disso o banco conta 5 erros por código.
+    await reserve(CODE_TRY_BUCKET, ctx.ip, WINDOW, 30, 'Muitas tentativas incorretas. Aguarde alguns minutos e tente de novo.', 'too_many_attempts');
+    const checked = await checkLoginCode(nonceHash, code);
+    if (checked.result !== 'ok') {
+      if (checked.result === 'locked') {
+        throw new HttpError(400, 'Muitas tentativas incorretas com este código. Informe o e-mail e a senha de novo para receber um novo código.', { code: 'code_locked' }, { 'set-cookie': clearLoginCookie(ctx.req) });
+      }
+      throw new HttpError(400, 'Código incorreto ou expirado. Confira os 6 dígitos ou peça um novo código.', { code: 'invalid_code' });
+    }
+    await refund(CODE_TRY_BUCKET, ctx.ip);
+    await query('update customers set last_login_at = now() where id = $1', [checked.customer_id]);
+    const { token, maxAge } = await createCustomerSession(checked.customer_id);
+    const customer = await one(`select ${CUSTOMER_COLUMNS} from customers c where c.id = $1`, [checked.customer_id]);
+    return json({ customer }, 200, { 'set-cookie': [clearLoginCookie(ctx.req), customerCookie(ctx.req, token, maxAge)] });
+  });
+
+  // "Reenviar código" na tela do código (mesma tentativa de login): espera de 60 s, no máximo 5 por tentativa e 10 por hora por conta.
+  r.post('/api/account/login/resend', 'public', async (ctx) => {
+    await readJson(ctx.req, 1024);
+    const sent = await resendLoginCode(ctx.req, ctx.ip);
+    return json({ ok: true, resend_in: sent.resendIn, code_minutes: LOGIN_CODE_MINUTES });
   });
 
   r.post('/api/account/logout', 'public', async (ctx) => {

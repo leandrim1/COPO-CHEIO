@@ -67,6 +67,8 @@ const add = (name, kind, message) => ALL.push({ name, kind, message });
 add('confirmação de e-mail', 'transactional', mt.verificationMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', link: `${brand.siteUrl}/conta/verificar/TOKENTOKENTOKENTOKENTOKEN`, codeMinutes: 15, linkHours: 24 }));
 add('confirmação com aviso de promoções', 'transactional', mt.verificationMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', link: `${brand.siteUrl}/conta/verificar/TOKENTOKENTOKENTOKENTOKEN`, codeMinutes: 15, linkHours: 24, marketingNotice: true }));
 add('confirmação de teste do painel', 'transactional', mt.verificationMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', link: `${brand.siteUrl}/conta`, codeMinutes: 15, linkHours: 24, sample: true }));
+add('código para entrar na conta', 'transactional', mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 10 }));
+add('código para entrar (teste do painel)', 'transactional', mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '654321', codeMinutes: 10, sample: true }));
 add('você já tem uma conta', 'transactional', mt.alreadyRegisteredMessage(brand, { to: 'a@exemplo.com', name: 'Ana', loginUrl: `${brand.siteUrl}/conta` }));
 add('nova senha (link)', 'transactional', mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/redefinir/TOKENTOKENTOKENTOKENTOKEN`, minutes: 30 }));
 add('senha alterada', 'transactional', mt.passwordChangedMessage(brand, { to: 'a@exemplo.com', name: 'Ana', loginUrl: `${brand.siteUrl}/conta`, when }));
@@ -288,4 +290,19 @@ test('taxa paga pelo cliente no e-mail do pedido: "Taxa de serviço do Pix" no P
   assert.match(card.html, /Taxa de processamento do cartão/);
   const none = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 21, total: 21 }));
   assert.doesNotMatch(none.html, /Taxa de serviço|Taxa de processamento/);
+});
+
+test('código para entrar: o código está no assunto e no texto, vale 10 minutos, avisa "Não foi você?" e NÃO traz botão nem link de acesso', () => {
+  const m = mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'ana maria', code: '654321', codeMinutes: 10 });
+  assert.match(m.subject, /^654321 é o seu código para entrar – /);
+  assert.match(m.text, /654321/);
+  assert.match(m.text, /10 minutos/);
+  assert.match(m.text, /Não foi você\?/);
+  assert.match(m.text, /Olá, Ana!/);
+  // Não existe link de "entrar com um clique": o código só vale digitado na tela do site, do mesmo navegador que informou a senha.
+  assert.ok(!/\/conta\/(verificar|redefinir)\//.test(m.html), 'sem link de confirmação nem de senha');
+  assert.ok(!/<a [^>]*class="[^"]*button/i.test(m.html) && !/role="button"/i.test(m.html), 'sem botão');
+  const sample = mt.loginCodeMessage(brand, { to: 'a@exemplo.com', name: 'Ana', code: '123456', codeMinutes: 10, sample: true });
+  assert.match(sample.subject, /^\[Teste\] /);
+  assert.match(sample.text, /Mensagem de teste enviada pelo painel/);
 });

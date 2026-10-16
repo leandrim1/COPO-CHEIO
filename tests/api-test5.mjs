@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash, createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { Client, check, clearMail, codeFrom, linkFrom, mailMode, mailsTo, registerVerified, section, summary } from './lib.mjs';
+import { Client, check, clearMail, codeFrom, linkFrom, mailMode, mailsTo, registerVerified, section, summary, loginCustomer } from './lib.mjs';
 
 const psql = (sql) => execFileSync('psql', ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-c', sql], { encoding: 'utf8' }).trim();
 const lit = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -92,7 +92,7 @@ check('código certo: 200 verified', v1.status === 200 && v1.data.verified === t
 check('confirmar o e-mail não abre sessão (a pessoa entra com a senha)', !hasSession(c1) && !setsSession(v1));
 check('banco: active e data de confirmação gravada agora', psql(`select status = 'active' and email_verified_at > now() - interval '1 minute' from customers where email = ${lit(email1)}`) === 't');
 check('banco: o código foi marcado como usado', psql(`select used_at is not null from email_verifications where email = ${lit(email1)}`) === 't');
-const l1 = await c1.post('/api/account/login', { email: email1.toUpperCase(), password: PASS });
+const l1 = await loginCustomer(c1, { email: email1.toUpperCase(), password: PASS });
 check('login depois de confirmar: 200, cookie HttpOnly, dados da conta', l1.status === 200 && /HttpOnly/i.test(c1.lastSetCookie ?? '') && l1.data.customer?.email === email1, l1);
 check('a resposta do login não traz senha nem hash', !/password|hash/i.test(JSON.stringify(l1.data)));
 check('/me devolve a conta', (await c1.get('/api/account/me')).data.customer?.email === email1);
@@ -200,14 +200,14 @@ check('lista de descartáveis embutida: mais de 50 mil domínios, com a data da 
 section('TESTES 5 e 9 — E-mail não confirmado: nenhum acesso, nem chamando a API direto');
 const c5 = new Client();
 const s5 = await signUp(c5, { name: 'Paulo Pendente', email: 'paulo.pendente@exemplo.com', phone: '34988881111' });
-const L5 = await c5.post('/api/account/login', { email: s5.email, password: PASS });
+const L5 = await loginCustomer(c5, { email: s5.email, password: PASS });
 check('senha certa + e-mail sem confirmar: 403 email_not_verified', L5.status === 403 && L5.data.code === 'email_not_verified', L5);
 check('...sem cookie e sem sessão no banco', !hasSession(c5) && !setsSession(L5) && count(`select count(*) from customer_sessions s join customers c on c.id = s.customer_id where c.email = ${lit(s5.email)}`) === 0);
 check('...a resposta diz que falta confirmar e quanto tempo falta para reenviar, sem vazar código', L5.data.email_masked === 'p***@exemplo.com' && L5.data.mail_available === true && L5.data.resend_in === 60 && !/\d{6}/.test(JSON.stringify(L5.data)), L5.data);
 check('...dentro dos 60 s não manda outro e-mail (sent=false)', L5.data.sent === false && (await mailsTo(s5.email)).length === 1);
-const wrongPass = await new Client().post('/api/account/login', { email: s5.email, password: 'senha-errada-999' });
+const wrongPass = await loginCustomer(new Client(), { email: s5.email, password: 'senha-errada-999' });
 check('senha errada em conta pendente: o mesmo 401 genérico (não revela que existe)', wrongPass.status === 401 && wrongPass.data.error === 'E-mail ou senha incorretos.', wrongPass);
-const unknown = await new Client().post('/api/account/login', { email: 'ninguem@exemplo.com', password: PASS });
+const unknown = await loginCustomer(new Client(), { email: 'ninguem@exemplo.com', password: PASS });
 check('e-mail inexistente: o mesmo 401 genérico', unknown.status === 401 && unknown.data.error === wrongPass.data.error);
 
 const protectedCalls = [
@@ -475,10 +475,10 @@ const claim = await c10.post('/api/account/orders/claim', { order_number: gOrder
 check('vincular um pedido de visitante (código + telefone) funciona na conta confirmada', claim.status === 200, claim);
 const pw = await c10.patch('/api/account/password', { current: PASS, next: 'nova-senha-4567' });
 check('trocar a senha funciona', pw.status === 200);
-check('senha antiga deixa de entrar; a nova entra', (await new Client().post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: PASS })).status === 401 && (await new Client().post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 200);
+check('senha antiga deixa de entrar; a nova entra', (await loginCustomer(new Client(), { email: 'lia.confirmada@exemplo.com', password: PASS })).status === 401 && (await loginCustomer(new Client(), { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 200);
 const out = await c10.post('/api/account/logout');
 check('sair encerra a sessão: rotas protegidas voltam a 401', out.status === 200 && (await notDenied(c10)).length === 0);
-const again = await c10.post('/api/account/login', { email: ' LIA.Confirmada@Exemplo.com ', password: 'nova-senha-4567' });
+const again = await loginCustomer(c10, { email: ' LIA.Confirmada@Exemplo.com ', password: 'nova-senha-4567' });
 check('entrar de novo (e-mail com espaços e maiúsculas) funciona', again.status === 200 && (await c10.get('/api/account/me')).data.customer?.id !== undefined);
 const adminList = await owner.get('/api/admin/customers?q=lia.confirmada');
 const adminRow = adminList.data.customers.find((c) => c.email === 'lia.confirmada@exemplo.com');
@@ -487,13 +487,13 @@ const pendingRow = (await owner.get(`/api/admin/customers?q=${encodeURIComponent
 check('painel: conta nunca confirmada → pending_verification e email_verified_at nulo', pendingRow?.status === 'pending_verification' && pendingRow.email_verified_at === null, pendingRow);
 const off = await owner.patch(`/api/admin/customers/${adminRow.id}`, { active: false });
 check('painel desativa a conta: status disabled e a sessão cai', off.status === 200 && off.data.customer.status === 'disabled' && (await notDenied(c10)).length === 0, off.data);
-check('conta desativada não entra (401 genérico)', (await new Client().post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 401);
+check('conta desativada não entra (401 genérico)', (await loginCustomer(new Client(), { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 401);
 const on = await owner.patch(`/api/admin/customers/${adminRow.id}`, { active: true });
-check('reativada, volta a entrar sem precisar confirmar de novo (a confirmação continua valendo)', on.data.customer.status === 'active' && (await new Client().post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 200);
+check('reativada, volta a entrar sem precisar confirmar de novo (a confirmação continua valendo)', on.data.customer.status === 'active' && (await loginCustomer(new Client(), { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 200);
 const c10c = new Client();
-await c10c.post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' });
+await loginCustomer(c10c, { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' });
 const del = await c10c.req('DELETE', '/api/account', { password: 'nova-senha-4567' });
-check('excluir a conta (com a senha) funciona e o login deixa de existir', del.status === 200 && (await new Client().post('/api/account/login', { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 401 && customersWith('lia.confirmada@exemplo.com') === 0);
+check('excluir a conta (com a senha) funciona e o login deixa de existir', del.status === 200 && (await loginCustomer(new Client(), { email: 'lia.confirmada@exemplo.com', password: 'nova-senha-4567' })).status === 401 && customersWith('lia.confirmada@exemplo.com') === 0);
 
 // ------------------------------------------------------------------------------------------------------
 section('Extras — anti-enumeração, cadastro repetido e contas pendentes');
@@ -508,7 +508,7 @@ const mails = await mailsTo(V.email);
 check('quem já tem conta recebe só um aviso na própria caixa (sem código nem link de confirmação)', mails.length === 2 && /Você já tem uma conta/.test(mails[1].subject) && !/verificar\//.test(mails[1].text) && !/código de confirmação/.test(mails[1].subject), mails.map((m) => m.subject));
 await reg(new Client(), { email: V.email });
 check('o aviso é limitado a 1 por hora por endereço', (await mailsTo(V.email)).length === 2);
-check('o cadastro repetido NÃO sobrescreve a conta confirmada (senha antiga entra, a nova não)', (await new Client().post('/api/account/login', { email: V.email, password: PASS })).status === 200 && (await new Client().post('/api/account/login', { email: V.email, password: 'senha-do-intruso-1' })).status === 401 && psql(`select name from customers where email = ${lit(V.email)}`) === 'Dona Original');
+check('o cadastro repetido NÃO sobrescreve a conta confirmada (senha antiga entra, a nova não)', (await loginCustomer(new Client(), { email: V.email, password: PASS })).status === 200 && (await loginCustomer(new Client(), { email: V.email, password: 'senha-do-intruso-1' })).status === 401 && psql(`select name from customers where email = ${lit(V.email)}`) === 'Dona Original');
 check('...e não gera código nenhum para a conta confirmada', count(`select count(*) from email_verifications where email = ${lit(V.email)}`) === 1);
 
 const P = await signUp(new Client(), { email: fresh('reivindica'), password: 'primeira-senha-111', name: 'Primeiro' });
@@ -517,7 +517,7 @@ const P2 = await signUp(new Client(), { email: P.email, password: 'segunda-senha
 check('cadastro repetido de e-mail ainda pendente: vale o último (dados novos), com código novo', P2.r.status === 202 && psql(`select name from customers where email = ${lit(P.email)}`) === 'Segundo' && (await mailsTo(P.email)).length === 2);
 check('quem prova o acesso à caixa é quem fica com a conta (o código antigo não vale)', P.code === P2.code || (await verify(new Client(), P.email, P.code)).status === 400);
 await verify(new Client(), P.email, P2.code);
-check('a senha do primeiro cadastro não entra; a do último entra', (await new Client().post('/api/account/login', { email: P.email, password: 'primeira-senha-111' })).status === 401 && (await new Client().post('/api/account/login', { email: P.email, password: 'segunda-senha-222' })).status === 200);
+check('a senha do primeiro cadastro não entra; a do último entra', (await loginCustomer(new Client(), { email: P.email, password: 'primeira-senha-111' })).status === 401 && (await loginCustomer(new Client(), { email: P.email, password: 'segunda-senha-222' })).status === 200);
 
 const X = await signUp(new Client(), { email: fresh('cru'), name: '<img src=x onerror=alert(1)>Bia\r\nBcc: hacker@evil.com' });
 check('nome com HTML e quebra de linha: o e-mail HTML escapa e nenhum cabeçalho extra (Bcc) é injetado', X.r.status === 202 && !/<img src=x/i.test(X.mail.html) && !X.mail.headers.bcc && X.mail.to.length === 1 && !/hacker@evil\.com/.test(JSON.stringify(X.mail.headers)), [X.mail.headers.bcc, X.mail.to]);

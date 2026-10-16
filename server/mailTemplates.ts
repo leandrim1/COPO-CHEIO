@@ -59,6 +59,38 @@ export function verificationMessage(brand: Brand, o: VerificationData): Message 
   });
 }
 
+export type LoginCodeData = {
+  to: string;
+  name: string;
+  code: string;
+  codeMinutes: number;
+  // E-mail de teste do painel: mesma aparência, com o aviso de que o código é só um exemplo.
+  sample?: boolean;
+};
+
+// Código para ENTRAR na conta (a cada login): vai só para o e-mail da conta, depois que a senha foi digitada certa.
+export function loginCodeMessage(brand: Brand, o: LoginCodeData): Message {
+  const hi = greetingName(o.name);
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `${o.sample ? '[Teste] ' : ''}${o.code} é o seu código para entrar – ${brand.name}`,
+    preheader: `Seu código para entrar é ${o.code}. Ele expira em ${o.codeMinutes} minutos.`,
+    eyebrow: 'Entrar na conta',
+    title: 'Seu código de acesso',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    banner: o.sample ? 'Mensagem de teste enviada pelo painel. O código abaixo é só um exemplo e não abre nenhuma conta.' : undefined,
+    blocks: [
+      { kind: 'text', text: 'Alguém acabou de informar o seu e-mail e a sua senha para entrar na sua conta. Para concluir, digite o código abaixo na tela de entrada do site.' },
+      { kind: 'code', label: 'Seu código de acesso', value: o.code, note: `Este código expira em **${o.codeMinutes} minutos** e só pode ser usado uma vez.` },
+      {
+        kind: 'notice',
+        text: '**Não foi você?** Ignore este e-mail: sem o código ninguém entra na sua conta. Como a sua senha foi digitada por alguém, troque-a em “Esqueci minha senha”, na tela de entrada do site. Por segurança, não compartilhe este código com ninguém, nem com quem disser ser da loja.',
+      },
+    ],
+    reason: 'Esta mensagem foi enviada porque alguém informou o e-mail e a senha desta conta para entrar nela.',
+  });
+}
+
 // Alguém tentou criar uma conta com um e-mail que já tem conta: o aviso vai só para a caixa do dono (a tela de quem tentou não revela nada).
 export function alreadyRegisteredMessage(brand: Brand, o: { to: string; name: string; loginUrl: string }): Message {
   const hi = greetingName(o.name);

@@ -74,6 +74,7 @@ const pay = async (chargeId, eventId) => {
   return sim('webhook', { id: eventId, type: 'charge.paid', chargeId });
 };
 
+const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
 (async () => {
   await api('POST', '/api/auth/login', { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const allDays = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, { open: true, start: '00:00', end: '00:00' }]));
@@ -325,7 +326,9 @@ const pay = async (chargeId, eventId) => {
       if (!code) await new Promise((r) => setTimeout(r, 150));
     }
     const verified = await call('/api/account/verify-email', { email, code });
-    const login = await call('/api/account/login', { email, password: 'senha-forte-789' });
+    const login0 = await call('/api/account/login', { email, password: 'senha-forte-789' });
+    // O login pede o código enviado por e-mail (segundo passo).
+    const login = login0.status === 202 ? await call('/api/account/login/code', { code: await latestLoginCode(email) }) : login0;
     const session = jar.has('copocheio_cliente') ? `copocheio_cliente=${jar.get('copocheio_cliente')}` : undefined;
     ok(reg.status === 202 && verified.status === 200 && login.status === 200 && !!session, 'conta de cliente criada, confirmada e logada', [reg.status, verified.status, login.status]);
 

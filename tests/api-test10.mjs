@@ -1,7 +1,7 @@
 // Segurança: limites atômicos, senha forte, verificação em duas etapas, aviso de aparelho novo, links de e-mail, cabeçalhos HTTP,
 // anti-robô nos pedidos, pré-sequestro de cadastro, imagens, rotas e informações expostas.
 import { execFileSync, spawn } from 'node:child_process';
-import { BASE, Client, check, clearMail, lastCode, linkFrom, mailsTo, registerVerified, section, summary } from './lib.mjs';
+import { BASE, Client, check, clearMail, lastCode, linkFrom, mailsTo, registerVerified, section, summary, loginCustomer } from './lib.mjs';
 import { load } from './unit/load.mjs';
 
 const psql = (sql) => execFileSync('psql', ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-c', sql], { encoding: 'utf8' }).trim();
@@ -38,7 +38,7 @@ await makeAdmin('vitima@copocheio.local', 'Vítima Teste');
   check('80 logins ao mesmo tempo da mesma rede, e-mails diferentes: só 30 passam (limite por rede)', w401 === 30 && wave.filter((r) => r.status === 429).length === 50, { w401 });
 
   const cust = new Client(undefined, '203.0.113.70');
-  const cburst = await Promise.all(Array.from({ length: 40 }, () => cust.post('/api/account/login', { email: 'ninguem@exemplo.com', password: 'errada-errada-1' })));
+  const cburst = await Promise.all(Array.from({ length: 40 }, () => loginCustomer(cust, { email: 'ninguem@exemplo.com', password: 'errada-errada-1' })));
   check('login de cliente: 40 simultâneas, só 8 conferidas', cburst.filter((r) => r.status !== 429).length === 8 && cburst.filter((r) => r.status === 429).length === 32, cburst.map((r) => r.status).join(','));
 }
 
@@ -345,11 +345,11 @@ section('9. SEG-07: ninguém "sequestra" o cadastro de outra pessoa antes dela')
   check('o código vai para a caixa da vítima, não para o atacante', /^\d{6}$/.test(code));
   const verify = await victimBrowser.post('/api/account/verify-email', { email, code });
   check('a vítima confirma de outro navegador: e-mail confirmado, mas SEM a senha do atacante', verify.status === 200 && typeof verify.data.set_password_token === 'string', verify.data);
-  const atk = await attacker.post('/api/account/login', { email, password: 'Atacante!Senha-1' });
+  const atk = await loginCustomer(attacker, { email, password: 'Atacante!Senha-1' });
   check('a senha do atacante NÃO funciona', atk.status !== 200, atk);
   const set = await victimBrowser.post('/api/account/reset', { token: verify.data.set_password_token, password: 'Vitima!Senha-2026' });
   check('a vítima cria a própria senha pelo link de uso único', set.status === 200, set.data);
-  check('e entra com ela', (await victimBrowser.post('/api/account/login', { email, password: 'Vitima!Senha-2026' })).status === 200);
+  check('e entra com ela', (await loginCustomer(victimBrowser, { email, password: 'Vitima!Senha-2026' })).status === 200);
   check('o link de criar senha não vale duas vezes', (await victimBrowser.post('/api/account/reset', { token: verify.data.set_password_token, password: 'Outra!Senha-2026x' })).status === 400);
 
   // Caminho normal (mesmo navegador): nada muda para a pessoa
@@ -358,7 +358,7 @@ section('9. SEG-07: ninguém "sequestra" o cadastro de outra pessoa antes dela')
   await same.post('/api/account/register', { name: 'Pessoa Normal', email: email2, phone: '34 91111-0000', password: 'Normal!Senha-2026' });
   const ver2 = await same.post('/api/account/verify-email', { email: email2, code: await lastCode(email2) });
   check('mesmo navegador: confirma sem passos extras', ver2.status === 200 && ver2.data.set_password_token === undefined, ver2.data);
-  check('...e a senha que a pessoa digitou funciona', (await same.post('/api/account/login', { email: email2, password: 'Normal!Senha-2026' })).status === 200);
+  check('...e a senha que a pessoa digitou funciona', (await loginCustomer(same, { email: email2, password: 'Normal!Senha-2026' })).status === 200);
 
   // Pelo link do e-mail, de outro navegador
   const a2 = new Client(undefined, '203.0.113.101');
@@ -370,7 +370,7 @@ section('9. SEG-07: ninguém "sequestra" o cadastro de outra pessoa antes dela')
   const tokenFromLink = link.split('/').pop();
   const vl = await v2.post('/api/account/verify-link', { token: tokenFromLink });
   check('pelo link, de outro navegador: confirma e exige criar a senha', vl.status === 200 && typeof vl.data.set_password_token === 'string', vl.data);
-  check('a senha do atacante não entra (link)', (await a2.post('/api/account/login', { email: email3, password: 'Atacante!Senha-3' })).status !== 200);
+  check('a senha do atacante não entra (link)', (await loginCustomer(a2, { email: email3, password: 'Atacante!Senha-3' })).status !== 200);
   check('a resposta do cadastro é igual com e-mail novo ou já existente (não revela quem tem conta)', JSON.stringify(Object.keys((await new Client(undefined, '203.0.113.102').post('/api/account/register', { name: 'Outra Pessoa', email: email2, phone: '34 98888-5555', password: 'Qualquer!Senha-2026' })).data).sort()) === JSON.stringify(Object.keys(reg.data).sort()));
 }
 

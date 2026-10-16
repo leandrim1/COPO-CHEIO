@@ -2,7 +2,7 @@
 // preferências, campanhas pelo painel (público certo, confirmação do número, teto diário, cancelamento), LGPD e cron diário.
 // usage: bash tests/fresh.sh && node tests/api-test19.mjs
 import { execFileSync } from 'node:child_process';
-import { Client, check, clearMail, codeFrom, lastCode, mailsTo, section, summary } from './lib.mjs';
+import { Client, check, clearMail, codeFrom, lastCode, mailsTo, section, summary, loginCustomer } from './lib.mjs';
 
 const P = ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-v', 'ON_ERROR_STOP=1'];
 const psql = (sql) => execFileSync('psql', [...P, '-c', sql], { encoding: 'utf8' }).trim();
@@ -112,7 +112,7 @@ let me;
   const s = await signup(acct, { optIn: false });
   await s.verify();
   me = s.client;
-  await me.post('/api/account/login', { email: acct, password: PASS });
+  await loginCustomer(me, { email: acct, password: PASS });
   check('sem login: 401', (await anon.get('/api/account/email-preferences')).status === 401 && (await anon.patch('/api/account/email-preferences', { marketing: true })).status === 401);
   const g = await me.get('/api/account/email-preferences');
   check('começa desligado e com avisos de pedido ligados', g.status === 200 && g.data.marketing === false && g.data.notify_orders === true && /Copo Cheio/.test(g.data.consent_text), g.data);
@@ -239,12 +239,12 @@ section('7. Descadastro com um clique (RFC 8058), sem login e sem cookie');
   // O GET nunca muda nada: programas de segurança "abrem" os links dos e-mails sozinhos.
   const peek = await fetch(`${BASE}${url}`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } });
   check('GET no endereço do descadastro: leva à página de preferências (302), sem cache, e NÃO descadastra', peek.status === 302 && peek.headers.get('location') === `/conta/emails/${token}` && peek.headers.get('cache-control') === 'no-store' && prefs(yes).marketing === true && prefs(yes).marketing_unsubscribed_at === null, [peek.status, peek.headers.get('location'), prefs(yes)]);
-  check('GET com link adulterado ou inventado: 404, igual ao POST', (await fetch(`${BASE}${url.slice(0, -1)}0`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404 && (await fetch(`${BASE}/api/email/unsubscribe/abc`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404);
+  check('GET com link adulterado ou inventado: 404, igual ao POST', (await fetch(`${BASE}${url.slice(0, -1)}${url.endsWith('0') ? '1' : '0'}`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404 && (await fetch(`${BASE}/api/email/unsubscribe/abc`, { redirect: 'manual', headers: { 'x-real-ip': '198.51.100.77' } })).status === 404);
   const r = await bare.req('POST', url, 'List-Unsubscribe=One-Click', { raw: true, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
   check('o POST do provedor de caixa de entrada (form, sem cookie) cancela as promoções', r.status === 200 && r.data.ok === true && prefs(yes).marketing === false && prefs(yes).marketing_unsubscribed_via === 'one_click' && prefs(yes).marketing_unsubscribed_at !== null, [r.status, prefs(yes)]);
   check('repetir o clique é inofensivo (200)', (await bare.req('POST', url, 'List-Unsubscribe=One-Click', { raw: true, headers: { 'content-type': 'application/x-www-form-urlencoded' } })).status === 200);
   check('só as promoções param: avisos de pedido e e-mails da conta continuam', prefs(yes).notify_orders === true);
-  check('link adulterado, de outro endereço ou inventado: 404 igual', (await bare.post(`/api/email/unsubscribe/${token.slice(0, -1)}0`)).status === 404 && (await bare.post('/api/email/unsubscribe/abc')).status === 404 && (await bare.post('/api/email/unsubscribe/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
+  check('link adulterado, de outro endereço ou inventado: 404 igual', (await bare.post(`/api/email/unsubscribe/${token.slice(0, -1)}${token.endsWith('0') ? '1' : '0'}`)).status === 404 && (await bare.post('/api/email/unsubscribe/abc')).status === 404 && (await bare.post('/api/email/unsubscribe/00000000-0000-4000-8000-000000000000_00000000000000000000000000000000')).status === 404);
   check('o descadastro tira a pessoa do público da próxima campanha', JSON.parse(psql(`select count(*) from email_preferences where email = ${lit(yes)} and marketing`)) === 0);
   const g = await anon.get(`/api/email/preferences/${token}`);
   check('a página de preferências mostra "desligado" e que ele pode voltar a ligar (conta confirmada)', g.status === 200 && g.data.marketing === false && g.data.can_enable_marketing === true, g.data);
@@ -331,7 +331,7 @@ section('9. Promoção nunca bloqueia nem depende de e-mail de conta/pedido; des
   check('quem nunca aceitou promoção recebe o link de nova senha (e-mail de conta não depende do consentimento)', (await mailsTo(email)).some((m) => /^Redefinir/.test(m.subject)), (await mailsTo(email)).map((m) => m.subject));
   await clearMail();
   const c = new Client();
-  await c.post('/api/account/login', { email, password: PASS });
+  await loginCustomer(c, { email, password: PASS });
   check('o histórico separa as categorias: promoções são "promotional", o resto "transactional"', JSON.parse(psql(`select coalesce(json_agg(distinct category), '[]') from email_messages where kind <> 'campaign'`)).every((x) => x === 'transactional'));
 }
 
@@ -341,7 +341,7 @@ section('10. LGPD: apagar a conta (ou anonimizar) tira o endereço dos registros
   const gone = fresh('lgpd');
   const s = await signup(gone, { optIn: true });
   await s.verify();
-  await s.client.post('/api/account/login', { email: gone, password: PASS });
+  await loginCustomer(s.client, { email: gone, password: PASS });
   check('antes: há mensagens e preferências desse endereço', messages(`recipient_email = ${lit(gone)}`).length >= 1 && prefs(gone) !== null);
   const del = await s.client.del('/api/account', { password: PASS });
   check('o cliente apaga a própria conta', del.status === 200, del.data);

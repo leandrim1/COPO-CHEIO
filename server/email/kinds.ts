@@ -7,6 +7,7 @@ import type { Audience, Category } from './types.js';
 
 export type KindName =
   | 'verification'
+  | 'login_code'
   | 'already_registered'
   | 'password_reset'
   | 'password_changed'
@@ -57,6 +58,8 @@ export type KindDef = {
 export const KINDS: Record<KindName, KindDef> = {
   // ---- Conta do cliente ----
   verification: { category: 'transactional', audience: 'customer', label: 'Confirmação de e-mail (código)', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 12 },
+  // Código para ENTRAR na conta, a cada login (depois da senha certa). Vale 10 minutos; o servidor também limita 10 por hora por conta.
+  login_code: { category: 'transactional', audience: 'customer', label: 'Código para entrar na conta', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 25 },
   already_registered: { category: 'transactional', audience: 'customer', label: 'Aviso: você já tem uma conta', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 4, perRecipientDay: 3 },
   password_reset: { category: 'transactional', audience: 'customer', label: 'Redefinição de senha (link)', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 12 },
   password_changed: { category: 'transactional', audience: 'customer', label: 'Aviso: senha alterada', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 5 },

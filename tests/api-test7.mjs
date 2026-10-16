@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { Parser } from 'htmlparser2';
-import { Client, check, clearMail, codeFrom, mailMode, mailsTo, registerVerified, section, summary } from './lib.mjs';
+import { Client, check, clearMail, codeFrom, mailMode, mailsTo, registerVerified, section, summary, loginCustomer } from './lib.mjs';
 
 const psql = (sql) => execFileSync('psql', ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-c', sql], { encoding: 'utf8' }).trim();
 const lit = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -79,7 +79,7 @@ await owner.post('/api/admin/products', { name: 'Coca 2L', price: 12, category_i
 section('1. Pedir o link: conta ativa e confirmada');
 const A = await newAccount('ana souza');
 const deviceA = new Client();
-await deviceA.post('/api/account/login', { email: A.email, password: PASS });
+await loginCustomer(deviceA, { email: A.email, password: PASS });
 check('(preparação) a Ana está logada em outro aparelho', (await deviceA.get('/api/account/me')).data.customer?.email === A.email);
 const verifiedAt = psql(`select email_verified_at from customers where email = ${lit(A.email)}`);
 const f1 = await timed(() => forgot(new Client(), A.email));
@@ -104,7 +104,7 @@ const done = new Client();
 const r1 = await reset(done, token1);
 check('redefinir: 200 { ok, email, email_masked, verified: false } (conta já estava confirmada)', r1.status === 200 && r1.data.ok === true && r1.data.email === A.email && r1.data.verified === false, r1.data);
 check('redefinir NÃO abre sessão (sem cookie): a pessoa entra com a senha nova', !done.cookie && !r1.headers.get('set-cookie'));
-check('senha antiga não entra; a nova entra', (await new Client().post('/api/account/login', { email: A.email, password: PASS })).status === 401 && (await new Client().post('/api/account/login', { email: A.email, password: NEW })).status === 200);
+check('senha antiga não entra; a nova entra', (await loginCustomer(new Client(), { email: A.email, password: PASS })).status === 401 && (await loginCustomer(new Client(), { email: A.email, password: NEW })).status === 200);
 check('o aparelho que estava logado foi desconectado (todas as sessões da conta caem)', (await deviceA.get('/api/account/me')).data.customer === null);
 check('o e-mail continua confirmado, com a mesma data de antes', psql(`select email_verified_at from customers where email = ${lit(A.email)}`) === verifiedAt);
 check('o mesmo link não vale duas vezes (reset e reset-check: 400 invalid_link)', (await reset(new Client(), token1, 'outra-senha-789')).data.code === 'invalid_link' && (await check_(new Client(), token1)).data.code === 'invalid_link');
@@ -118,11 +118,11 @@ check('...e a hora escrita é a do fuso da loja (America/Sao_Paulo), de agora', 
 // quem ficou bloqueado por errar a senha volta a entrar
 const L = await newAccount('Lia Bloqueada');
 const lockClient = new Client();
-for (let i = 0; i < 8; i++) await lockClient.post('/api/account/login', { email: L.email, password: 'errada-' + i });
-check('(preparação) 8 senhas erradas bloqueiam o login dessa rede (429), mesmo com a senha certa', (await lockClient.post('/api/account/login', { email: L.email, password: PASS })).status === 429);
+for (let i = 0; i < 8; i++) await loginCustomer(lockClient, { email: L.email, password: 'errada-' + i });
+check('(preparação) 8 senhas erradas bloqueiam o login dessa rede (429), mesmo com a senha certa', (await loginCustomer(lockClient, { email: L.email, password: PASS })).status === 429);
 await forgot(new Client(), L.email);
 await reset(new Client(), tokenOf((await resetMails(L.email))[0]));
-check('redefinir a senha libera o login bloqueado', (await lockClient.post('/api/account/login', { email: L.email, password: NEW })).status === 200);
+check('redefinir a senha libera o login bloqueado', (await loginCustomer(lockClient, { email: L.email, password: NEW })).status === 200);
 
 // ------------------------------------------------------------------------------------------------------
 section('2. Não revela quem tem conta');
@@ -206,7 +206,7 @@ await forgot(new Client(), V.email);
 const vToken = tokenOf((await resetMails(V.email))[0]);
 psql(`update customer_password_resets set expires_at = now() - interval '1 second' where token_hash = ${lit(sha(vToken))}`);
 check('link vencido (60 minutos): reset-check e reset respondem 400 invalid_link', (await check_(new Client(), vToken)).data.code === 'invalid_link' && (await reset(new Client(), vToken)).data.code === 'invalid_link');
-check('...e a senha não mudou', (await new Client().post('/api/account/login', { email: V.email, password: PASS })).status === 200);
+check('...e a senha não mudou', (await loginCustomer(new Client(), { email: V.email, password: PASS })).status === 200);
 const junk = ['', 'a', 'x'.repeat(200), '../../etc/passwd', "' or 1=1 --", '%00', 'ç'.repeat(43), 'A'.repeat(43), null, 123, { a: 1 }, ['x']];
 const junkBad = [];
 for (const t of junk) {
@@ -225,7 +225,7 @@ const Y = await newAccount('Yara', fresh('outra'));
 await forgot(new Client(), X.email);
 const xToken = tokenOf((await resetMails(X.email))[0]);
 const cross = await new Client().post('/api/account/reset', { token: xToken, password: NEW, email: Y.email });
-check('o link só redefine a conta dele: e-mail de outra conta no corpo é ignorado', cross.status === 200 && (await new Client().post('/api/account/login', { email: X.email, password: NEW })).status === 200 && (await new Client().post('/api/account/login', { email: Y.email, password: PASS })).status === 200);
+check('o link só redefine a conta dele: e-mail de outra conta no corpo é ignorado', cross.status === 200 && (await loginCustomer(new Client(), { email: X.email, password: NEW })).status === 200 && (await loginCustomer(new Client(), { email: Y.email, password: PASS })).status === 200);
 const bruteIp = new Client();
 const bruteStatuses = [];
 for (let i = 0; i < 11; i++) bruteStatuses.push((await reset(bruteIp, 'tentativa-' + 'x'.repeat(30) + i)).status);
@@ -244,7 +244,7 @@ const pdToken = tokenOf((await resetMails(Pd.email))[0]);
 const pdReset = await reset(new Client(), pdToken, 'senha-do-paulo-2');
 check('link de e-mail usado por conta pendente: troca a senha E confirma o e-mail (verified: true)', pdReset.status === 200 && pdReset.data.verified === true, pdReset.data);
 check('banco: status active, data de confirmação gravada, códigos de confirmação em aberto invalidados', psql(`select status from customers where email = ${lit(Pd.email)}`) === 'active' && psql(`select email_verified_at > now() - interval '1 minute' from customers where email = ${lit(Pd.email)}`) === 't' && count(`select count(*) from email_verifications where email = ${lit(Pd.email)} and used_at is null and invalidated_at is null`) === 0);
-check('depois disso o Paulo entra com a senha nova (sem código) e o código antigo não vale', (await new Client().post('/api/account/login', { email: Pd.email, password: 'senha-do-paulo-2' })).status === 200 && (await new Client().post('/api/account/verify-email', { email: Pd.email, code: codeFrom((await mailsTo(Pd.email))[0]) })).status === 400);
+check('depois disso o Paulo entra com a senha nova (sem código) e o código antigo não vale', (await loginCustomer(new Client(), { email: Pd.email, password: 'senha-do-paulo-2' })).status === 200 && (await new Client().post('/api/account/verify-email', { email: Pd.email, code: codeFrom((await mailsTo(Pd.email))[0]) })).status === 400);
 check('...e recebe o aviso de senha alterada (o e-mail agora está confirmado)', (await changedMails(Pd.email)).length === 1);
 
 // link gerado pela loja (WhatsApp): NÃO prova acesso ao e-mail
@@ -253,7 +253,7 @@ const qRow = (await owner.get(`/api/admin/customers?q=${encodeURIComponent(Q.ema
 const adminLink = await owner.post(`/api/admin/customers/${qRow.id}/reset-link`, {});
 const qReset = await reset(new Client(), adminLink.data.token, 'senha-da-quiteria');
 check('link gerado pela loja numa conta pendente: troca a senha mas NÃO confirma o e-mail', adminLink.status === 201 && qReset.status === 200 && qReset.data.verified === false && psql(`select status from customers where email = ${lit(Q.email)}`) === 'pending_verification');
-check('...então o login continua pedindo a confirmação do e-mail (403) e não manda aviso de senha alterada', (await new Client().post('/api/account/login', { email: Q.email, password: 'senha-da-quiteria' })).data.code === 'email_not_verified' && (await changedMails(Q.email)).length === 0);
+check('...então o login continua pedindo a confirmação do e-mail (403) e não manda aviso de senha alterada', (await loginCustomer(new Client(), { email: Q.email, password: 'senha-da-quiteria' })).data.code === 'email_not_verified' && (await changedMails(Q.email)).length === 0);
 const Z = await newAccount('Zeca', fresh('loja'));
 const zRow = (await owner.get(`/api/admin/customers?q=${encodeURIComponent(Z.email)}`)).data.customers[0];
 const zLink = await owner.post(`/api/admin/customers/${zRow.id}/reset-link`, {});
@@ -266,7 +266,7 @@ const tRow = (await owner.get(`/api/admin/customers?q=${encodeURIComponent(T.ema
 const tAdmin = await owner.post(`/api/admin/customers/${tRow.id}/reset-link`, {});
 check('a loja gerar um link novo invalida o link de e-mail anterior (vale o mais novo)', (await check_(new Client(), tMailToken)).status === 400 && (await check_(new Client(), tAdmin.data.token)).status === 200);
 const dAdmin = await owner.post(`/api/admin/customers/${dRow.id}/reset-link`, {});
-check('conta desativada: se a loja gerar um link, a senha muda mas a conta continua desativada (não entra)', (await reset(new Client(), dAdmin.data.token, NEW)).status === 200 && psql(`select status from customers where email = ${lit(D.email)}`) === 'disabled' && (await new Client().post('/api/account/login', { email: D.email, password: NEW })).status === 401);
+check('conta desativada: se a loja gerar um link, a senha muda mas a conta continua desativada (não entra)', (await reset(new Client(), dAdmin.data.token, NEW)).status === 200 && psql(`select status from customers where email = ${lit(D.email)}`) === 'disabled' && (await loginCustomer(new Client(), { email: D.email, password: NEW })).status === 401);
 
 // defesas do banco (mesmo que algo fora da API mexa nos dados)
 const S = await pendingAccount('Silvia', fresh('defesa'));

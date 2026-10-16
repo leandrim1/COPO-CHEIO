@@ -1,7 +1,7 @@
 // Acompanhamento permanente de pedidos + contas de clientes (API real contra Postgres).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { Client, check, lastCode, mailsTo, registerVerified, section, summary } from './lib.mjs';
+import { Client, check, lastCode, mailsTo, registerVerified, section, summary, loginCustomer } from './lib.mjs';
 
 const psql = (sql) =>
   execFileSync('psql', ['-h', '127.0.0.1', '-p', '5433', '-U', 'postgres', '-d', 'copocheio_test', '-tAq', '-c', sql], { encoding: 'utf8' }).trim();
@@ -241,7 +241,7 @@ let anaProfile;
   check('cadastro com nome, e-mail e telefone → 202 pendente (sem sessão; só o cookie secreto do cadastro)', ok.status === 202 && ok.data.status === 'pending_verification' && !ok.data.customer && !ana.cookie.includes('copocheio_cliente='), ok.data);
   const confirm = await ana.post('/api/account/verify-email', { email: 'ana@exemplo.com', code: await lastCode('ana@exemplo.com') });
   check('e-mail confirmado com o código recebido', confirm.status === 200, confirm.data);
-  const loginFirst = await ana.post('/api/account/login', { email: 'Ana@Exemplo.com', password: 'ana-senha-123' });
+  const loginFirst = await loginCustomer(ana, { email: 'Ana@Exemplo.com', password: 'ana-senha-123' });
   anaProfile = loginFirst.data.customer;
   check('depois de confirmar, o login abre a conta (nome, e-mail e telefone certos)', loginFirst.status === 200 && anaProfile.email === 'ana@exemplo.com' && anaProfile.phone === '34988881111' && anaProfile.name === 'Ana Souza', loginFirst.data);
   check('resposta nunca traz hash de senha', !JSON.stringify(loginFirst.data).includes('scrypt') && !('password_hash' in anaProfile));
@@ -251,7 +251,7 @@ let anaProfile;
   check('me devolve o perfil', (await ana.get('/api/account/me')).data.customer?.email === 'ana@exemplo.com');
   const again = await new Client().post('/api/account/register', reg({ email: 'ANA@exemplo.COM', password: 'outra-senha-999' }));
   check('cadastrar de novo um e-mail que já tem conta: mesma resposta 202 (não revela que existe)', again.status === 202 && again.data.status === 'pending_verification', again.data);
-  check('…e a conta existente não foi alterada (a senha antiga continua valendo)', (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 200 && (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'outra-senha-999' })).status === 401);
+  check('…e a conta existente não foi alterada (a senha antiga continua valendo)', (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 200 && (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'outra-senha-999' })).status === 401);
   check('sem cookie, me → customer null (sem erro)', (await new Client().get('/api/account/me')).data.customer === null);
   check('a conta do cliente NÃO abre o painel (401)', (await ana.get('/api/admin/orders')).status === 401);
   check('o login do painel NÃO vira conta de cliente', (await owner.get('/api/account/me')).data.customer === null && (await owner.get('/api/account/orders')).status === 401);
@@ -263,17 +263,17 @@ let anaProfile;
   replay.cookie = oldCookie;
   check('cookie antigo não vale mais depois do logout (sessão apagada no servidor)', (await replay.get('/api/account/me')).data.customer === null);
 
-  const bad = await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'errada' });
-  const ghost = await new Client().post('/api/account/login', { email: 'ninguem@exemplo.com', password: 'errada' });
+  const bad = await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'errada' });
+  const ghost = await loginCustomer(new Client(), { email: 'ninguem@exemplo.com', password: 'errada' });
   check('senha errada e e-mail desconhecido: mesma resposta 401', bad.status === 401 && ghost.status === 401 && bad.data.error === ghost.data.error, [bad.data, ghost.data]);
-  const login = await ana.post('/api/account/login', { email: 'ANA@exemplo.com', password: 'ana-senha-123' });
+  const login = await loginCustomer(ana, { email: 'ANA@exemplo.com', password: 'ana-senha-123' });
   check('login (e-mail em qualquer caixa)', login.status === 200 && login.data.customer.name === 'Ana Souza');
   const lock = new Client(undefined, '198.51.100.55');
   const tries = [];
-  for (let i = 0; i < 10; i++) tries.push((await lock.post('/api/account/login', { email: 'ana@exemplo.com', password: 'x' + i })).status);
+  for (let i = 0; i < 10; i++) tries.push((await loginCustomer(lock, { email: 'ana@exemplo.com', password: 'x' + i })).status);
   check('8 erros no mesmo e-mail → 429', tries.slice(0, 8).every((s) => s === 401) && tries[8] === 429, tries.join());
-  check('com bloqueio ativo, a rede que errou nem com a senha certa entra', (await lock.post('/api/account/login', { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 429);
-  check('a dona da conta, em outra rede, continua entrando (o bloqueio é de quem errou, não dela)', (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 200);
+  check('com bloqueio ativo, a rede que errou nem com a senha certa entra', (await loginCustomer(lock, { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 429);
+  check('a dona da conta, em outra rede, continua entrando (o bloqueio é de quem errou, não dela)', (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 200);
   psql(`delete from rate_limits where bucket like 'cust-%'`);
   check('origem estranha (CSRF) → 403', (await new Client().post('/api/account/login', { email: 'a@a.com', password: 'x' }, { headers: { origin: 'https://evil.example' } })).status === 403);
 }
@@ -340,12 +340,12 @@ let code;
   check('não dá para trocar o e-mail/ativo pela API do cliente', (await ana.patch('/api/account', { email: 'novo@x.com', active: false })).status === 200 && (await ana.get('/api/account/me')).data.customer.email === 'ana@exemplo.com');
 
   const second = new Client();
-  await second.post('/api/account/login', { email: 'ana@exemplo.com', password: 'ana-senha-123' });
+  await loginCustomer(second, { email: 'ana@exemplo.com', password: 'ana-senha-123' });
   check('senha atual errada → 400', (await ana.patch('/api/account/password', { current: 'errada', next: 'nova-senha-123' })).status === 400);
   check('senha nova curta → 400', (await ana.patch('/api/account/password', { current: 'ana-senha-123', next: '123' })).status === 400);
   check('troca de senha', (await ana.patch('/api/account/password', { current: 'ana-senha-123', next: 'nova-senha-123' })).status === 200);
   check('outras sessões da conta caem; a atual continua', (await second.get('/api/account/me')).data.customer === null && (await ana.get('/api/account/me')).data.customer !== null);
-  check('senha antiga não entra; a nova entra', (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 401 && (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'nova-senha-123' })).status === 200);
+  check('senha antiga não entra; a nova entra', (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'ana-senha-123' })).status === 401 && (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'nova-senha-123' })).status === 200);
 
   // recuperação sem e-mail: prova de posse com um pedido da conta
   const orderMine = (await ana.get('/api/account/orders')).data.orders[0].order_number;
@@ -358,8 +358,8 @@ let code;
   check('recuperar com senha curta → 400', (await x.post('/api/account/recover', rec({ password: '123' }))).status === 400);
   const recOk = await x.post('/api/account/recover', rec());
   check('recuperar com e-mail + telefone + pedido + código da conta', recOk.status === 200, recOk.data);
-  check('senha nova vale; a anterior e as sessões abertas caem', (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'recuperada-123' })).status === 200 && (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'nova-senha-123' })).status === 401 && (await ana.get('/api/account/me')).data.customer === null);
-  await ana.post('/api/account/login', { email: 'ana@exemplo.com', password: 'recuperada-123' });
+  check('senha nova vale; a anterior e as sessões abertas caem', (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'recuperada-123' })).status === 200 && (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'nova-senha-123' })).status === 401 && (await ana.get('/api/account/me')).data.customer === null);
+  await loginCustomer(ana, { email: 'ana@exemplo.com', password: 'recuperada-123' });
 }
 
 section('13. Painel: clientes, link de redefinição e exclusão');
@@ -390,7 +390,7 @@ const staff = new Client();
   check('link inválido → 400', (await anon.post('/api/account/reset', { token: 'abc', password: 'senha-nova-123' })).status === 400);
   check('redefine a senha com o link', (await anon.post('/api/account/reset', { token: link.data.token, password: 'bia-nova-123' })).status === 200);
   check('o link é de uso único', (await anon.post('/api/account/reset', { token: link.data.token, password: 'outra-senha-123' })).status === 400);
-  check('sessões antigas caíram; senha nova entra', (await bia.get('/api/account/me')).data.customer === null && (await new Client().post('/api/account/login', { email: 'bia@exemplo.com', password: 'bia-nova-123' })).status === 200);
+  check('sessões antigas caíram; senha nova entra', (await bia.get('/api/account/me')).data.customer === null && (await loginCustomer(new Client(), { email: 'bia@exemplo.com', password: 'bia-nova-123' })).status === 200);
   const second = await owner.post(`/api/admin/customers/${bRow.id}/reset-link`, {});
   psql(`update customer_password_resets set expires_at = now() - interval '1 minute' where customer_id = '${bRow.id}'`);
   check('link vencido não vale', (await anon.post('/api/account/reset', { token: second.data.token, password: 'bia-outra-123' })).status === 400);
@@ -398,7 +398,7 @@ const staff = new Client();
 
   const off = await owner.patch(`/api/admin/customers/${bRow.id}`, { active: false });
   check('admin desativa a conta', off.status === 200 && off.data.customer.active === false);
-  check('conta desativada não entra', (await new Client().post('/api/account/login', { email: 'bia@exemplo.com', password: 'bia-nova-123' })).status === 401);
+  check('conta desativada não entra', (await loginCustomer(new Client(), { email: 'bia@exemplo.com', password: 'bia-nova-123' })).status === 401);
   const ghostOrder = await place(await (async () => { const c = new Client(); c.cookie = bia.cookie; return c; })(), { customer_phone: '34933332222' });
   check('pedido feito com sessão de conta desativada vira pedido de visitante', ghostOrder.status === 201 && ghostOrder.order.linked === false);
   await owner.patch(`/api/admin/customers/${bRow.id}`, { active: true });
@@ -410,7 +410,7 @@ const staff = new Client();
   const del = await ana.del('/api/account', { password: 'recuperada-123' });
   check('titular exclui a própria conta', del.status === 200 && psql(`select count(*) from customers where lower(email) = 'ana@exemplo.com'`) === '0');
   check('os pedidos continuam na loja, sem ligação com a conta', psql(`select count(*) from orders where order_number in (${mineOrders.join(',')}) and customer_id is null`) === String(mineOrders.length));
-  check('login da conta excluída falha; sessão caiu', (await new Client().post('/api/account/login', { email: 'ana@exemplo.com', password: 'recuperada-123' })).status === 401 && (await ana.get('/api/account/me')).data.customer === null);
+  check('login da conta excluída falha; sessão caiu', (await loginCustomer(new Client(), { email: 'ana@exemplo.com', password: 'recuperada-123' })).status === 401 && (await ana.get('/api/account/me')).data.customer === null);
   check('o link de acompanhamento do pedido segue valendo', (await new Client().get(`/api/tracking/${code}`)).status === 200);
   check('owner exclui conta a pedido do titular', (await owner.del(`/api/admin/customers/${bRow.id}`)).status === 200 && psql(`select count(*) from customers where lower(email) = 'bia@exemplo.com'`) === '0');
 }
