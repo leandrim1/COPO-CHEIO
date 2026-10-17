@@ -66,6 +66,9 @@ const errors = [];
 async function newCtx(browser, viewport, opts = {}) {
   const ctx = await browser.newContext({ viewport, isMobile: viewport.width < 1000, hasTouch: viewport.width < 1000, deviceScaleFactor: opts.dpr ?? 1 });
   const blobRequests = [];
+  // Nada sai da máquina de teste: a foto "de outro endereço" (https://exemplo.invalid) falha na hora em vez de esperar a internet de verdade (no CI ela pode
+  // demorar a responder, e o `networkidle` das páginas esperaria por ela até estourar o tempo).
+  await ctx.route(/^https:\/\/exemplo\.invalid\//, (route) => route.abort());
   await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => {
     const path = new URL(route.request().url()).pathname;
     blobRequests.push(path);
@@ -226,7 +229,7 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
     // Foto antiga (só a original no Blob, como as cadastradas antes das miniaturas existirem) + uma foto de outro endereço (importada).
     const up = await api('POST', '/api/admin/upload?folder=products', bigWebp, 'image/webp');
     const old = (await api('POST', '/api/admin/products', { name: 'Foto antiga', price: 6, category_id: cat.id, image_url: up.data.url })).data.product;
-    await api('POST', '/api/admin/products', { name: 'Foto de fora', price: 6, category_id: cat.id, image_url: 'https://exemplo.com/foto.webp' });
+    await api('POST', '/api/admin/products', { name: 'Foto de fora', price: 6, category_id: cat.id, image_url: 'https://exemplo.invalid/foto.webp' });
     // Antes de gerar: no site, a foto antiga é um <img> simples (sem srcset), exatamente como era.
     {
       const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });

@@ -138,7 +138,9 @@ async function run(browser, label, viewport) {
   await page.getByRole('button', { name: 'Corrigir ou trocar o e-mail' }).click();
   await page.waitForSelector('text=Criar minha conta');
   ok((await email.inputValue()) === fix.typed && (await page.getByLabel('Nome *').inputValue()) === fix.name, `${label}: "Corrigir ou trocar o e-mail" volta com o endereço digitado (para consertar) e o resto preenchido`, await email.inputValue());
-  ok(await email.evaluate((el) => el === document.activeElement), `${label}: ...com o foco no campo do e-mail`);
+  // O foco volta no próximo quadro de animação (requestAnimationFrame): numa máquina lenta (as do GitHub Actions) a leitura imediata pode perder a corrida.
+  const focused = await until(() => email.evaluate((el) => el === document.activeElement), 5000);
+  ok(focused, `${label}: ...com o foco no campo do e-mail`, await page.evaluate(() => ({ tag: document.activeElement?.tagName, type: document.activeElement?.getAttribute('type'), name: document.activeElement?.getAttribute('name') ?? document.activeElement?.getAttribute('aria-label'), emailFields: document.querySelectorAll('input[type="email"]').length })));
   await email.fill(fix.fixed);
   await submit();
   await page.getByLabel('Código de confirmação').waitFor({ timeout: 15000 });
