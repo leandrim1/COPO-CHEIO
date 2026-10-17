@@ -11,8 +11,8 @@ const { chromium } = (() => {
 const fs = require('fs');
 const FX = require('node:path').join(__dirname, 'fixtures');
 const BASE = 'http://localhost:4180', BLOB = 'http://127.0.0.1:4181';
-const NUMBER = '5534991283384';
-const LINK = 'https://api.whatsapp.com/send/?phone=5534991283384&text&type=phone_number&app_absent=0';
+const NUMBER = '553492441191'; // migration 0026 (a 0008 gravou 5534991283384 e a 0026 troca)
+const LINK = 'https://api.whatsapp.com/send/?phone=553492441191&text&type=phone_number&app_absent=0';
 let cookie = '';
 async function api(method, path, body, raw) {
   const init = { method, headers: { ...(raw ? { 'content-type': 'image/webp' } : { 'content-type': 'application/json' }), 'x-real-ip': '10.9.9.9', ...(cookie ? { cookie } : {}) }, body: raw ? body : body === undefined ? undefined : JSON.stringify(body) };
@@ -99,7 +99,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
     await page.waitForURL('**/admin/dashboard');
     await page.goto(BASE + '/admin/configuracoes', { waitUntil: 'networkidle' });
     const field = page.getByLabel('WhatsApp da loja');
-    ok((await field.inputValue()) === '(34) 99128-3384', 'o campo "WhatsApp da loja" mostra (34) 99128-3384', await field.inputValue());
+    ok((await field.inputValue()) === '(34) 9244-1191', 'o campo "WhatsApp da loja" mostra (34) 9244-1191', await field.inputValue());
     await page.getByRole('button', { name: /Salvar/ }).first().click();
     await page.waitForSelector('text=Dados da loja salvos.');
     ok((await api('GET', '/api/admin/settings')).data.store.whatsapp === NUMBER, 'salvar sem mexer mantém o número (55 + DDD + número)');
@@ -126,7 +126,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
       ok(links.every((l) => l.href.startsWith('https://wa.me/?text=')), 'sem número no painel, o botão abre o WhatsApp para a pessoa escolher o contato (como a tela do painel avisa)', links.map((l) => l.href));
       await c3.ctx.close();
     }
-    await field.fill('(34) 99128-3384');
+    await field.fill('(34) 9244-1191');
     await page.getByRole('button', { name: /Salvar/ }).first().click();
     await page.waitForSelector('text=Dados da loja salvos.');
     ok(await until(async () => (await api('GET', '/api/site')).data.store.whatsapp === NUMBER), 'e voltar ao número da loja');
@@ -145,7 +145,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
       const banners = await page.evaluate((link) => [...document.querySelectorAll(`a[href="${link}"]`)].map((a) => ({ target: a.target, rel: a.rel, where: a.closest('section[aria-label="Promoções"]') ? 'cardápio' : 'capa' })), LINK);
       ok(banners.length === 2 && banners.every((b) => b.target === '_blank' && /noopener/.test(b.rel)), `${w}px: capa e banner do cardápio abrem o link do WhatsApp em outra aba, com noopener`, banners);
       const [popup] = await Promise.all([ctx.waitForEvent('page'), page.locator('section[aria-label="Promoções"] a').first().click()]);
-      ok(popup.url().startsWith('https://api.whatsapp.com/send/?phone=5534991283384'), `${w}px: tocar no banner abre o WhatsApp da loja`, popup.url());
+      ok(popup.url().startsWith('https://api.whatsapp.com/send/?phone=553492441191'), `${w}px: tocar no banner abre o WhatsApp da loja`, popup.url());
       await ctx.close();
     }
     for (const b of (await api('GET', '/api/admin/banners')).data.banners) await api('DELETE', `/api/admin/banners/${b.id}`);

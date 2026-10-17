@@ -1,6 +1,6 @@
 import type { HeroSettings, PaymentOption, SiteSettings, StoreSettings } from './types';
 
-// O mesmo conteúdo inicial de db/migrations/0003_initial_content.sql (e o WhatsApp da 0008_store_whatsapp.sql). Só aparece
+// O mesmo conteúdo inicial de db/migrations/0003_initial_content.sql (e o WhatsApp da 0026_store_whatsapp_novo.sql). Só aparece
 // enquanto os dados do banco não chegaram (ou se a API estiver fora do ar, sem cópia salva no navegador): o painel é a fonte.
 
 const weekday = { open: true, start: '09:00', end: '23:00' };
@@ -9,7 +9,7 @@ const closed = { open: false, start: '09:00', end: '23:00' };
 export const DEFAULT_STORE: StoreSettings = {
   store_name: 'Copo Cheio',
   tagline: 'Disk Bebidas',
-  whatsapp: '5534991283384',
+  whatsapp: '553492441191',
   instagram: 'copocheiodisk',
   address: null,
   cep: null,

@@ -172,12 +172,13 @@ produto e envie a foto.
   - *Onde aparece*: gaveta do pedido, checkout, página do pedido e de acompanhamento, mensagem de WhatsApp para a loja, "Meus pedidos"
     (resumo), pedido no painel e recibo impresso. O ranking de mais vendidos do dashboard soma os dois gelos do mesmo produto.
 - **WhatsApp**: só depois que o pedido está salvo, a página do pedido mostra o botão com a mensagem pronta para o número
-  configurado no painel. O número da loja já vem preenchido — (34) 99128-3384, pela migration `0008_store_whatsapp.sql`,
-  que só grava se o campo estiver vazio — e vale para todos os botões de WhatsApp do site (Contato, chamada final, cardápio
+  configurado no painel. O número da loja já vem preenchido — (34) 9244-1191, pela migration `0026_store_whatsapp_novo.sql`
+  (que troca o número da `0008_store_whatsapp.sql`, (34) 99128-3384, só onde ele ainda é esse: número que a loja já mudou, ou campo
+  deixado vazio de propósito, não é tocado) — e vale para todos os botões de WhatsApp do site (Contato, chamada final, cardápio
   vazio, pedido e acompanhamento) e para o rodapé dos e-mails. Para trocar ou tirar, é só editar *Configurações → Loja →
   WhatsApp da loja* (sem número, o botão abre o WhatsApp para a pessoa escolher o contato). Se a API estiver fora do ar e o
   navegador não tiver cópia do site, o botão de ajuda usa o número de `src/lib/defaults.ts`. Um link do WhatsApp (por exemplo
-  `https://api.whatsapp.com/send/?phone=5534991283384`) também funciona como *Link* de um banner: tocar nele abre o chat.
+  `https://wa.me/553492441191`) também funciona como *Link* de um banner: tocar nele abre o chat.
 - **Status**: NOVO → CONFIRMADO → EM PREPARO → SAIU PARA ENTREGA (PRONTO PARA RETIRAR) → ENTREGUE, ou CANCELADO. Cada mudança fica
   em `order_status_history` (de → para, data e administrador). Regras, conferidas no banco: para a frente pode pular etapas; para
   trás só uma etapa de cada vez (e "entregue" só volta para "saiu para entrega", por clique errado); **entregue não cancela** (a
