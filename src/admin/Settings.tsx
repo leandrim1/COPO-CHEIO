@@ -210,17 +210,24 @@ function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
             const h = hours[day.key];
             const set = (change: Partial<typeof h>) => setHours((all) => ({ ...all, [day.key]: { ...all[day.key], ...change } }));
             return (
-              <li key={day.key} className="grid grid-cols-[6.5rem_auto_1fr] items-center gap-3 py-3 sm:grid-cols-[8rem_auto_1fr]">
-                <span className="text-sm font-semibold text-white">{day.label}</span>
+              // No celular o dia e a chave ficam numa linha e os dois horários numa linha própria, que divide a largura da tela; a partir de sm, tudo
+              // numa linha só (dia | chave | horários), como sempre foi. Antes, no celular, os dois campos de hora iam na mesma linha do dia e da chave:
+              // a coluna deles não encolhe abaixo do tamanho natural dos dois campos e a linha passava de 500 px, então a página inteira ganhava
+              // rolagem horizontal. Dos 640 px para cima o resultado é idêntico ao anterior (conferido pela posição de cada elemento).
+              <li key={day.key} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-2.5 py-3 sm:grid-cols-[8rem_auto_1fr]">
+                <span className="text-sm font-semibold text-white">
+                  {day.label}
+                  {!h.open && <span className="ml-2 text-xs font-normal text-white/60 sm:hidden">Fechado</span>}
+                </span>
                 <Switch checked={h.open} onChange={(v) => set({ open: v })} ariaLabel={`${day.label}: aberto`} />
                 {h.open ? (
-                  <div className="flex items-center gap-2">
-                    <input type="time" aria-label={`${day.label}: abre às`} value={h.start} onChange={(e) => set({ start: e.target.value })} className={cx(INPUT, 'w-28 [color-scheme:dark]')} />
+                  <div className="col-span-2 flex items-center gap-2 sm:col-span-1">
+                    <input type="time" aria-label={`${day.label}: abre às`} value={h.start} onChange={(e) => set({ start: e.target.value })} className={cx(INPUT, 'min-w-0 [color-scheme:dark]')} />
                     <span className="text-sm text-white/60">às</span>
-                    <input type="time" aria-label={`${day.label}: fecha às`} value={h.end} onChange={(e) => set({ end: e.target.value })} className={cx(INPUT, 'w-28 [color-scheme:dark]')} />
+                    <input type="time" aria-label={`${day.label}: fecha às`} value={h.end} onChange={(e) => set({ end: e.target.value })} className={cx(INPUT, 'min-w-0 [color-scheme:dark]')} />
                   </div>
                 ) : (
-                  <span className="text-sm text-white/60">Fechado</span>
+                  <span className="hidden text-sm text-white/60 sm:inline">Fechado</span>
                 )}
               </li>
             );

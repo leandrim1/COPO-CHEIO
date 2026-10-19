@@ -232,6 +232,13 @@ const { finishAdminLogin } = require('./e2e-code.cjs');
   await a.getByLabel('Sábado: abre às').waitFor({ state: 'detached' }).catch(() => {});
   const satRow = a.locator('li', { hasText: 'Sábado' });
   await satRow.getByRole('switch').click();
+  // No celular a aba Horários não pode ficar mais larga que a tela (os campos de hora, de largura fixa, já empurraram a página para o lado).
+  for (const width of [320, 360, 430]) {
+    await a.setViewportSize({ width, height: 800 });
+    const over = await a.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    ok(over <= 0, `Configurações → Horários cabe numa tela de ${width}px (sobra ${over}px para o lado)`);
+  }
+  await a.setViewportSize({ width: 1440, height: 900 });
   await a.getByLabel('Sábado: abre às').fill('10:00');
   await a.getByLabel('Sábado: fecha às').fill('02:00');
   await a.getByRole('button', { name: 'Salvar', exact: true }).click();
