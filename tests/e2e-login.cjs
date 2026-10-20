@@ -74,6 +74,7 @@ const { finishLogin, latestLoginCode } = require('./e2e-code.cjs');
         insert into products(category_id, name, description, price, featured, position)
           select c.id, 'Item ' || c.name || ' ' || g, 'Descrição de teste', 20 + g, g = 0, g from categories c, generate_series(0, 9) g;`);
   const browser = await chromium.launch({ ignoreDefaultArgs: ['--hide-scrollbars'] });
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // ---------------------------------------------------------------------------------------------------------------------------------
   console.log('# 1. visitante: onde o botão "Login" fica, em vários tamanhos de tela');

@@ -76,6 +76,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
 const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const errors = [];
   const track = (page) => {
     page.on('pageerror', (e) => errors.push(e.message));
@@ -238,6 +239,8 @@ const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = req
   await ad.getByRole('button', { name: 'SAIU PARA ENTREGA', exact: true }).click();
   await ad.waitForTimeout(700);
   await ad.getByRole('button', { name: 'ENTREGUE', exact: true }).click();
+  // Pedido com bebida alcoólica: a entrega só conclui depois da conferência do documento (migration 0027).
+  await ad.getByRole('button', { name: 'Conferi: 18 anos ou mais', exact: true }).click();
   await c.waitForSelector('li[data-state="current"]:has-text("Entregue")', { timeout: 25000 });
   ok(/Pedido entregue/.test(await body(c)) && (await c.locator('li[data-state="done"]').count()) === 4, 'all steps done at the end; final headline');
   await c.getByText('Ver todas as atualizações').click();
@@ -256,7 +259,7 @@ const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = req
     const r = await fetch(BASE + '/api/orders', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-real-ip': '10.7.7.7' },
-      body: JSON.stringify({ customer_name: 'Bruno Cancelado', customer_phone: '34977776666', delivery_type: 'pickup', payment_method: 'cash', items: [{ product_id: gelo.id, quantity: 1 }] }),
+      body: JSON.stringify({ customer_name: 'Bruno Cancelado', customer_phone: '34977776666', delivery_type: 'pickup', payment_method: 'cash', age_confirmed: true, items: [{ product_id: gelo.id, quantity: 1 }] }),
     });
     return r.json();
   })();
@@ -273,7 +276,7 @@ const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = req
   // =====================================================================================================
   console.log('# 4. falhas de rede e indisponibilidade temporária');
   const o3 = await (async () => {
-    const r = await fetch(BASE + '/api/orders', { method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '10.7.7.8' }, body: JSON.stringify({ customer_name: 'Carla Rede', customer_phone: '34966665555', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: coca.id, quantity: 1 }] }) });
+    const r = await fetch(BASE + '/api/orders', { method: 'POST', headers: { 'content-type': 'application/json', 'x-real-ip': '10.7.7.8' }, body: JSON.stringify({ customer_name: 'Carla Rede', customer_phone: '34966665555', delivery_type: 'pickup', payment_method: 'pix', age_confirmed: true, items: [{ product_id: coca.id, quantity: 1 }] }) });
     return r.json();
   })();
   const ctxE = await newContext(browser);

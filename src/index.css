@@ -3,6 +3,21 @@
 @tailwind utilities;
 
 @layer components {
+  /* Área de toque de pelo menos 44 × 44 px (WCAG 2.5.5 / recomendação dos celulares) SEM mudar o desenho: o botão ou link continua do mesmo
+     tamanho; só a região que responde ao dedo cresce, por um elemento invisível centrado nele. Usar em controles pequenos e isolados. */
+  .tap {
+    position: relative;
+  }
+  .tap::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+
   /* Lista que rola na horizontal (categorias, "Os favoritos da galera"). No celular não há barra (o dedo rola). Com mouse,
      aparece uma barra fina e curta (cerca de 200 px), na cor da marca, centralizada sob a lista. */
   .cc-hscroll {

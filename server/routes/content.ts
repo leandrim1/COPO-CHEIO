@@ -39,6 +39,17 @@ const storeSpec: Spec = {
   pickup_enabled: bool('Retirada'),
   delivery_fee: money('Taxa de entrega'),
   min_order: money('Pedido mínimo'),
+  free_delivery_enabled: bool('Entrega grátis por valor'),
+  free_delivery_min: money('Entrega grátis a partir de'),
+  // Agendamento de pedidos (migration 0030): ligado/desligado, antecedência mínima, até quantos dias à frente, tamanho da faixa e pedidos por faixa.
+  scheduling_enabled: bool('Agendamento de pedidos'),
+  schedule_lead_minutes: int('Antecedência mínima (minutos)', { min: 0, max: 10080 }),
+  schedule_max_days: int('Dias à frente', { min: 1, max: 30 }),
+  schedule_slot_minutes: int('Tamanho da faixa (minutos)', { min: 15, max: 120 }),
+  schedule_slot_capacity: int('Pedidos por faixa', { min: 1, max: 1000, nullable: true }),
+  // Estoque baixo: até quantas unidades o produto aparece como "baixo" (cada produto pode ter o seu limite).
+  low_stock_default: int('Estoque baixo (padrão da loja)', { min: 0, max: 1000 }),
+  low_stock_email: bool('Avisar por e-mail quando o estoque ficar baixo'),
   delivery_time: text('Tempo de entrega', { max: 30, nullable: true }),
   tracking_retention_days: int('Validade do link de acompanhamento (dias)', { min: 7, max: 3650 }),
 };
@@ -117,6 +128,15 @@ const STORE_LABELS: FieldLabels = {
   pickup_enabled: { label: 'retirada ativa', format: 'bool' },
   delivery_fee: { label: 'taxa de entrega', format: 'money' },
   min_order: { label: 'pedido mínimo', format: 'money' },
+  free_delivery_enabled: { label: 'entrega grátis por valor', format: 'bool' },
+  free_delivery_min: { label: 'entrega grátis a partir de', format: 'money' },
+  scheduling_enabled: { label: 'agendamento de pedidos', format: 'bool' },
+  schedule_lead_minutes: { label: 'antecedência do agendamento (min)' },
+  schedule_max_days: { label: 'dias à frente do agendamento' },
+  schedule_slot_minutes: { label: 'faixa do agendamento (min)' },
+  schedule_slot_capacity: { label: 'pedidos por faixa' },
+  low_stock_default: { label: 'estoque baixo (padrão)' },
+  low_stock_email: { label: 'aviso de estoque baixo por e-mail', format: 'bool' },
   delivery_time: { label: 'tempo de entrega' },
   tracking_retention_days: { label: 'validade do link de acompanhamento (dias)' },
 };
@@ -158,6 +178,11 @@ export function registerContent(r: Router) {
     const expectedRaw = typeof body.expected_updated_at === 'string' ? new Date(body.expected_updated_at) : null;
     const expected = expectedRaw && !Number.isNaN(expectedRaw.getTime()) ? expectedRaw.toISOString() : null;
     const before = await one<Row>('select * from store_settings where id = 1');
+    // Entrega grátis ligada precisa de um valor maior que zero (senão toda entrega ficaria grátis sem querer).
+    const freeOn = values.free_delivery_enabled ?? before?.free_delivery_enabled;
+    const freeMin = values.free_delivery_min ?? before?.free_delivery_min;
+    if (freeOn === true && !(Number(freeMin) > 0)) throw new HttpError(400, 'Entrega grátis a partir de: informe um valor maior que zero.');
+    if (values.schedule_slot_minutes !== undefined && ![15, 30, 60, 120].includes(Number(values.schedule_slot_minutes))) throw new HttpError(400, 'Tamanho da faixa: escolha 15, 30, 60 ou 120 minutos.');
     const keys = Object.keys(values);
     let store: Row | null;
     if (!keys.length) store = before;

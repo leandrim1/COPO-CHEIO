@@ -1,4 +1,5 @@
 import {
+  CalendarClock,
   Check,
   CheckCircle2,
   ChefHat,
@@ -8,6 +9,7 @@ import {
   Motorbike,
   PackageCheck,
   RefreshCw,
+  ShieldAlert,
   ShieldCheck,
   Store,
   UserRound,
@@ -29,6 +31,7 @@ import { CopyButton } from './CopyButton';
 import { setCustomer, useCustomer } from './customer';
 import { fullAddress, storeWhatsappUrl, useShop } from './data';
 import { OrderListItem, useActiveOrders } from './OrderList';
+import { ReviewCard } from './ReviewCard';
 import { PixPayment } from './PixPayment';
 import { Field, PageShell } from './shell';
 import { BLUE_BUTTON, FIELD, GHOST_BUTTON, Price, WHATSAPP_BUTTON, WhatsAppIcon } from './ui';
@@ -324,9 +327,120 @@ function AccountCard({ order, token, mine }: { order: PublicOrder; token: string
   );
 }
 
+// Cancelar o pedido pelo próprio cliente (enquanto a loja ainda não confirmou e sem dinheiro recebido). Quem decide é o servidor: a tela só mostra o botão
+// quando o pedido diz `cancel.allowed` e mostra o porquê quando não pode. A autorização é o código de acompanhamento (link) ou a sessão da conta.
+const CANCEL_REASONS = ['Pedi errado ou quero mudar o pedido', 'Não preciso mais', 'Endereço ou horário errado', 'Outro motivo'];
+
+function CancelCard({ order, token, mine, onChanged }: { order: PublicOrder; token?: string; mine: boolean; onChanged: () => void }) {
+  const { store } = useShop();
+  const [step, setStep] = useState<'idle' | 'confirm' | 'busy' | 'done'>('idle');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const path = token ? `/api/tracking/${encodeURIComponent(token)}/cancel` : mine ? `/api/account/orders/${order.order_number}/cancel` : null;
+  const why = order.cancel?.why ?? null;
+  if (!order.cancel || path === null || order.order_status === 'cancelled' || order.order_status === 'delivered' || why === 'final') {
+    return step === 'done' ? (
+      <Panel id="cancelar" title={<span className="flex items-center gap-2 text-base"><XCircle className="h-5 w-5 text-rose-300" aria-hidden="true" /> Pedido cancelado</span>} className="!p-5">
+        <p role="status" className="mt-2 text-sm text-white/70">Pronto, o pedido foi cancelado. Se quiser, é só fazer um novo pedido.</p>
+      </Panel>
+    ) : null;
+  }
+
+  const contact = storeWhatsappUrl(store, `Olá, ${store.store_name}! Preciso falar sobre o pedido #${order.order_number}.`);
+  const blockedText: Record<string, string> = {
+    in_progress: 'A loja já está cuidando do seu pedido, então o cancelamento não é feito por aqui. Se precisar cancelar, fale com a loja.',
+    paid: 'Este pedido já foi pago. Para cancelar, fale com a loja: a devolução do valor é combinada com ela e não acontece automaticamente.',
+    payment_processing: 'Há um pagamento sendo processado agora. Aguarde alguns instantes: se ele não for concluído, o cancelamento libera aqui.',
+  };
+
+  const cancel = async () => {
+    setStep('busy');
+    setError('');
+    try {
+      await api.post(path, { reason: reason || null });
+      setStep('done');
+      onChanged();
+    } catch (e) {
+      setStep('confirm');
+      if (e instanceof ApiError && e.status === 409) {
+        // O pedido mudou (a loja confirmou, o pagamento entrou...): mostra a situação de agora.
+        setError('Este pedido mudou e não pode mais ser cancelado por aqui. A tela foi atualizada.');
+        onChanged();
+        setStep('idle');
+        return;
+      }
+      setError(friendlyError(e, 'Não foi possível cancelar o pedido. Tente de novo ou fale com a loja.'));
+    }
+  };
+
+  return (
+    <Panel id="cancelar" title={<span className="flex items-center gap-2 text-base"><XCircle className="h-5 w-5 text-rose-300" aria-hidden="true" /> Cancelar pedido</span>} className="!p-5">
+      {order.cancel.allowed ? (
+        <>
+          <p className="mt-2 text-sm text-white/65">
+            Você pode cancelar enquanto a loja ainda não confirmou o pedido. {order.payment_status === 'pending' ? 'Nada foi cobrado de você por ele.' : ''}
+          </p>
+          {step === 'idle' && (
+            <button type="button" onClick={() => setStep('confirm')} data-cancel-open className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-rose-400/40 px-4 py-2.5 text-sm font-bold text-rose-100 transition-colors hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+              Cancelar este pedido
+            </button>
+          )}
+          {(step === 'confirm' || step === 'busy') && (
+            <div data-cancel-confirm className="mt-3 space-y-3">
+              <label className="block text-sm font-semibold text-white" htmlFor="motivo-cancelamento">
+                Motivo (opcional)
+              </label>
+              <select id="motivo-cancelamento" value={reason} onChange={(e) => setReason(e.target.value)} className={`${FIELD} appearance-none`}>
+                <option value="">Prefiro não dizer</option>
+                {CANCEL_REASONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setStep('idle')} disabled={step === 'busy'} className={`${GHOST_BUTTON} !px-3 !py-2.5 text-sm disabled:opacity-60`}>
+                  Voltar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void cancel()}
+                  disabled={step === 'busy'}
+                  data-cancel-confirm-button
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-rose-600 px-3 py-2.5 text-sm font-bold text-white transition-colors hover:bg-rose-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-60"
+                >
+                  {step === 'busy' ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+                  Confirmar cancelamento
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p data-cancel-blocked={why ?? undefined} className="mt-2 text-sm text-white/65">
+            {why ? (blockedText[why] ?? 'Para cancelar este pedido, fale com a loja.') : 'Para cancelar este pedido, fale com a loja.'}
+          </p>
+          {why !== 'payment_processing' && (
+            <a href={contact} target="_blank" rel="noopener noreferrer" className={`${WHATSAPP_BUTTON} mt-3 w-full !py-2.5 text-sm`}>
+              <WhatsAppIcon className="h-4 w-4" />
+              Falar com a loja
+            </a>
+          )}
+        </>
+      )}
+      {error && (
+        <p role="alert" className="mt-2 text-xs font-medium text-rose-300">
+          {error}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
 // ---- A página do pedido -------------------------------------------------------------------------
 
-type FeedInfo = { offline: boolean; retryIn: number; checkedAt: Date | null; refresh: () => void };
+type FeedInfo ={ offline: boolean; retryIn: number; checkedAt: Date | null; refresh: () => void };
 
 function ConnectionBanner({ feed }: { feed: FeedInfo }) {
   if (!feed.offline) return null;
@@ -457,6 +571,14 @@ export function OrderView({
             <div className="mt-5">
               <Timeline order={order} />
             </div>
+            {order.courier_name && order.order_status === 'out_for_delivery' && (
+              <p data-courier-notice className="mt-4 flex items-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-400/10 px-3.5 py-2.5 text-sm text-violet-100">
+                <Motorbike className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>
+                  <strong className="text-white">{order.courier_name}</strong> está levando o seu pedido.
+                </span>
+              </p>
+            )}
             <p className="mt-5 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/10 pt-3 text-xs text-white/50">
               <span className="inline-flex items-center gap-1.5">
                 <Clock className="h-3.5 w-3.5" aria-hidden="true" />
@@ -507,7 +629,10 @@ export function OrderView({
               </div>
               <div className="flex justify-between text-white/65">
                 <dt>Entrega</dt>
-                <dd className="tabular-nums">{order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}</dd>
+                <dd className="tabular-nums">
+                  {order.delivery_fee <= 0 && (order.delivery_fee_waived ?? 0) > 0 && <s className="mr-1.5 text-white/40">{money(order.delivery_fee_waived ?? 0)}</s>}
+                  {order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}
+                </dd>
               </div>
               {order.payment_fee > 0 && (
                 <div className="flex justify-between text-white/65">
@@ -517,7 +642,7 @@ export function OrderView({
               )}
               {order.discount > 0 && (
                 <div className="flex justify-between text-white/65">
-                  <dt>Desconto</dt>
+                  <dt>Desconto{order.coupon_code ? ` (${order.coupon_code})` : ''}</dt>
                   <dd className="tabular-nums">− {money(order.discount)}</dd>
                 </div>
               )}
@@ -546,6 +671,22 @@ export function OrderView({
             <div className="mt-2 space-y-0.5 text-sm text-white/70">
               {order.delivery_type === 'delivery' ? addressLines(order).map((line) => <p key={line}>{line}</p>) : <p>{fullAddress(store) || 'Retirada na loja'}</p>}
             </div>
+            {order.scheduled_for && (
+              <p data-scheduled-notice className="mt-3 flex items-start gap-2 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 p-3 text-sm text-white/85">
+                <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
+                <span>
+                  {order.delivery_type === 'delivery' ? 'Entrega' : 'Retirada'} agendada para <strong className="text-white">{formatDateTime(order.scheduled_for)}</strong>.
+                </span>
+              </p>
+            )}
+            {order.age_check_required && live && (
+              <p data-age-notice className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-3 text-xs leading-relaxed text-amber-100">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>
+                  Deixe um documento oficial com foto à mão: na {order.delivery_type === 'delivery' ? 'entrega' : 'retirada'} conferimos que você tem 18 anos ou mais. Sem comprovação de maioridade, o pedido não é entregue.
+                </span>
+              </p>
+            )}
           </Panel>
 
           <Panel id="pagamento" title={<span className="text-base">Pagamento</span>} className="!p-5">
@@ -576,6 +717,9 @@ export function OrderView({
               <p className="mt-2 whitespace-pre-line text-sm text-white/70">{order.notes}</p>
             </Panel>
           )}
+
+          <CancelCard order={order} token={token} mine={mine} onChanged={feed.refresh} />
+          <ReviewCard order={order} token={token} mine={mine} />
 
           {token && <LinkCard order={order} token={token} link={link} />}
           {token && !confirmation && !awaiting && (

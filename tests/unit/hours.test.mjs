@@ -29,3 +29,40 @@ test('a ordem da lista do painel (segunda primeiro) é a de hoursLines; a janela
   const hours = Object.fromEntries(h.DAYS.map((d) => [d.key, { open: d.key !== 'tue', start: '10:00', end: '00:00' }]));
   assert.ok(h.hoursLines(hours).some((line) => line === 'Terça: fechado'));
 });
+
+// ---- Dias especiais (feriado fechado e horário especial): valem no lugar do horário da semana ----------------------------------
+const week = Object.fromEntries(h.DAYS.map((d) => [d.key, { open: true, start: '10:00', end: '22:00' }]));
+
+test('dia especial "fechado": a loja não abre naquele dia, mesmo com horário na semana', () => {
+  // 2026-12-25 é sexta. 15:00 em São Paulo = 18:00 UTC.
+  const at = new Date('2026-12-25T18:00:00Z');
+  assert.equal(h.isOpenNow(week, 'America/Sao_Paulo', at), true);
+  assert.equal(h.isOpenNow(week, 'America/Sao_Paulo', at, [{ day: '2026-12-25', kind: 'closed', start_time: null, end_time: null }]), false);
+  assert.equal(h.isOpenNow(week, 'America/Sao_Paulo', at, [{ day: '2026-12-24', kind: 'closed', start_time: null, end_time: null }]), true, 'o feriado de outro dia não conta');
+});
+
+test('dia especial "horário especial": só abre naquele intervalo', () => {
+  const ex = [{ day: '2026-12-24', kind: 'custom', start_time: '10:00:00', end_time: '14:00:00' }];
+  assert.equal(h.isOpenNow(week, 'America/Sao_Paulo', new Date('2026-12-24T16:00:00Z'), ex), true, '13:00 está dentro');
+  assert.equal(h.isOpenNow(week, 'America/Sao_Paulo', new Date('2026-12-24T18:00:00Z'), ex), false, '15:00 está fora (na semana estaria aberto)');
+});
+
+test('a madrugada de um dia fechado ainda conta se a noite anterior atravessa a meia-noite', () => {
+  const night = Object.fromEntries(h.DAYS.map((d) => [d.key, { open: true, start: '18:00', end: '02:00' }]));
+  // 01:00 de sábado 2026-12-26 (04:00 UTC). Se o SÁBADO é feriado fechado, a sexta 18:00-02:00 continua valendo até as 02:00.
+  const at = new Date('2026-12-26T04:00:00Z');
+  assert.equal(h.isOpenNow(night, 'America/Sao_Paulo', at, [{ day: '2026-12-26', kind: 'closed', start_time: null, end_time: null }]), true);
+  assert.equal(h.isOpenNow(night, 'America/Sao_Paulo', at, [{ day: '2026-12-25', kind: 'closed', start_time: null, end_time: null }]), false, 'sexta fechada: sem madrugada');
+});
+
+test('nextOpening pula o dia fechado e usa o horário especial', () => {
+  const now = new Date('2026-12-24T12:00:00Z'); // quinta 09:00 em SP, antes de abrir
+  assert.equal(h.nextOpening(week, 'America/Sao_Paulo', now), 'Abre hoje às 10:00');
+  assert.equal(h.nextOpening(week, 'America/Sao_Paulo', now, [{ day: '2026-12-24', kind: 'closed', start_time: null, end_time: null }]), 'Abre amanhã às 10:00');
+  assert.equal(h.nextOpening(week, 'America/Sao_Paulo', now, [{ day: '2026-12-24', kind: 'custom', start_time: '12:00', end_time: '14:00' }]), 'Abre hoje às 12:00');
+});
+
+test('addDays: atravessa mês e ano sem depender do fuso', () => {
+  assert.equal(h.addDays('2026-12-31', 1), '2027-01-01');
+  assert.equal(h.addDays('2026-03-01', -1), '2026-02-28');
+});

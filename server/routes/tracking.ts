@@ -1,10 +1,12 @@
 // Acompanhamento público do pedido, sem login: o cliente chega com o link (código secreto) ou com
 // número do pedido + código. Nada aqui devolve dados de outro pedido, e erro nenhum diz se um pedido existe.
+import { reserve } from '../auth.js';
 import { customerFromRequest } from '../customer.js';
 import { batch, one } from '../db.js';
 import { kickQueue } from '../email/service.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Ctx, Router } from '../http.js';
+import { cancelForCustomer } from '../orderCancel.js';
 import { NOT_FOUND, assertNotThrottled, missesStatement, normalizeToken, hashToken, recordMiss, throttled } from '../tracking.js';
 
 const HEADERS = { 'x-robots-tag': 'noindex, nofollow' };
@@ -41,6 +43,25 @@ export function registerTracking(r: Router) {
     // A tela de acompanhamento consulta de tempos em tempos: de passagem, manda enviar o que está na fila (no máximo a cada 15 s).
     kickQueue(ctx.req, { minGapMs: 15_000 });
     return json({ order, mine: await mineFlag(ctx, (order as { order_number: number }).order_number) }, 200, HEADERS);
+  });
+
+  // Cancelamento pelo cliente (só até a loja confirmar e sem dinheiro recebido: as regras moram no banco, order_cancel_why). O código de acompanhamento é a
+  // autorização, como na consulta: código errado vale como "pedido não encontrado" e conta nas tentativas. Cancelar de novo devolve o pedido já cancelado.
+  r.post('/api/tracking/:token/cancel', 'public', async (ctx) => {
+    const canonical = normalizeToken(ctx.params.token);
+    await assertNotThrottled(ctx);
+    if (!canonical) {
+      await recordMiss(ctx);
+      throw new HttpError(404, NOT_FOUND);
+    }
+    await reserve('order-cancel', ctx.ip, 600, 12, 'Muitas tentativas de cancelamento. Aguarde alguns minutos ou fale com a loja.');
+    const body = await readJson(ctx.req, 1024);
+    const result = await cancelForCustomer({ hash: hashToken(canonical), number: null, customerId: null, actor: 'Cliente (link de acompanhamento)', reason: body.reason });
+    if (!result) {
+      await recordMiss(ctx);
+      throw new HttpError(404, NOT_FOUND);
+    }
+    return json({ order: result.order, already_cancelled: result.already }, 200, HEADERS);
   });
 
   // "Acompanhar pedido" sem o link: número + código.

@@ -37,6 +37,12 @@ export function startFakeValidaPay() {
       subHeaderOnRead: 'any',
       proposal: null, // null | 'balance' (409 INSUFFICIENT_BALANCE_FOR_SUBACCOUNT_FEE) | 'conflict' (409) | 'hang' | 'invalid' (400)
       listFail: false,
+      // ---- Devolução (POST/GET /v1/wallet/refunds) ----
+      refundFail: null, // null | 'down' (500) | 'hang' (nunca responde) | 'lose' (cria a devolução e derruba a conexão) | 'forbidden' (403: sem o escopo) | 'badresponse' (201 com outro valor)
+      refundList: 'ok', // 'ok' | 'down' (503 na consulta das devoluções)
+      refundCardInstant: true, // cartão: a devolução volta CONFIRMED na hora (documentação); false: volta PROCESSING
+      // NÃO CONFIRMADO na documentação: o POST de devolução do Pix exige o cabeçalho X-Sub-Account? 'any' | 'required' | 'forbidden'
+      refundSub: 'any',
       paidBetweenLookupAndCancel: null, // chargeId que vira PAID no instante do DELETE (corrida de pagamento × cancelamento)
       // ---- Cartão ----
       card: null, // null | 'processing' (200 sem "paid") | 'lose' (cobra e derruba a conexão) | 'hang' (cobra e nunca responde) | 'down' (500 sem cobrar) | 'down_after' (cobra e responde 500) | 'forbidden' (403)
@@ -141,7 +147,7 @@ export function startFakeValidaPay() {
       }
       if (req.path === '/__fake/reset') {
         Object.assign(state.mode, {
-          createFail: null, authFail: false, statusFail: false, cancelFail: false, subHeaderOnRead: 'any', proposal: null, listFail: false, paidBetweenLookupAndCancel: null,
+          createFail: null, authFail: false, statusFail: false, cancelFail: false, subHeaderOnRead: 'any', proposal: null, listFail: false, paidBetweenLookupAndCancel: null, refundFail: null, refundList: 'ok', refundCardInstant: true, refundSub: 'any',
           card: null, cardFeePct: 5.37, cardFeeFixed: 0.37, cardFeeReport: 'rates', cardPaidDelta: 0, phoneRequired: false, cardSub: 'any',
         });
         state.cardTokens.clear();
@@ -198,6 +204,32 @@ export function startFakeValidaPay() {
         if (!token) return send(res, 404, {});
         token.expired = true;
         return send(res, 200, {});
+      }
+      // Conclui uma devolução pendente como o banco faria: CONFIRMED (a cobrança vira REFUNDED/PARTIALLY_REFUNDED) ou ERROR.
+      if (req.path === '/__fake/refund-settle') {
+        const refund = state.refunds.find((item) => item.refundId === body.refundId);
+        if (!refund) return send(res, 404, {});
+        refund.status = body.status ?? 'CONFIRMED';
+        refund.success = refund.status === 'CONFIRMED';
+        if (refund.status === 'ERROR') refund.error = body.error ?? 'ERROR';
+        const charge = state.charges.get(refund.chargeId);
+        if (charge && refund.status === 'CONFIRMED') {
+          const sum = state.refunds.filter((item) => item.chargeId === charge.id && item.status === 'CONFIRMED').reduce((acc, item) => acc + item.amount, 0);
+          charge.status = sum >= charge.amount - 1e-9 ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+        }
+        return send(res, 200, refund);
+      }
+      // Cria direto uma devolução que a loja NÃO pediu (feita no painel da ValidaPay).
+      if (req.path === '/__fake/refund-external') {
+        const charge = state.charges.get(body.chargeId);
+        if (!charge) return send(res, 404, {});
+        const refund = { refundId: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`, accountId: charge.sub ?? 'master', status: body.status ?? 'CONFIRMED', success: (body.status ?? 'CONFIRMED') === 'CONFIRMED', amount: body.amount, reason: 'MD06', chargeId: charge.id, endToEndId: charge.endToEndId, paymentType: charge.card ? 'CREDIT_CARD' : null, splitReversals: [], error: null, createdAt: new Date().toISOString() };
+        state.refunds.push(refund);
+        if (refund.status === 'CONFIRMED') {
+          const sum = state.refunds.filter((item) => item.chargeId === charge.id && item.status === 'CONFIRMED').reduce((acc, item) => acc + item.amount, 0);
+          charge.status = sum >= charge.amount - 1e-9 ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+        }
+        return send(res, 200, refund);
       }
       if (req.path === '/__fake/set-status') {
         const charge = state.charges.get(body.chargeId);
@@ -452,11 +484,53 @@ export function startFakeValidaPay() {
       return send(res, 200, { message: 'Cobrança cancelada com sucesso', chargeId: charge.id, invoiceId: null, cycleNumber: null, notas: { canceled: 0, flagged: 0, failed: 0, untouched: 0 } });
     }
 
-    // GET /v1/wallet/refunds
+    // POST /v1/wallet/refunds (Pix: { chargeId, amount, reason } · cartão: { chargeId, amount, accountId?, reason? })
+    if (req.method === 'POST' && req.path === '/v1/wallet/refunds') {
+      if (state.mode.refundFail === 'forbidden') return fail(res, 403, 'FORBIDDEN', 'o token não tem o escopo wallet/write');
+      if (!need('wallet/write')) return;
+      if (state.mode.refundFail === 'hang') return; // nunca responde: o adaptador estoura o prazo
+      if (state.mode.refundFail === 'down') return fail(res, 500, 'INTERNAL', 'erro interno');
+      const body = req.body ?? {};
+      // Só os campos do contrato: a ValidaPay recusa o corpo { endToEndId, reason } do guia (validate_request).
+      if (typeof body.chargeId !== 'string') return fail(res, 400, 'INVALID_DATA', 'chargeId é obrigatório');
+      if (typeof body.amount !== 'number' || body.amount < 0.01 || !reais(body.amount)) return fail(res, 400, 'INVALID_DATA', 'amount deve ser um valor em reais com duas casas');
+      const charge = state.charges.get(body.chargeId);
+      const hide = (state.mode.refundSub === 'required' && charge?.sub && sub !== charge.sub) || (state.mode.refundSub === 'forbidden' && sub);
+      if (!charge || hide) return fail(res, 404, 'CHARGE_NOT_FOUND', 'Cobrança não encontrada');
+      if (!charge.card && !['BANK_ERROR', 'FRAUD', 'CUSTOMER_REQUEST', 'PIX_CHANGE_ERROR'].includes(body.reason)) return fail(res, 400, 'INVALID_DATA', 'reason é obrigatório e deve ser BANK_ERROR, FRAUD, CUSTOMER_REQUEST ou PIX_CHANGE_ERROR');
+      if (!charge.card && !charge.endToEndId) return fail(res, 400, 'CHARGE_WITHOUT_END_TO_END_ID', `Cobrança ${charge.id} não possui endToEndId: o pagamento Pix ainda não foi confirmado ou a cobrança não é Pix`);
+      if (!['PAID', 'PARTIALLY_REFUNDED'].includes(charge.status)) return fail(res, 400, 'CHARGE_NOT_REFUNDABLE', 'Só cobranças pagas podem ser devolvidas');
+      const used = state.refunds.filter((item) => item.chargeId === charge.id && item.status !== 'ERROR').reduce((acc, item) => acc + item.amount, 0);
+      if (body.amount > charge.amount - used + 1e-9) return fail(res, 400, 'REFUND_AMOUNT_EXCEEDED', `Valor excede o disponível para devolução. Original: R$${charge.amount}, já devolvido: R$${used}, restante: R$${(charge.amount - used).toFixed(2)}`);
+      const instant = charge.card && state.mode.refundCardInstant;
+      const refund = {
+        refundId: `ref_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+        accountId: charge.sub ?? 'master',
+        status: instant ? 'CONFIRMED' : 'PROCESSING',
+        success: Boolean(instant),
+        amount: body.amount,
+        reason: body.reason ?? null,
+        chargeId: charge.id,
+        endToEndId: charge.card ? null : charge.endToEndId,
+        paymentType: charge.card ? 'CREDIT_CARD' : null,
+        splitReversals: [],
+        error: null,
+        createdAt: new Date().toISOString(),
+      };
+      state.refunds.push(refund);
+      if (instant) charge.status = state.refunds.filter((item) => item.chargeId === charge.id && item.status === 'CONFIRMED').reduce((acc, item) => acc + item.amount, 0) >= charge.amount - 1e-9 ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+      if (state.mode.refundFail === 'lose') return res.destroy(); // a devolução FOI criada, mas a resposta nunca chega
+      const answer = { refundId: refund.refundId, status: refund.status, ...(instant ? { success: true } : {}), amount: state.mode.refundFail === 'badresponse' ? Number((refund.amount + 1).toFixed(2)) : refund.amount, reason: refund.reason, ...(charge.card ? { paymentType: 'CREDIT_CARD', providerChargeId: 'prov_ch_fake' } : { endToEndId: refund.endToEndId }), chargeId: charge.id, createdAt: refund.createdAt };
+      return send(res, 201, answer);
+    }
+
+    // GET /v1/wallet/refunds (?refundId= · ?chargeId=): sempre uma lista em `items`
     if (req.method === 'GET' && req.path === '/v1/wallet/refunds') {
       if (!need('wallet/read')) return;
+      if (state.mode.refundList === 'down') return fail(res, 503, 'UNAVAILABLE', 'fora do ar');
       const chargeId = url.searchParams.get('chargeId');
-      return send(res, 200, { items: state.refunds.filter((item) => item.chargeId === chargeId) });
+      const refundId = url.searchParams.get('refundId');
+      return send(res, 200, { items: state.refunds.filter((item) => (refundId ? item.refundId === refundId : item.chargeId === chargeId)) });
     }
 
     // GET /v1/wallet/transactions (extrato da conta master quando não há accountId)

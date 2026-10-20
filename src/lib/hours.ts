@@ -1,4 +1,4 @@
-import type { DayHours, DayKey, OpeningHours } from './types';
+import type { DayHours, DayKey, OpeningHours, StoreException } from './types';
 
 // Mesma regra da função store_open_now() do banco: "início = fim" é 24 horas e um fim antes do
 // início atravessa a meia-noite (ex.: 18:00 às 02:00).
@@ -21,26 +21,36 @@ const toMinutes = (hhmm: string) => {
 
 function localNow(timeZone: string, now: Date) {
   let parts: Intl.DateTimeFormatPart[];
+  const options: Intl.DateTimeFormatOptions = { weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
   try {
-    parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(now);
+    parts = new Intl.DateTimeFormat('en-US', { timeZone, ...options }).formatToParts(now);
   } catch {
-    parts = new Intl.DateTimeFormat('en-US', { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+    parts = new Intl.DateTimeFormat('en-US', options).formatToParts(now);
   }
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   const dow = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday'));
-  return { dow, minutes: (Number(get('hour')) % 24) * 60 + Number(get('minute')) };
+  return { dow, minutes: (Number(get('hour')) % 24) * 60 + Number(get('minute')), date: `${get('year')}-${get('month')}-${get('day')}` };
 }
 
-export function isOpenNow(hours: OpeningHours, timeZone: string, now = new Date()): boolean {
-  const { dow, minutes } = localNow(timeZone, now);
-  const today = hours[BY_DOW[dow]];
-  const yesterday = hours[BY_DOW[(dow + 6) % 7]];
+// AAAA-MM-DD + n dias (conta em UTC ao meio-dia, sem depender do fuso do aparelho).
+export function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// A janela de um dia: o dia especial (feriado fechado ou horário especial), se houver, vale no lugar do horário da semana.
+function windowOf(date: string, weekly: DayHours | undefined, exceptions: StoreException[]): DayHours | undefined {
+  const ex = exceptions.find((e) => e.day === date);
+  if (!ex) return weekly;
+  if (ex.kind === 'closed' || !ex.start_time || !ex.end_time) return { open: false, start: '00:00', end: '00:00' };
+  return { open: true, start: ex.start_time.slice(0, 5), end: ex.end_time.slice(0, 5) };
+}
+
+export function isOpenNow(hours: OpeningHours, timeZone: string, now = new Date(), exceptions: StoreException[] = []): boolean {
+  const { dow, minutes, date } = localNow(timeZone, now);
+  const today = windowOf(date, hours[BY_DOW[dow]], exceptions);
+  const yesterday = windowOf(addDays(date, -1), hours[BY_DOW[(dow + 6) % 7]], exceptions);
   if (today?.open) {
     const start = toMinutes(today.start);
     const end = toMinutes(today.end);
@@ -78,11 +88,11 @@ export function hoursLines(hours: OpeningHours): string[] {
 }
 
 // "Abre hoje às 18:00", "Abre amanhã às 09:00", "Abre segunda às 09:00".
-export function nextOpening(hours: OpeningHours, timeZone: string, now = new Date()): string {
-  const { dow, minutes } = localNow(timeZone, now);
+export function nextOpening(hours: OpeningHours, timeZone: string, now = new Date(), exceptions: StoreException[] = []): string {
+  const { dow, minutes, date } = localNow(timeZone, now);
   for (let offset = 0; offset < 8; offset++) {
     const key = BY_DOW[(dow + offset) % 7];
-    const h = hours[key];
+    const h = windowOf(addDays(date, offset), hours[key], exceptions);
     if (!h?.open) continue;
     if (offset === 0 && toMinutes(h.start) <= minutes) continue;
     const when = offset === 0 ? 'hoje' : offset === 1 ? 'amanhã' : DAYS.find((d) => d.key === key)!.label.toLowerCase();

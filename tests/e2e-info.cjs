@@ -94,6 +94,8 @@ const { adminLoginViaApi } = require('./e2e-code.cjs');
           select c.id, 'Item ' || c.name || ' ' || g, 'Descrição de teste', 20 + g, g = 0, g from categories c, generate_series(0, 9) g;`);
 
   const browser = await chromium.launch();
+
+  require('./e2e-age.cjs').patchBrowser(browser);
   const site = (await api('GET', '/api/site')).data;
 
   for (const [w, h, name] of [[1280, 800, 'computador'], [390, 844, 'celular']]) {

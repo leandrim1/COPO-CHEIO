@@ -18,6 +18,8 @@ export function createProvider(): PaymentProvider | null {
     // Cartão: identificador público de mentira (o SDK do navegador o usa) e, nos testes, um prazo curto para a cobrança no cartão.
     publicId: process.env.FAKE_VALIDAPAY_PUBLIC_ID === undefined ? 'pub_teste_0001' : process.env.FAKE_VALIDAPAY_PUBLIC_ID || null,
     cardTimeoutMs: Number(process.env.FAKE_VALIDAPAY_CARD_TIMEOUT_MS ?? 2500),
+    // Devolução pela API: nos testes nasce ligada (em produção só liga com VALIDAPAY_REFUNDS=on); FAKE_VALIDAPAY_REFUNDS=off testa o padrão desligado.
+    refundsEnabled: process.env.FAKE_VALIDAPAY_REFUNDS !== 'off',
   });
 }
 

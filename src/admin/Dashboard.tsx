@@ -30,6 +30,8 @@ type Dashboard = {
   recent: Order[];
   // Pedidos de privacidade (LGPD) esperando resposta.
   privacy_open?: number;
+  // Produtos ativos com estoque controlado: baixo (até o limite) e esgotado.
+  low_stock?: { low: number; out: number };
 };
 
 const RANGES = [
@@ -123,6 +125,29 @@ export default function DashboardPage() {
               {c!.awaiting_payment} {c!.awaiting_payment === 1 ? 'pedido aguarda' : 'pedidos aguardam'} o pagamento do Pix.
             </strong>{' '}
             Eles só chegam à loja depois de pagos.
+          </span>
+          <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+        </a>
+      )}
+
+      {data?.low_stock && data.low_stock.low + data.low_stock.out > 0 && (
+        <a
+          href="/admin/estoque?filtro=baixo"
+          data-low-stock-alert
+          className="mb-3 flex items-center gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-100 transition-colors hover:bg-amber-400/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        >
+          <PackageCheck className="h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <strong>
+              {[
+                data.low_stock.low > 0 ? `${data.low_stock.low} ${data.low_stock.low === 1 ? 'produto com estoque baixo' : 'produtos com estoque baixo'}` : '',
+                data.low_stock.out > 0 ? `${data.low_stock.out} ${data.low_stock.out === 1 ? 'esgotado' : 'esgotados'}` : '',
+              ]
+                .filter(Boolean)
+                .join(' e ')}
+              .
+            </strong>{' '}
+            Reponha antes de acabar: veja em Estoque.
           </span>
           <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
         </a>

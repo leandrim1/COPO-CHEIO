@@ -39,7 +39,7 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   const kit = mkp('Kit festa ( Energético Jack Power 2L )', 40, 'Cervejas');
   const copao = mkp('Copão com Energético Jack Power 2L', 30, 'Copão com Energético 2L Jack Power');
   q(`update store_settings set orders_paused = false, opening_hours = ${lit(JSON.stringify(ALL_DAYS))}::jsonb`);
-  const oldOrder = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Antigo', customer_phone: '34990000001', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: busca, quantity: 2 }] }))}::jsonb)`));
+  const oldOrder = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Antigo', customer_phone: '34990000001', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: busca, quantity: 2 }] }))}::jsonb)`));
   check('antes: o combo é pedido normalmente', oldOrder.order_number >= 1001 && oldOrder.total === 180, oldOrder);
 
   const out = migrate();
@@ -55,7 +55,7 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   check('o pedido que já existia continua igual (itens, preço, total) e sem troca', q('select string_agg(quantity || \'x \' || product_name || \' \' || unit_price, \',\') from order_items') === '2x COMBO BUSCA BRISA ( 4 gelos, 1 Busca Brisa, 1 Energético Jack Power 2L ) 90.00' && q('select count(*) from order_items where swap_to_product_id is not null') === '0');
   const old = JSON.parse(q(`select order_json(id, true) from orders`));
   check('...e o pedido antigo, como o cliente vê, não ganha campo de troca', old.items.length === 1 && !('swap_to_product_id' in old.items[0]), old.items);
-  const plain = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Novo', customer_phone: '34990000002', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: busca, quantity: 1 }, { product_id: kit, quantity: 1 }] }))}::jsonb)`));
+  const plain = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Novo', customer_phone: '34990000002', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: busca, quantity: 1 }, { product_id: kit, quantity: 1 }] }))}::jsonb)`));
   check('depois: pedido sem troca se comporta como antes (90 + 40 = 130)', plain.total === 130 && plain.items.length === 2, plain);
 
   // O painel manda: o que ele grava não é desfeito, e a migration não roda de novo.
@@ -81,7 +81,7 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   const combo = mkp('COMBO ( 1 Energético Jack Power 2L )', 90, 'Combos', `, ${lit(jack)}`);
   q(`update store_settings set orders_paused = false, opening_hours = ${lit(JSON.stringify(ALL_DAYS))}::jsonb`);
   let n17 = 0;
-  const buy = (swap) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente 17', customer_phone: `3499000${String(1000 + ++n17)}`, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1, ...(swap ? { swap_to: tropical } : {}) }] }))}::jsonb)`));
+  const buy = (swap) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente 17', customer_phone: `3499000${String(1000 + ++n17)}`, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1, ...(swap ? { swap_to: tropical } : {}) }] }))}::jsonb)`));
   const before = buy(true);
   check('antes da 0018 (banco de hoje): a troca já cobra a diferença pelo produto escolhido (90 + 2 = 92)', before.total === 92, before);
   const out = execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
@@ -93,7 +93,7 @@ section('1. Banco de produção antes da mudança: as migrations 0017 e 0018 só
   check('depois da 0018: o mesmo pedido de troca dá o mesmo preço (combo sem lista nem valor digitado = como antes)', after.total === 92 && after.items[0].unit_price === 92, after);
   check('...e o pedido sem troca também (90)', buy(false).total === 90);
   check('pedido SEM e-mail (nem conta) não gera e-mail: a fila continua vazia', q('select count(*) from email_messages') === '0');
-  const withMail = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente 17', customer_phone: '34990009999', customer_email: 'Cliente17@Exemplo.com', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1 }] }))}::jsonb)`));
+  const withMail = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente 17', customer_phone: '34990009999', customer_email: 'Cliente17@Exemplo.com', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: combo, quantity: 1 }] }))}::jsonb)`));
   check('pedido COM e-mail: um único e-mail "pedido recebido" enfileirado, para o endereço normalizado, ligado ao pedido, só com o id na receita', q(`select count(*) || ':' || min(kind) || ':' || min(recipient_email) || ':' || min(status) from email_messages where order_id = (select id from orders where order_number = ${withMail.order_number})`) === '1:order_received:cliente17@exemplo.com:queued' && q(`select jsonb_object_keys(spec) from email_messages limit 1`) === 'order_id');
   execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
 }

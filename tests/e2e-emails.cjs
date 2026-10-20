@@ -72,6 +72,7 @@ const ALL_DAYS = Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', '
 const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const errors = [];
   const track = (page) => {
     page.on('pageerror', (e) => errors.push(e.message));
@@ -90,7 +91,7 @@ const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = req
   await verifiedAccount('Fã Um', 'fa1@exemplo.com', 'senha-fa-1-123', true);
   await verifiedAccount('Fã Dois', 'fa2@exemplo.com', 'senha-fa-2-123', true);
   const place = async (email, name = 'Pedro Pedido') => {
-    const r = await api('POST', '/api/orders', { customer_name: name, customer_phone: `3499${String(1000000 + Math.floor(Math.random() * 8999999))}`.slice(0, 11), customer_email: email, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: prod.id, quantity: 2 }], idempotency_key: `e2e-chave-${Math.random().toString(36).slice(2)}-${Date.now()}` });
+    const r = await api('POST', '/api/orders', { customer_name: name, customer_phone: `3499${String(1000000 + Math.floor(Math.random() * 8999999))}`.slice(0, 11), customer_email: email, delivery_type: 'pickup', payment_method: 'pix', age_confirmed: true, items: [{ product_id: prod.id, quantity: 2 }], idempotency_key: `e2e-chave-${Math.random().toString(36).slice(2)}-${Date.now()}` });
     if (r.status !== 201) throw new Error('pedido recusado ' + JSON.stringify(r));
     return r.data.order.order_number;
   };

@@ -85,6 +85,7 @@ const { finishLogin, latestLoginCode, adminLoginViaApi, finishAdminLogin } = req
   ok(!!beer?.id, 'dados de teste criados');
   await sim('reset', {});
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // ---- 1. Desligado: o checkout é o de sempre -------------------------------------------------------------------------------------------
   console.log('# 1. Pix online desligado: nada muda no checkout');

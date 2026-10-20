@@ -37,7 +37,7 @@ section('1. Banco de produção antes da mudança: a migration 0014 só acrescen
   execFileSync('psql', [...P, '-d', db, '-q', '-c', `create table schema_migrations (version text primary key, applied_at timestamptz not null default now()); insert into schema_migrations(version) values ${files.map((f) => `('${f}')`).join(',')}`], QUIET);
   const migrate = () => execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
   const q = (sql) => psql(sql, db);
-  const create = (extra) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Antigo', customer_phone: `3499000${String(Math.floor(Math.random() * 9000) + 1000)}`, delivery_type: 'pickup', items: [{ product_id: prod, quantity: 1 }], ...extra }))}::jsonb)`));
+  const create = (extra) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Antigo', customer_phone: `3499000${String(Math.floor(Math.random() * 9000) + 1000)}`, delivery_type: 'pickup', items: [{ product_id: prod, quantity: 1 }], ...extra }))}::jsonb)`));
   const refusal = (extra) => {
     try {
       create(extra);
@@ -111,7 +111,7 @@ section('1b. Migration 0016 (comissão de 5% → 2%): só vale para cobranças n
   q(`update merchant_accounts set status = 'approved', provider_account_id = 'sub-16' where proposal_id = 'prop-16'`);
   q(`update payment_methods set enabled = true where code = 'pix_online'`);
   const begin = (n) => {
-    const order = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Dezesseis', customer_phone: `3499111${String(1000 + n)}`, delivery_type: 'pickup', payment_method: 'pix_online', items: [{ product_id: prod, quantity: 1 }] }))}::jsonb)`));
+    const order = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Dezesseis', customer_phone: `3499111${String(1000 + n)}`, delivery_type: 'pickup', payment_method: 'pix_online', items: [{ product_id: prod, quantity: 1 }] }))}::jsonb)`));
     const id = q(`select id from orders where order_number = ${order.order_number}`);
     return JSON.parse(q(`select payment_begin(${lit(id)}::uuid, 'pix', 'simulador')`)).payment;
   };
@@ -144,7 +144,7 @@ section('1c. Migration 0020 (taxa de serviço do Pix: 2,5% cliente + 2,5% estabe
   q(`insert into merchant_accounts (provider, kind, status, proposal_id) values ('simulador', 'pj', 'pending', 'prop-20')`);
   q(`update merchant_accounts set status = 'approved', provider_account_id = 'sub-20' where proposal_id = 'prop-20'`);
   q(`update payment_methods set enabled = true where code = 'pix_online'`);
-  const place = (n) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Vinte', customer_phone: `3499222${String(1000 + n)}`, delivery_type: 'pickup', payment_method: 'pix_online', items: [{ product_id: prod, quantity: 1 }] }))}::jsonb)`));
+  const place = (n) => JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Vinte', customer_phone: `3499222${String(1000 + n)}`, delivery_type: 'pickup', payment_method: 'pix_online', items: [{ product_id: prod, quantity: 1 }] }))}::jsonb)`));
   const begin = (order) => JSON.parse(q(`select payment_begin((select id from orders where order_number = ${order.order_number}), 'pix', 'simulador')`)).payment;
   const orderOf = (order) => JSON.parse(q(`select to_jsonb(o) from orders o where order_number = ${order.order_number}`));
 

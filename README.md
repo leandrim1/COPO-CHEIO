@@ -47,7 +47,8 @@ fazer quando algo quebra, prazos de guarda dos dados) e [`tests/README.md`](test
 | `/conta` · `/conta/pedidos` · `/conta/pedidos/:numero` | Conta (opcional): dados, "Meus pedidos", detalhe e "pedir de novo" |
 | `/conta/recuperar` · `/conta/redefinir/:codigo`        | Esqueci a senha: link por e-mail (ou, sem e-mail, telefone + pedido) e tela da senha nova |
 | `/conta/verificar/:codigo`                             | Link do e-mail de confirmação (um toque no botão ativa a conta) |
-| `/privacidade`      | Política de privacidade (LGPD): quais dados, para quê, por quanto tempo; pedido de acesso, correção ou exclusão; botão para apagar os dados guardados neste aparelho |
+| `/privacidade`      | Política de privacidade (LGPD): quais dados, para quê, por quanto tempo; pedido de acesso, correção ou exclusão; botão para apagar os dados guardados neste aparelho (e, se a loja liga a medição de visitas, a escolha de aceitar ou não) |
+| `/termos` · `/trocas-e-cancelamentos` · `/entrega` · `/pagamento-e-reembolso` · `/contato-e-responsavel` | Termos de uso, cancelamento e trocas, entrega e retirada, pagamento e reembolso, contato e responsável: **texto editável pelo owner no painel** (texto padrão que descreve o que o sistema faz, sem inventar prazos, leis, CNPJ nem endereço) |
 
 Endereço que não existe mostra "Página não encontrada" (e responde `404` para o Google, que recebe o HTML pronto; veja [Robôs e prévia de links](#robôs-e-prévia-de-links)).
 
@@ -59,10 +60,13 @@ Endereço que não existe mostra "Página não encontrada" (e responde `404` par
 | `/admin/clientes`                              | Contas de clientes (confirmadas / aguardando confirmação do e-mail), estado do envio de e-mails e e-mail de teste, link de nova senha, desativar, excluir; **pedidos de privacidade (LGPD)** e anonimização (owner) |
 | `/admin/produtos` · `/novo` · `/:id`           | Cadastrar, editar, duplicar, excluir, destacar, esgotar; promoção com data de início e fim; importar do cardápio antigo (JSON ou planilha) |
 | `/admin/categorias`                            | Criar, editar, ordenar, ativar/desativar                    |
+| `/admin/cupons` (só o owner)                   | Cupons de desconto e entrega grátis                         |
+| `/admin/avaliacoes`                            | Avaliações dos pedidos entregues: publicar, esconder, apagar |
+| `/admin/fidelidade` (só o owner)               | Programa de pontos: regras, resumo, acerto manual e movimentos |
 | `/admin/estoque`                               | + adicionar / − retirar; 0 = ESGOTADO automático            |
 | `/admin/site`                                  | Logo, nome, Hero, textos das seções, SEO                    |
 | `/admin/banners`                               | Banner da capa da página Bebidas (no lugar dos gelos) e carrossel do cardápio, com imagem de celular e de computador |
-| `/admin/configuracoes`                         | Abas: Loja, Horários, Entrega, Pagamento, **Painel** (som, minha senha, verificação em duas etapas, estado do sistema), Administradores e **Atividades** (só o owner: quem mudou o quê) |
+| `/admin/configuracoes`                         | Abas: Loja, Horários (+ feriados e horários especiais), Entrega (+ entrega grátis, agendamento e entregadores), Pagamento, **Termos e políticas** (só o owner), **Painel** (som, minha senha, verificação em duas etapas, estado do sistema), Administradores e **Atividades** (só o owner: quem mudou o quê) |
 
 Qualquer `/admin/*` sem login vai para `/admin/login`, e o servidor confere a sessão em **toda** chamada
 administrativa: esconder a tela no navegador não é a proteção. O código do painel só é baixado quando alguém abre `/admin`.
@@ -325,8 +329,13 @@ no Neon.
   atualização". A página consulta o servidor a cada 10 s com a aba à vista e o pedido em andamento (2 min com o pedido finalizado;
   1 min com a aba em segundo plano, 5 min se também finalizado) e na hora em que a aba volta ou a internet reconecta. Sem conexão,
   continua mostrando o último estado, avisa e tenta de novo com intervalo crescente (até 1 min).
-- **O cliente só lê**: não existe rota pública que altere pedido; status e pagamento só mudam pelo painel (o servidor
-  confere o login). O pedido público nunca traz telefone, e-mail, ids internos nem o código.
+- **O cliente só lê, com uma exceção: cancelar.** Não existe rota pública que altere pedido; status e pagamento só mudam pelo painel (o servidor
+  confere o login). A única ação do cliente é **cancelar o pedido** (`POST /api/tracking/:codigo/cancel` ou, logado, `POST /api/account/orders/:numero/cancel`),
+  só enquanto o pedido está *aguardando pagamento* ou *novo*, sem pagamento recebido; depois que a loja confirma, ou se já foi pago, a página explica o motivo e
+  leva ao WhatsApp. O cancelamento é **uma transação no banco** (`customer_cancel_order`): muda o estado, devolve o estoque **uma única vez** (repetir não devolve de
+  novo), grava quem/quando/motivo no histórico, cancela a cobrança Pix pendente na operadora e dispara o e-mail "pedido cancelado". Pedido de outra pessoa dá 404.
+  **Pedido já pago online não é devolvido sozinho**: a devolução do dinheiro é um passo do owner (veja `docs/PAGAMENTO-ONLINE.md`).
+  O pedido público nunca traz telefone, e-mail, ids internos nem o código.
 - **Limite de consultas**: 30 consultas erradas por IP a cada 15 min (as certas, como o acompanhamento automático, não
   contam). Pedido inexistente, código errado e link vencido dão exatamente a mesma resposta.
 
@@ -476,7 +485,8 @@ qualquer provedor. O caminho mais simples, sem domínio próprio, é uma conta *
    | `SMTP_SECURE` | `true`/`false` (padrão: `true` na porta 465) | não |
    | `MAIL_FROM` | remetente, ex.: `Copo Cheio <copocheio@gmail.com>`; **obrigatória só** quando `SMTP_USER` não é um e-mail (Resend, SendGrid, SES…) | não |
    | `SITE_URL` | endereço do site nos links e na logo dos e-mails, ex.: `https://www.seudominio.com.br`; sem ela usa o domínio de produção da Vercel | não |
-   | `CRON_SECRET` | texto aleatório longo; **liga o cron diário** que processa a fila de e-mails (`/api/cron/email`) | recomendada |
+   | `CRON_SECRET` | texto aleatório longo; **liga os crons diários**: fila de e-mails (`/api/cron/email`) e varredura de Pix/cartão vencido (`/api/cron/sweep`) | recomendada |
+   | `GA_MEASUREMENT_ID` | identificador do Google Analytics 4 (`G-XXXXXXXXXX`; não é segredo); liga a medição de visitas **só para quem aceitar** (exige também liberar o Google na CSP: `docs/PWA-SEO-ANALYTICS.md`) | não |
    | `EMAIL_DAILY_LIMIT`, `EMAIL_PROMO_DAILY_LIMIT`, `MAIL_REPLY_TO` | teto diário de envio (padrão 450 no Gmail), parte dele para promoções e endereço de resposta | não |
    | `EMAIL_ORDER_NOTICES` | `off` **pausa** os e-mails de pedido e pagamento (interruptor de segurança; códigos de confirmação, nova senha e promoções não são afetados) | não |
 
@@ -618,21 +628,54 @@ cliente na próxima consulta.
 - O cliente vê só o necessário para acompanhar a compra: nome, itens, valores, endereço e andamento; a página manda
   `noindex` e `Referrer-Policy: no-referrer` para o link não vazar.
 
+## Cupons, entrega grátis, agendamento e endereços
+
+Tudo abaixo nasce **desligado ou vazio** e é calculado e conferido **no banco** (o navegador só manda o código do cupom, o horário escolhido e o total que viu):
+
+- **Cupons** (`/admin/cupons`, só o owner; migration `0029`): código único em maiúsculas, tipo *porcentagem* (com teto opcional), *valor fixo* ou *entrega grátis*, pedido mínimo, validade, limite total de usos, limite por cliente (conta ou telefone),
+  categorias, "sem itens em promoção". Um cupom por pedido; o desconto nunca passa do valor dos itens elegíveis; pedido cancelado não conta como uso; cupom que zera o pedido só vale para pagar na entrega/retirada. Inexistente, desligado ou vencido
+  dá **sempre a mesma mensagem** e quem erra o código 12 vezes em 10 minutos é barrado. O pedido guarda código, desconto e taxa dispensada: mudar ou apagar um cupom **nunca** altera pedido feito. A prévia do carrinho é `POST /api/coupons/validate`.
+- **Entrega grátis por valor** (*Configurações → Entrega*): a partir de um subtotal **depois do cupom**, só na entrega; a taxa (única ou do bairro) não é cobrada e o pedido guarda quanto foi dispensado.
+- **Agendamento** (*Configurações → Entrega*; migration `0030`): o cliente escolhe dia e faixa de horário (15/30/60/120 min) respeitando o horário de funcionamento, a antecedência mínima, o limite de dias e a lotação por faixa; loja fechada pode receber pedido agendado
+  para quando abrir; pedidos pausados não. **Feriados e horários especiais** (*Configurações → Horários*) valem no lugar do horário da semana para os pedidos de agora e os agendados. `GET /api/schedule` lista as faixas.
+- **CEP** (campo opcional no checkout e nos endereços): `GET /api/cep/:cep` consulta o ViaCEP **pelo servidor da loja** (gratuito, sem chave); o serviço só recebe o CEP. Fora do ar, o cliente preenche à mão.
+- **Endereços extras** (migration `0031`; *Minha conta → Outros endereços*): até 4 além do principal, escolhidos no checkout (`/api/account/addresses`).
+- **Exportar CSV** (pedidos e clientes: só o owner; estoque: qualquer administrador): `GET /api/admin/export/orders.csv|customers.csv|stock.csv`, separador `;`, UTF-8 com BOM, texto que começa com `= + - @` ganha apóstrofo (proteção contra injeção de fórmula),
+  limite de 20 por hora e 20.000 linhas, cada exportação no registro de atividades (nunca o conteúdo).
+- **Estoque baixo** (migration `0032`; *Estoque*): limite padrão da loja e limite por produto; aviso no painel inicial **e por e-mail aos donos** (um por dia, só quando a lista de produtos muda; interruptor em *Estoque*). O mesmo aviso
+  avisa se a **rotina automática** falhou ou parou de rodar (`server/opsAlerts.ts`, pelo serviço de e-mails de sempre).
+- **Termos e políticas** (migration `0033`; *Configurações → Termos e políticas*, só o owner): `/termos`, `/trocas-e-cancelamentos`, `/entrega`, `/pagamento-e-reembolso` e `/contato-e-responsavel` com texto editável; o painel marca "ainda não revisado juridicamente"
+  (`docs/JURIDICO-PENDENCIAS.md`). Razão social, CNPJ e endereço do responsável **não são inventados**: a loja os escreve na página de contato.
+- **Programa de pontos** (migration `0035`; `/admin/fidelidade`, só o owner; *Minha conta → Meus pontos*): **desligado e sem nenhum valor** até o dono definir pontos por R$ 1, pontos para trocar, valor e validade do cupom. O cliente **com conta** ganha pontos quando o pedido é entregue
+  (itens depois do desconto; entrega e taxas não contam), o crédito é estornado se o pagamento é devolvido, o extrato é só de acréscimo e a troca gera um **cupom pessoal** de valor fixo (uso único, só dessa conta) de forma atômica. Acerto manual do owner, sempre com motivo.
+- **Avaliações** (migration `0034`; `/admin/avaliacoes`): depois de **entregue**, o cliente dá nota de 1 a 5 e um comentário opcional, uma vez, pelo link de acompanhamento ou pela conta. Nasce "aguardando"; só vai para o site
+  (`GET /api/reviews`) depois que a loja **publica**, e o público recebe só nota, comentário e data (nunca nome, telefone nem número do pedido). A loja pode esconder ou apagar (um comentário com dado pessoal, por exemplo).
+- **Entregadores** (migration `0034`; *Configurações → Entrega*): a loja cadastra quem entrega e escolhe o entregador em cada pedido de **entrega**; o **nome fica gravado no pedido** (apagar o entregador não muda o histórico) e o cliente vê só o
+  **primeiro nome**, enquanto o pedido está a caminho.
+- **Rotina automática** (`GET /api/cron/sweep`, só com `Authorization: Bearer $CRON_SECRET`): encerra o Pix/cartão vencido **também na operadora**; o cliente ainda tem 10 minutos para gerar outro e, passada essa janela, o pedido é cancelado e o estoque devolvido (uma única vez; se o pagamento já foi feito na operadora e o aviso
+  se perdeu, o pedido é liberado, nunca cancelado), manda a fila de e-mails e limpa dados vencidos; registra quando rodou em `job_runs` (aparece em *Configurações → Painel → Estado do sistema*). A Vercel (plano gratuito) só aceita cron **diário**
+  (`vercel.json` → `crons`); para checar a cada poucos minutos use um agendador externo (veja `docs/OPERACAO.md`, seção 4). Sem agendador, o vencimento também é tratado de passagem quando entra movimento.
+- **Site instalável, buscadores e medição de visitas** (`docs/PWA-SEO-ANALYTICS.md`): manifesto + service worker que guarda **só arquivos estáticos**; `robots.txt` e `sitemap.xml` gerados com o endereço do site; Google Analytics 4 **opcional**
+  (`GA_MEASUREMENT_ID`), só depois do "Aceitar" da pessoa e sem dado pessoal (precisa também liberar o Google na CSP: decisão do proprietário).
+
 ## API
 
 Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e `cover_banners` da capa) · `POST /api/orders` (devolve `{order, token}`; aceita `idempotency_key` e `expected_total`) · `GET /api/health` · `POST /api/privacy/request`
-Técnico (público): `GET /api/__page` (HTML para robôs) · `POST /api/csp-report` · `POST /api/client-error`
-Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`)
+Técnico (público): `GET /api/__page` (HTML para robôs) · `GET /api/sitemap.xml` e `GET /api/robots.txt` (servidos como `/sitemap.xml` e `/robots.txt`) · `POST /api/csp-report` · `POST /api/client-error`
+Loja e checkout (público): `POST /api/coupons/validate` (prévia do cupom) · `GET /api/schedule` (faixas do agendamento) · `GET /api/cep/:cep` · `GET /api/legal/:pagina` (termos e políticas) · `GET /api/reviews` (avaliações publicadas)
+Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`) · `POST /api/tracking/:codigo/cancel` (o cliente cancela o pedido)
 Pagamento online (sem login, pelo código do pedido ou pela própria conta): `GET|POST /api/tracking/:codigo/payment` ·
 `GET|POST /api/account/orders/:numero/payment` · aviso da operadora: `POST /api/payments/webhook` (nada é gravado antes de a operadora provar
 que o aviso é dela, por assinatura HMAC; sem operadora conectada responde `503 payments_unavailable`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
-`POST /api/account/orders/claim`
+`POST /api/account/orders/claim` · `POST /api/account/orders/:numero/cancel` · `GET|POST /api/account/orders/:numero/review` · `GET|POST|PATCH|DELETE /api/account/addresses`
+Acompanhamento, avaliação: `GET|POST /api/tracking/:codigo/review`
+Pontos (conta): `GET /api/account/loyalty` · `POST /api/account/loyalty/redeem` — painel (owner): `GET /api/admin/loyalty` · `PUT /api/admin/loyalty/settings` · `POST /api/admin/loyalty/adjust`
 Painel, sessão: `POST /api/auth/login` · `POST /api/auth/login/2fa` · `POST /api/auth/logout` · `GET /api/auth/me` · `PATCH /api/auth/password` ·
 verificação em duas etapas: `GET /api/auth/2fa` · `POST /api/auth/2fa/setup|enable|disable|recovery-codes`
 Preferências de e-mail (sem login, pelo link do e-mail): `GET|PATCH /api/email/preferences/:chave` · descadastro de um clique (RFC 8058): `POST /api/email/unsubscribe/:chave` ·
-logado: `GET|PATCH /api/account/email-preferences` · cron diário: `GET /api/cron/email` (só com `Authorization: Bearer $CRON_SECRET`) · avisos do provedor opcional:
+logado: `GET|PATCH /api/account/email-preferences` · crons diários: `GET /api/cron/email` e `GET /api/cron/sweep` (só com `Authorization: Bearer $CRON_SECRET`; `GET /api/cron/status` mostra quando a varredura rodou) · avisos do provedor opcional:
 `POST /api/email/webhook/resend` (assinatura Svix; sem `RESEND_WEBHOOK_SECRET` nem existe)
 Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/tracking-link`), `live`, `customers`, `mail` (+ `POST mail/test`, owner),
 `emails/overview|messages[/:id]|suppressions|campaigns[/:id]|dns` (consulta; o owner age: reenviar/cancelar mensagem, `POST emails/process`, supressões, criar/testar/enviar/cancelar campanha), `products`
@@ -641,6 +684,7 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
 Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
 excluir cliente, gerar link de nova senha de cliente, e-mail de teste e os **pagamentos online**: `GET /api/admin/payments` (operadora, conta,
 resumo, comissão calculada × efetivada, cobranças) · `GET /api/admin/payments/:id` · `POST /api/admin/payments/:id/refresh|ack` ·
+`POST /api/admin/payments/:id/refund` (devolução pela operadora; só com `VALIDAPAY_REFUNDS=on`) · `POST /api/admin/payments/:id/refunds/check` ·
 `POST /api/admin/payments/sweep` · conta do estabelecimento: `GET /api/admin/payments/account/candidates` ·
 `POST /api/admin/payments/account/link|proposal|refresh` (a forma "Pix online" só o owner liga: `PATCH /api/admin/payments/pix_online`).
 
@@ -733,8 +777,8 @@ build com o `<head>` já escrito a partir do painel (*Site → SEO*): título, d
 `noindex` nas páginas privadas e dados estruturados da loja (schema.org: nome, telefone, endereço e horários **que estiverem
 cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na página inicial `/`, só os robôs de prévia de link
 (WhatsApp, Facebook etc.) recebem a versão da função; o Googlebot recebe o `index.html` estático, com o título e a descrição fixos dele.
-`public/robots.txt` bloqueia `/api/`, `/pedido/`, `/acompanhar-pedido/` e `/conta`; o painel e o checkout ficam fora do Google por
-`noindex` (cabeçalho `X-Robots-Tag` e `<meta name="robots">`).
+`/robots.txt` e `/sitemap.xml` são gerados pelo servidor (precisam do endereço completo do site: `SITE_URL`). O `robots.txt` bloqueia `/api/`, `/pedido/`, `/pagar/`, `/acompanhar-pedido/` e `/conta` e aponta o sitemap; o sitemap só lista as
+páginas públicas e estáveis (início, cardápio, privacidade e as cinco páginas de políticas). O painel e o checkout ficam fora do Google por `noindex` (cabeçalho `X-Robots-Tag` e `<meta name="robots">`).
 
 > Esse roteamento (`redirects`/`rewrites` com `has` por `user-agent`, `includeFiles`, cabeçalhos) foi validado com o pacote de
 > roteamento da Vercel e um servidor local, **não** na Vercel de verdade: confira com `curl -A "WhatsApp/2.0" https://<seu site>/bebidas`
@@ -749,7 +793,8 @@ cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na
 **`email_messages`**, **`email_events`**, **`email_suppressions`**, **`email_preferences`**, **`email_campaigns`**, **`email_alerts`** e **`email_webhook_state`** (o registro e a fila de e-mails: sem corpo, código nem link),
 **`audit_log`** (registro de atividades do painel), **`admin_recovery_codes`**, **`admin_login_challenges`** e **`admin_devices`**
 (verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares), **`merchant_accounts`** (conta da
-loja na operadora de pagamento), **`payments`** (cobranças online, em centavos) e **`payment_events`** (avisos da operadora)
+loja na operadora de pagamento), **`payments`** (cobranças online, em centavos), **`payment_events`** (avisos da operadora) e **`payment_refunds`** (devoluções), **`coupons`** e **`coupon_categories`**, **`store_exceptions`** (feriados e horários especiais),
+**`customer_addresses`** (endereços extras), **`legal_pages`** (termos e políticas), **`couriers`**, **`order_reviews`**, **`loyalty_ledger`** (extrato de pontos) e **`job_runs`** (última execução da rotina automática)
 (+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
 última atualização.
@@ -816,6 +861,14 @@ apagado. Voltar o código para a versão anterior continua funcionando contra es
 A migration `0022_ice_per_product.sql` acrescentou `products.ice_choice_required` e trocou `create_order` por uma versão idêntica à da 0020, exceto por
 ler a marca do **produto** (era a da categoria). Ela escreve **uma única linha de dados** (um `UPDATE` que marca os produtos que estavam em categorias que pediam o gelo, para o site
 não mudar no deploy); nenhum pedido, preço, estoque ou categoria é alterado. A coluna `categories.ice_choice_required` continua no banco, sem uso.
+A migration `0027_age_and_customer_cancel.sql` acrescentou `products.alcoholic` (**todos nascem `true`**), as colunas de maioridade em `orders`, `order_status_history.reason`, a regra
+`order_cancel_why` e a função `customer_cancel_order`, e trocou `order_json`, `create_order` (exige `age_confirmed: true` em pedido com bebida alcoólica) e `admin_set_order_status`
+(entregar pedido com bebida alcoólica exige `age_checked`). **Exceção ao rollback**: a versão anterior do site não envia a declaração, então depois da 0027 ela não consegue fechar pedido com
+bebida alcoólica (veja `docs/OPERACAO.md`, item 17). A `0028_payment_refunds.sql` só acrescenta a tabela `payment_refunds` e duas funções (devolução de pagamento online).
+A `0029_coupons_free_delivery.sql` acrescenta cupons e a entrega grátis por valor (desligada); a `0030_scheduling.sql`, o agendamento (desligado), os dias especiais e `orders.scheduled_for`; a `0031_customer_addresses.sql`, os endereços extras
+da conta (até 4, trava no banco); a `0032_stock_alert.sql`, o limite de estoque baixo (padrão 5, o mesmo de antes); a `0033_legal_pages.sql`, as cinco páginas de termos e políticas com o texto padrão; a `0034_couriers_reviews_jobs.sql`, os
+entregadores, as avaliações e o registro da rotina automática; a `0035_loyalty.sql`, o programa de pontos (desligado e sem valores: colunas em `store_settings`, o extrato `loyalty_ledger` só de acréscimo, `coupons.customer_id` para o cupom pessoal e o gatilho que credita/estorna). **Todas só acrescentam** (tabelas, colunas com padrão que não muda nenhum pedido e funções; `create_order` e `order_json` são trocadas por versões iguais para tudo o que já existia);
+nenhuma apaga ou reescreve dados. Como as migrations só rodam no deploy de **produção**, o roteiro seguro está em `docs/OPERACAO.md` (seção 3 e item 17).
 As migrations 0009 a 0024 **só acrescentam** (tabelas, colunas e funções novas; a assinatura de `create_order(payload jsonb)` continua a
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
@@ -834,16 +887,23 @@ dashboard) são funções do banco chamadas só pelo servidor.
   responde "tente de novo" em vez de criar conta sem confirmação.
 - A prévia de links e o HTML para o Google dependem de regras do `vercel.json` que só foram testadas com o pacote de roteamento da
   Vercel e um servidor local (veja [Robôs e prévia de links](#robôs-e-prévia-de-links)): confira depois do deploy.
-- Não há captcha. O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
+- Não há captcha, **de propósito** (veja `docs/SEGURANCA.md`, seção 8, com o gatilho para adotar e a opção recomendada). O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
   abas diferentes valem os limites por rede e por telefone.
-- **Pagamento online**: o adaptador da ValidaPay **nunca foi testado na ValidaPay de verdade** (só contra um servidor falso baseado na documentação). Não
-  existem o cartão online (o cartão é pago na entrega, por decisão do dono) nem o estorno pela API. Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md`). Não há agendador: pedidos online não pagos são encerrados
-  de passagem, quando o painel está aberto ou entra movimento. O checkout não coleta CPF/CNPJ do pagador (o Pix imediato da ValidaPay não o exige).
+- **Pagamento online (Pix e cartão)**: os dois estão implementados (o cartão online é a migration `0020`, a tela `/pagar/<código>` e `docs/CARTAO-ONLINE.md`; ambos nascem
+  **desligados**), mas o adaptador da ValidaPay **nunca foi testado na ValidaPay de verdade**: só contra um servidor falso baseado na documentação. Nada foi cobrado, devolvido ou transferido em sandbox ou produção.
+  Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md` e o checklist de homologação ali). **Devolução (estorno) pela API**: existe no código (migration `0028`, botão "Devolver pagamento" só para o owner;
+  o valor só é dado como devolvido quando a ValidaPay **confirma**), mas fica **desligada** até a variável `VALIDAPAY_REFUNDS=on`, porque o escopo `wallet/write` da ValidaPay é o mesmo do saque; nunca foi testada na ValidaPay real.
+  O status manual de um pedido ("cancelado") **não é** uma transação financeira. Pedidos online não pagos são encerrados pela rotina automática (diária na Vercel; mais frequente só com um agendador externo, `docs/OPERACAO.md`)
+  e, entre uma execução e outra, de passagem, quando entra movimento. O checkout não coleta CPF/CNPJ do pagador (o Pix imediato da ValidaPay não o exige).
+- **Maioridade (18+)**: a janela de entrada e a caixa do checkout são **autodeclaração** (não provam idade); a prova é a conferência do documento na entrega, registrada no painel (sem guardar o documento). Os textos precisam de
+  validação jurídica (`docs/JURIDICO-PENDENCIAS.md`). Todo produto nasce como bebida alcoólica: desmarque o que não é em *Produtos*.
 - A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
   [Segurança](#segurança) e [Privacidade (LGPD)](#privacidade-lgpd)).
-- Acessibilidade: o Hero (aprovado, não alterado) ainda tem apontamentos de leitor de tela (nome do link que não repete o texto
-  visível e regiões sem rótulo); o texto bem pequeno e os alvos de toque de alguns botões no celular não foram mexidos para não
-  mudar o visual do celular.
+- Acessibilidade: auditoria automática (axe-core, WCAG 2.0/2.1/2.2 A e AA) sem violações nas páginas principais em celular e computador; os alvos de toque pequenos ganharam área de 44 × 44 px **sem mudar o desenho**
+  (`docs/PWA-SEO-ANALYTICS.md`, seção 4; os apontamentos antigos do Hero — nome do link da logo, região sem rótulo e pontinhos do carrossel — foram corrigidos sem mudar o visual). **Não testado:** leitor de tela real (NVDA/VoiceOver/TalkBack) e zoom de 200 %; recomenda-se um teste manual.
+- **Programa de pontos**: existe (migration `0035`), mas nasce **desligado e sem valores**: as regras são do dono (`/admin/fidelidade`) e precisam de revisão jurídica/fiscal antes de ligar. **Notificações por WhatsApp/SMS/push** não existem (dependem
+  de serviço pago ou de consentimento próprio); o aviso ao cliente é por e-mail. **Nota fiscal (NFC-e)** não é emitida: o sistema não tem integração fiscal (`docs/FISCAL.md`: o que existe, o que a ValidaPay oferece — só NFS-e — e o que o contador precisa decidir).
+- **PWA**: o site é instalável, mas não funciona sem internet (cardápio e pedido exigem conexão, de propósito: preço e estoque nunca ficam velhos).
 - Alertas automáticos (queda do site, pico de erros) e envio de logs para fora da Vercel não existem: veja [`docs/OPERACAO.md`](docs/OPERACAO.md). (Os **e-mails** têm alertas próprios no painel *E-mails*.)
 - **E-mails**: sem domínio próprio não há SPF/DKIM/DMARC da loja; o SMTP comum **não informa** entrega, devolução nem spam; abertura e clique não são medidos; ninguém sabe em que pasta o e-mail caiu; a fila
   não tem agendador (anda por atividade e pelo cron **diário**); e o provedor opcional (Resend) foi testado só contra um simulador. Tudo em [`docs/EMAIL.md`](docs/EMAIL.md#13-limites-conhecidos-e-pendências).
@@ -881,7 +941,7 @@ daqui, o que fica pendente e o que o dono precisa conferir) está em [`docs/DESE
 api/index.ts           função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/routes/         uma pasta de rotas por assunto (public, orders, catalog, content, session, twofactor, account, tracking, customers,
-                       team, audit, privacy, seo, upload, mailadmin, payments)
+                       team, audit, privacy, seo, upload, mailadmin, payments, coupons, exports, cep, schedule, addresses, legal, reviews, couriers, cron, loyalty)
 server/payments/       pagamento online: contrato (types.ts), adaptador da ValidaPay (validapay.ts), fábrica pelas variáveis de ambiente (factory.ts), serviço (service.ts), conta do estabelecimento (merchant.ts)
 server/auth.ts         senhas (scrypt), sessões, limites de tentativa atômicos · passwordPolicy.ts / commonPasswords.ts: regra de senha forte
 server/totp.ts         verificação em duas etapas (TOTP, códigos de recuperação) · adminAccess.ts: aparelhos conhecidos e aviso de acesso novo
@@ -899,11 +959,18 @@ src/site/Tracking.tsx  confirmação, acompanhamento e "Acompanhar pedido" (paco
 src/site/Account.tsx   conta do cliente: login, Meus pedidos, recuperar senha
 src/ErrorBoundary.tsx  tela de erro do site (em vez de tela branca) · src/lib/report.ts: envia o erro para os logs
 public/email/logo.png  logo oficial reduzida para os e-mails (servida em /email/logo.png)
-src/lib/               cliente da API, tipos, formatação, horários, rotas
+src/lib/               cliente da API, tipos, formatação, horários, rotas, CEP e medição de visitas (analytics.ts)
+public/sw.js · manifest.webmanifest · offline.html   site instalável: service worker (só estático), manifesto e página "sem conexão"
 src/admin/             painel (carregado só em /admin) · src/admin/emails/: abas do painel E-mails · src/site/EmailPreferences.tsx: preferências de e-mail do cliente
 tests/                 testes unitários, de API e de navegador, com o servidor de teste (veja tests/README.md)
 docs/OPERACAO.md       variáveis, deploy, monitoramento, backup, o que fazer quando algo quebra, prazos dos dados
 docs/EMAIL.md          e-mails: envio, registro, entregabilidade, DNS, promoções, alertas, testes e pendências (EMAIL-AUDITORIA.md: a auditoria que originou)
 docs/PAGAMENTO-ONLINE.md  Pix online: o que existe, o que falta (ValidaPay), regras, contrato do adaptador, como ligar
+docs/CARTAO-ONLINE.md  cartão de crédito online (migration 0020, tela /pagar/<código>): o que existe e o que falta validar
+docs/AUDITORIA.md      auditoria geral: o que está aprovado, o que precisa de correção, o que é parcial, o que está bloqueado, e o plano priorizado
+docs/SEGURANCA.md      auditoria de segurança de ponta a ponta
+docs/PWA-SEO-ANALYTICS.md  site instalável, buscadores, medição de visitas (GA4, opcional) e acessibilidade
+docs/JURIDICO-PENDENCIAS.md  textos e regras que precisam de validação jurídica ou fiscal
+docs/FISCAL.md        nota fiscal: o que existe (nada), o que a ValidaPay oferece e o que o contador precisa definir
 .github/workflows/     ci.yml: tipos, build e testes a cada envio ao GitHub
 ```

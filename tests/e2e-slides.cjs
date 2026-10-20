@@ -83,6 +83,7 @@ const { adminLoginViaApi } = require('./e2e-code.cjs');
   const file = { coverAm: fileOf(coverA.image_mobile_url), coverBm: fileOf(coverB.image_mobile_url), coverAd: fileOf(coverA.image_desktop_url), coverBd: fileOf(coverB.image_desktop_url), menuA: fileOf(menuA.image_desktop_url), menuB: fileOf(menuB.image_desktop_url) };
   ok(new Set(Object.values(file)).size === 6, 'seis fotos diferentes no Blob (2 da capa em duas versões + 2 do cardápio)', file);
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // =============================================================================================
   console.log('# celular: a foto do slide escondido só é pedida depois que a primeira terminou');

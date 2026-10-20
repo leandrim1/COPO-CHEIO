@@ -33,7 +33,9 @@ check('toda rota com caminho /api/admin/ é administrativa (nenhuma foi registra
 check('as rotas de equipe, 2FA, trocar a senha e o painel de e-mails/pagamentos estão na lista protegida', ['/api/admin/admins', '/api/auth/2fa', '/api/auth/password', '/api/admin/emails/stats', '/api/admin/payments/summary'].every((p) => guarded.some((r) => r.path.startsWith(p.replace(/\/(stats|summary)$/, '')) || r.path === p)) || guarded.some((r) => r.path.startsWith('/api/admin/emails')), guarded.length);
 // Rotas públicas só nos grupos esperados: uma rota pública NOVA precisa de uma decisão consciente (e de uma linha aqui).
 const PUBLIC_OK = [/^\/api\/health$/, /^\/api\/products$/, /^\/api\/site$/, /^\/api\/orders$/, /^\/api\/account(\/|$)/, /^\/api\/tracking\//, /^\/api\/email\//, /^\/api\/payments\/webhook$/, /^\/api\/privacy\/request$/,
-  /^\/api\/auth\/(login|login\/2fa|login\/code|login\/resend|logout|me)$/, /^\/api\/client-error$/, /^\/api\/csp-report$/, /^\/api\/cron\/email$/, /^\/api\/__page$/];
+  /^\/api\/auth\/(login|login\/2fa|login\/code|login\/resend|logout|me)$/, /^\/api\/client-error$/, /^\/api\/csp-report$/, /^\/api\/cron\/(email|sweep|status)$/, /^\/api\/reviews$/, /^\/api\/(sitemap\.xml|robots\.txt)$/, /^\/api\/__page$/,
+  // Cupom (prévia do carrinho), CEP, faixas do agendamento e textos de termos e políticas: leituras/consultas públicas, com limite por rede.
+  /^\/api\/coupons\/validate$/, /^\/api\/cep\/:cep$/, /^\/api\/schedule$/, /^\/api\/legal\/:slug$/];
 const unexpected = open.filter((r) => !PUBLIC_OK.some((re2) => re2.test(r.path)));
 check('toda rota pública está num dos grupos esperados (cardápio, pedido, conta do cliente, acompanhamento, webhooks assinados, login)', unexpected.length === 0, unexpected.map((r) => `${r.method} ${r.path}`));
 

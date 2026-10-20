@@ -51,6 +51,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   for (const b of (await api('GET', '/api/admin/banners')).data.banners) await api('DELETE', `/api/admin/banners/${b.id}`);
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   console.log('# página inicial: Contato e chamada final');
   for (const [w, h] of [[390, 844], [1280, 800]]) {

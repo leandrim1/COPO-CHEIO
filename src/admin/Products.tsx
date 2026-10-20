@@ -479,6 +479,7 @@ export function ProductsPage() {
       {isSoldOut(p) && <Badge tone="red">Esgotado</Badge>}
       {p.featured && <Badge tone="blue">Destaque</Badge>}
       {p.ice_choice_required && <Badge tone="blue">Pede o gelo</Badge>}
+      {p.alcoholic === false && <Badge>Sem álcool</Badge>}
       {promoState(p) === 'scheduled' && <Badge tone="violet">Promoção agendada</Badge>}
       {promoState(p) === 'expired' && <Badge>Promoção encerrada</Badge>}
       {p.active && hiddenByCategory(p) && <Badge tone="amber">Categoria oculta</Badge>}
@@ -730,6 +731,8 @@ type Form = {
   swap_options: string[];
   // Quem pede este produto escolhe o gelo (normal ou de sabor).
   ice: boolean;
+  // Bebida alcoólica: o pedido que a contém exige a declaração de maioridade e a conferência do documento na entrega.
+  alcoholic: boolean;
   sku: string;
   trackStock: boolean;
   stock: string;
@@ -752,6 +755,8 @@ const EMPTY_FORM: Form = {
   swap_price: '',
   swap_options: [],
   ice: false,
+  // Produto novo nasce alcoólico (o lado seguro): quem vende refrigerante, água ou gelo desliga.
+  alcoholic: true,
   sku: '',
   trackStock: false,
   stock: '',
@@ -820,6 +825,7 @@ export function ProductFormPage({ id }: { id: string }) {
         swap_price: moneyInput(product.swap_base_price === null || product.swap_base_price === undefined ? null : Number(product.swap_base_price)),
         swap_options: product.swap_option_ids ?? [],
         ice: product.ice_choice_required === true,
+        alcoholic: product.alcoholic !== false,
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
         stock: product.stock === null ? '' : String(product.stock),
@@ -920,6 +926,7 @@ export function ProductFormPage({ id }: { id: string }) {
       swap_base_price: form.swap_base ? null : swapPrice,
       swap_option_ids: form.swap_options.filter((id) => id !== form.swap_base),
       ice_choice_required: form.ice,
+      alcoholic: form.alcoholic,
       sku: form.sku.trim() || null,
       stock,
       featured: form.featured,
@@ -1148,6 +1155,14 @@ export function ProductFormPage({ id }: { id: string }) {
         <div className="space-y-4">
           <Card title="Imagem">
             <ImageInput label="Foto do produto" value={form.image} onChange={(v) => set('image', v)} hint="Quadrada, de preferência com fundo transparente (PNG/WebP)." />
+          </Card>
+          <Card title="Venda de bebida alcoólica">
+            <Switch
+              checked={form.alcoholic}
+              onChange={(v) => set('alcoholic', v)}
+              label="Bebida alcoólica"
+              description="Pedido com este produto exige a declaração de maioridade (18 anos ou mais) no site e a conferência do documento com foto na entrega ou na retirada. Desligue só em produtos sem álcool (refrigerante, água, gelo...)."
+            />
           </Card>
           <Card title="Gelo">
             <Switch

@@ -503,11 +503,14 @@ export function CardPaymentPage({ token }: { token: string }) {
               </div>
               <div className="flex justify-between text-white/70">
                 <dt>{order.delivery_type === 'delivery' ? 'Entrega' : 'Retirada'}</dt>
-                <dd className="tabular-nums">{order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}</dd>
+                <dd className="tabular-nums">
+                  {order.delivery_fee <= 0 && (order.delivery_fee_waived ?? 0) > 0 && <s className="mr-1.5 text-white/40">{money(order.delivery_fee_waived ?? 0)}</s>}
+                  {order.delivery_fee > 0 ? money(order.delivery_fee) : 'Grátis'}
+                </dd>
               </div>
               {order.discount > 0 && (
                 <div className="flex justify-between text-white/70">
-                  <dt>Desconto</dt>
+                  <dt>Desconto{order.coupon_code ? ` (${order.coupon_code})` : ''}</dt>
                   <dd className="tabular-nums">− {money(order.discount)}</dd>
                 </div>
               )}

@@ -2,6 +2,7 @@
 import { refund, reserve } from '../auth.js';
 import { customerFromRequest } from '../customer.js';
 import { batch, one, query } from '../db.js';
+import { analyticsId } from '../env.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
 import { getProvider, isOnlineMethod } from '../payments/provider.js';
@@ -30,6 +31,8 @@ export function registerPublic(r: Router) {
                 p.swap_base_product_id, p.swap_base_price,
                 -- ice_choice_required: este produto só é pedido com a escolha do gelo (o banco confere de novo ao criar o pedido).
                 p.ice_choice_required,
+                -- alcoholic: bebida alcoólica (o pedido com ela exige a declaração de maioridade; o banco confere de novo em create_order).
+                p.alcoholic,
                 array(select o.option_id from product_swap_options o where o.product_id = p.id order by o.option_id) as swap_option_ids
            from products p
            left join categories c on c.id = p.category_id
@@ -46,7 +49,11 @@ export function registerPublic(r: Router) {
     const [store, site, hero, banners, coverBanners, zones, payments] = await batch([
       [
         `select store_name, tagline, whatsapp, instagram, address, cep, city, state, opening_hours, timezone, orders_paused,
-                delivery_enabled, pickup_enabled, delivery_fee, min_order, delivery_time, tracking_retention_days
+                delivery_enabled, pickup_enabled, delivery_fee, min_order, free_delivery_enabled, free_delivery_min, scheduling_enabled, delivery_time, tracking_retention_days,
+                -- Dias especiais (feriado fechado / horário especial) dos próximos 60 dias: o site precisa deles para saber se a loja está aberta. Sem o motivo.
+                coalesce((select jsonb_agg(jsonb_build_object('day', e.day::text, 'kind', e.kind, 'start_time', to_char(e.start_time, 'HH24:MI'), 'end_time', to_char(e.end_time, 'HH24:MI')) order by e.day)
+                            from store_exceptions e
+                           where e.day >= (now() at time zone store_settings.timezone)::date - 1 and e.day <= (now() at time zone store_settings.timezone)::date + 60), '[]'::jsonb) as exceptions
            from store_settings where id = 1`,
       ],
       [
@@ -82,7 +89,7 @@ export function registerPublic(r: Router) {
     if (!store[0] || !site[0] || !hero[0]) {
       throw new HttpError(503, 'O banco ainda não tem o conteúdo inicial. Rode as migrations (npm run db:migrate).');
     }
-    return json({ store: store[0], site: site[0], hero: hero[0], banners, cover_banners: coverBanners, zones, payments }, 200, PUBLIC_CACHE);
+    return json({ store: store[0], site: site[0], hero: hero[0], banners, cover_banners: coverBanners, zones, payments, analytics_id: analyticsId() }, 200, PUBLIC_CACHE);
   });
 
   r.post('/api/orders', 'public', async (ctx) => {

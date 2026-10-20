@@ -4,7 +4,8 @@ import { batch, one } from '../db.js';
 import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
 import { kickQueue } from '../email/service.js';
-import { sweep } from '../payments/service.js';
+import { cleanReason } from '../orderCancel.js';
+import { cancelProviderCharges, openPixCharges, sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken } from '../tracking.js';
 import { paymentsOfOrder } from './payments.js';
 
@@ -23,12 +24,24 @@ export function registerOrders(r: Router) {
     // Valor que não é um número inteiro (days=abc) cai nos 7 dias padrão; o banco ainda aceita só 1, 7 ou 30.
     const asked = Number(ctx.url.searchParams.get('days') ?? 7);
     const days = Number.isInteger(asked) ? asked : 7;
-    const [dash, recent, privacy] = await batch([
+    const [dash, recent, privacy, lowStock] = await batch([
       ['select admin_dashboard($1) as dashboard', [days]],
       ["select * from orders where order_status <> 'awaiting_payment' order by created_at desc limit 8"],
       ["select count(*) as n from privacy_requests where status = 'open'"],
+      // Estoque baixo (até o limite do produto ou o padrão da loja) e esgotado, só de produto ativo com estoque controlado.
+      [
+        `select count(*) filter (where p.stock > 0 and p.stock <= coalesce(p.low_stock_threshold, s.low_stock_default))::int as low,
+                count(*) filter (where p.stock <= 0)::int as out
+           from products p cross join store_settings s
+          where p.active and p.stock is not null and s.id = 1`,
+      ],
     ]);
-    return json({ ...dash[0].dashboard, recent: recent.map((row) => hideRates(row, ctx.admin!.role === 'owner')), privacy_open: privacy[0]?.n ?? 0 });
+    return json({
+      ...dash[0].dashboard,
+      recent: recent.map((row) => hideRates(row, ctx.admin!.role === 'owner')),
+      privacy_open: privacy[0]?.n ?? 0,
+      low_stock: { low: lowStock[0]?.low ?? 0, out: lowStock[0]?.out ?? 0 },
+    });
   });
 
   // Lista com filtro de status, busca (número, nome ou telefone) e contagem por status.
@@ -149,7 +162,23 @@ export function registerOrders(r: Router) {
     let order = null;
     if (body.status !== undefined) {
       if (typeof body.status !== 'string' || !STATUSES.includes(body.status as (typeof STATUSES)[number])) throw new HttpError(400, 'Status inválido.');
-      order = await one('select * from admin_set_order_status($1::uuid, $2, $3::uuid)', [id, body.status, ctx.admin!.id]);
+      // Motivo (cancelamento, entrega recusada) e a confirmação de que o documento com foto foi conferido (pedido com bebida alcoólica; migration 0027).
+      const reason = cleanReason(body.reason);
+      if (body.age_checked !== undefined && typeof body.age_checked !== 'boolean') throw new HttpError(400, 'A conferência do documento precisa ser verdadeiro ou falso.');
+      const ageChecked = body.age_checked === true;
+      // As cobranças Pix em aberto são lidas ANTES: o banco as marca como canceladas junto com o pedido, e a operadora também precisa cancelá-las.
+      const open = body.status === 'cancelled' ? await openPixCharges(id) : [];
+      const before = await one<{ order_status: string; age_checked_at: string | null }>('select order_status, age_checked_at from orders where id = $1::uuid', [id]);
+      order = await one<{ order_number: number; order_status: string; age_checked_at: string | null }>('select * from admin_set_order_status($1::uuid, $2, $3::uuid, $4, $5)', [id, body.status, ctx.admin!.id, reason, ageChecked]);
+      if (order && before && before.order_status !== order.order_status) {
+        if (order.order_status === 'cancelled') {
+          await cancelProviderCharges(open);
+          await audit(ctx, { action: 'order.cancel', summary: `Cancelou o pedido #${order.order_number}${reason ? `: ${reason}` : ''}`, entity: 'order', entityId: id });
+        }
+        if (order.order_status === 'delivered' && !before.age_checked_at && order.age_checked_at) {
+          await audit(ctx, { action: 'order.age_check', summary: `Conferiu o documento (18 anos ou mais) e concluiu o pedido #${order.order_number}`, entity: 'order', entityId: id });
+        }
+      }
     }
     if (body.payment_status !== undefined) {
       if (typeof body.payment_status !== 'string' || !PAYMENT_STATUSES.includes(body.payment_status as (typeof PAYMENT_STATUSES)[number])) {

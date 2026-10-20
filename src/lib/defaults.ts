@@ -22,6 +22,10 @@ export const DEFAULT_STORE: StoreSettings = {
   pickup_enabled: true,
   delivery_fee: 5,
   min_order: 0,
+  free_delivery_enabled: false,
+  free_delivery_min: 0,
+  scheduling_enabled: false,
+  exceptions: [],
   delivery_time: '30 a 45 min',
   tracking_retention_days: 180,
 };

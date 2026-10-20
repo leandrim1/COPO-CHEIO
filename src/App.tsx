@@ -29,6 +29,8 @@ import type { Product } from './site/data';
 import { EnergeticSwapProvider } from './site/EnergeticSwap';
 import { IcePickerProvider } from './site/IceChoice';
 import { AccountLink } from './site/AccountLink';
+import { AgeGate } from './site/AgeGate';
+import { AnalyticsConsent } from './site/AnalyticsConsent';
 import { OpenStatus, StoreInfoButton } from './site/StoreInfo';
 import { useIcePicker } from './site/icePicker';
 import {
@@ -278,7 +280,7 @@ function DrinkShowcase({ drinks, onFirstLoaded }: { drinks: { src: string; alt: 
           onPointerLeave={() => setHovered(false)}
           onFocus={(e) => setFocused(e.target.matches(':focus-visible'))}
           onBlur={() => setFocused(false)}
-          className="pointer-events-auto absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 items-center"
+          className="pointer-events-auto absolute left-1/2 top-full z-10 mt-1.5 flex -translate-x-1/2 items-center"
         >
           {drinks.map((drink, i) => {
             const isActive = i === current;
@@ -289,7 +291,7 @@ function DrinkShowcase({ drinks, onFirstLoaded }: { drinks: { src: string; alt: 
                 onClick={() => setActive(i)}
                 aria-label={`Ver bebida ${i + 1} de ${drinks.length}`}
                 aria-current={isActive}
-                className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                className="tap group rounded-full p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
               >
                 <span
                   className={`block h-2 rounded-full transition-all duration-300 ${
@@ -422,7 +424,7 @@ function AddControl({
           onClick={onPick}
           aria-haspopup="dialog"
           aria-label={qty > 0 ? `Adicionar mais ${name} ao pedido (${qty} no pedido)` : `Adicionar ${name} ao pedido`}
-          className={`inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
+          className={`tap inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
             compact ? 'h-10 w-10 shrink-0 gap-1.5 text-[13px] min-[385px]:w-auto min-[385px]:px-3 min-[480px]:gap-2 min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full gap-2 text-sm'
           } ${focusRing}`}
         >
@@ -447,7 +449,7 @@ function AddControl({
         type="button"
         onClick={() => onChange(1)}
         aria-label={`Adicionar ${name} ao pedido`}
-        className={`inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
+        className={`tap inline-flex items-center justify-center rounded-full bg-[#145CFF] font-bold text-white shadow-[0_10px_26px_-10px_rgba(20,92,255,0.9)] transition-all duration-200 hover:bg-[#2563FF] group-hover:shadow-[0_14px_32px_-8px_rgba(37,99,255,0.95)] active:scale-[0.98] ${
           compact ? 'h-10 w-10 shrink-0 gap-1.5 text-[13px] min-[385px]:w-auto min-[385px]:px-3 min-[480px]:gap-2 min-[480px]:px-4 min-[480px]:text-sm' : 'h-11 w-full gap-2 text-sm'
         } ${focusRing}`}
       >
@@ -648,7 +650,7 @@ function BannerCarousel({ banners, className = '' }: { banners: Banner[]; classN
         );
       })}
       {banners.length > 1 && (
-        <div className="absolute bottom-2 right-3 flex items-center">
+        <div className="absolute bottom-[5px] right-[9px] flex items-center">
           {banners.map((banner, i) => (
             <button
               key={banner.id}
@@ -656,7 +658,7 @@ function BannerCarousel({ banners, className = '' }: { banners: Banner[]; classN
               onClick={() => setActive(i)}
               aria-label={`Ver promoção ${i + 1} de ${banners.length}`}
               aria-current={i === current}
-              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="tap group rounded-full p-[9px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               <span
                 className={`block h-1.5 rounded-full transition-all duration-300 ${i === current ? 'w-5 bg-white' : 'w-1.5 bg-white/45 group-hover:bg-white/80'}`}
@@ -828,7 +830,7 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
       {/* Um véu no alto mantém "Início" e "Acompanhar" legíveis até sobre uma imagem toda branca. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/45 to-transparent" />
       {many && (
-        <div className="absolute bottom-2 right-3 flex items-center lg:bottom-4 lg:right-10">
+        <div className="absolute bottom-[5px] right-[9px] flex items-center lg:bottom-[13px] lg:right-[37px]">
           {slides.map((banner, i) => (
             <button
               key={banner.id}
@@ -836,7 +838,7 @@ function CoverBackground({ ready, banners }: { ready: boolean; banners: Banner[]
               onClick={() => setActive(i)}
               aria-label={`Ver destaque ${i + 1} de ${slides.length}`}
               aria-current={i === current}
-              className="group rounded-full p-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              className="tap group rounded-full p-[9px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               <span
                 className={`block h-1.5 rounded-full transition-all duration-300 ${i === current ? 'w-5 bg-white' : 'w-1.5 bg-white/45 group-hover:bg-white/80'}`}
@@ -978,14 +980,14 @@ function BebidasPage() {
           <CoverBackground ready={ready} banners={coverBanners} />
           <a
             href="/"
-            className="absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:left-10 lg:top-6 xl:left-14 2xl:left-20"
+            className="tap absolute left-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:left-10 lg:top-6 xl:left-14 2xl:left-20"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Início
           </a>
           <a
             href="/acompanhar-pedido"
-            className="absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:right-10 lg:top-6 xl:right-14 2xl:right-20"
+            className="tap absolute right-4 top-4 z-10 inline-flex items-center gap-2 rounded-full border border-white/20 bg-black/40 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md transition-colors hover:bg-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white lg:right-10 lg:top-6 xl:right-14 2xl:right-20"
           >
             Acompanhar<span className="max-[420px]:sr-only">&nbsp;pedido</span>
           </a>
@@ -1086,7 +1088,7 @@ function BebidasPage() {
                     type="button"
                     aria-current={current}
                     onClick={() => goTo(name)}
-                    className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
+                    className={`tap shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${
                       current
                         ? 'border-[#145CFF] bg-[#145CFF] text-white shadow-[0_0_22px_-4px_rgba(20,92,255,0.9)]'
                         : 'border-white/15 bg-white/5 text-white/75 hover:border-white/30 hover:bg-white/10 hover:text-white'
@@ -1483,7 +1485,7 @@ function OrderBar({ show, count, total, onOpen, corner = false }: { show: boolea
 }
 
 function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { cart } = useShop();
+  const { cart, store } = useShop();
   const { lines, total, setQty, clear, unavailable, incomplete } = cart;
   const closeRef = useRef<HTMLButtonElement>(null);
   // Tentou finalizar com algum item sem a escolha do gelo: mostra o aviso até a pessoa escolher.
@@ -1580,6 +1582,13 @@ function OrderDrawer({ open, onClose }: { open: boolean; onClose: () => void }) 
                   <Price value={total} className="text-3xl" />
                 </div>
               </div>
+              {store.delivery_enabled && store.free_delivery_enabled && store.free_delivery_min > 0 && (
+                <p data-free-delivery-hint className="rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-3.5 py-2.5 text-sm text-emerald-100">
+                  {total >= store.free_delivery_min
+                    ? 'Entrega grátis neste pedido!'
+                    : `Faltam ${money(store.free_delivery_min - total)} para a entrega grátis (a partir de ${money(store.free_delivery_min)}).`}
+                </p>
+              )}
               {iceNotice && incomplete.length > 0 && (
                 <p id="pedido-gelo-aviso" className="flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-100" role="alert">
                   <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
@@ -1708,7 +1717,7 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
         >
           <a
             href="#inicio"
-            aria-label={`${brand}, página inicial`}
+            aria-label={`${store.store_name.toUpperCase()}${store.tagline ? ` ${store.tagline}` : ''}, página inicial`}
             className="flex items-center gap-2.5 sm:gap-3 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#145CFF] focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           >
             <img
@@ -1722,6 +1731,8 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
               <span className="whitespace-nowrap text-[15px] font-black leading-none tracking-tight text-white sm:text-xl">
                 <BrandName name={store.store_name} />
               </span>
+              {/* O espaço não aparece (os dois textos são itens de uma coluna), mas separa "COPO CHEIO" de "DISK BEBIDAS" para o nome do link bater com o texto visível. */}
+              {store.tagline && ' '}
               {store.tagline && (
                 <span className="mt-1 rounded bg-[#145CFF] px-1.5 py-0.5 text-[8px] font-bold leading-none tracking-[0.22em] text-white sm:text-[9px]">
                   {store.tagline.toUpperCase()}
@@ -1773,6 +1784,8 @@ function Hero({ rootRef }: { rootRef: RefObject<HTMLDivElement | null> }) {
                 : 'cc-cup-box relative aspect-square'
             }
             style={cupBox ? { left: cupBox.left, top: cupBox.top, width: cupBox.size } : undefined}
+            role="region"
+            aria-label="Bebidas em destaque"
           >
             <div
               aria-hidden="true"
@@ -1956,6 +1969,12 @@ function pageOf(pathname: string): Page {
   if (pathname === '/' || pathname === '/index.html') return { name: 'home' };
   if (pathname === '/bebidas') return { name: 'bebidas' };
   if (pathname === '/privacidade') return { name: 'privacidade' };
+  // Termos e políticas (texto editável no painel).
+  if (pathname === '/termos') return { name: 'legal', slug: 'termos' };
+  if (pathname === '/trocas-e-cancelamentos') return { name: 'legal', slug: 'trocas-e-cancelamentos' };
+  if (pathname === '/entrega') return { name: 'legal', slug: 'entrega' };
+  if (pathname === '/pagamento-e-reembolso') return { name: 'legal', slug: 'pagamento-e-reembolso' };
+  if (pathname === '/contato-e-responsavel') return { name: 'legal', slug: 'contato-e-responsavel' };
   if (pathname === '/checkout') return { name: 'checkout' };
   let m = new RegExp(`^/pedido/(${CODE})$`).exec(pathname);
   if (m) return { name: 'pedido', token: m[1] };
@@ -1996,6 +2015,7 @@ const PAGE_TITLE: Record<Page['name'], string> = {
   verificar: 'Confirmar e-mail',
   emails: 'Preferências de e-mail',
   privacidade: 'Política de privacidade',
+  legal: 'Termos e políticas',
   notfound: 'Página não encontrada',
 };
 
@@ -2061,6 +2081,10 @@ function PublicSite({ pathname }: { pathname: string }) {
           {MOTION_STYLES}
           {VIEWPORT_STYLES}
         </style>
+        {/* Venda proibida para menores de 18 anos: a pergunta de maioridade aparece só onde se vê e se compra bebida (/, /bebidas e /checkout). */}
+        <AgeGate page={page.name} />
+        {/* Medição de visitas: só existe se a loja ligou (GA_MEASUREMENT_ID); pergunta uma vez e só mede depois do "Aceitar". */}
+        <AnalyticsConsent page={page.name} pathname={pathname} enabled={page.name !== 'pagar' && page.name !== 'notfound'} />
         {page.name === 'bebidas' && <BebidasPage />}
         {page.name === 'checkout' && (
           <Suspense fallback={<CustomerLoading />}>

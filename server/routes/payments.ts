@@ -15,7 +15,7 @@ import { cardFeeCents, parseMoneyToCents, parsePercentToBps } from '../payments/
 import { linkAccount, listCandidates, refreshProposal, submitProposal, validCnpj, validCpf } from '../payments/merchant.js';
 import type { MerchantRow } from '../payments/merchant.js';
 import { getProvider, providerSummary } from '../payments/provider.js';
-import { cardReadiness, customerPaymentView, handleWebhook, normalizePayment, onlineReadiness, refreshPayment, startCardPayment, startPixPayment, sweep } from '../payments/service.js';
+import { cardReadiness, customerPaymentView, handleWebhook, isRefundReason, normalizePayment, onlineReadiness, reconcileRefunds, refreshPayment, refundAvailable, refundsOfPayment, requestRefund, startCardPayment, startPixPayment, sweep } from '../payments/service.js';
 import { NOT_FOUND, assertNotThrottled, hashToken, missesStatement, normalizeToken, recordMiss, throttled } from '../tracking.js';
 
 const HEADERS = { 'x-robots-tag': 'noindex, nofollow' };
@@ -132,8 +132,29 @@ export async function paymentsOfOrder(orderId: string, owner: boolean): Promise<
     'select p.*, o.order_number from payments p join orders o on o.id = p.order_id where p.order_id = $1::uuid order by p.created_at',
     [orderId],
   );
-  return rows.map((row) => adminRow(row, owner));
+  const out: Row[] = [];
+  for (const row of rows) out.push(owner ? { ...adminRow(row, true), refunds: await refundsOfPayment(String(row.id)), refund_available: refundAvailable(row.provider as string) } : adminRow(row, owner));
+  return out;
 }
+
+// Valor digitado em reais ("12,50" ou 12.5) → centavos. Vazio = null (devolver tudo o que falta). Até R$ 999.999,99.
+function refundAmountCents(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const text = typeof value === 'number' ? String(value) : typeof value === 'string' ? value.trim().replace(/^R\$\s*/i, '') : '';
+  const match = /^(\d{1,6})(?:[.,](\d{1,2}))?$/.exec(text);
+  if (!match) throw new HttpError(400, 'Informe o valor da devolução em reais (ex.: 12,50).');
+  const cents = Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0') || 0);
+  if (cents <= 0) throw new HttpError(400, 'O valor da devolução precisa ser maior que zero.');
+  return cents;
+}
+
+const REASON_LABEL: Record<string, string> = {
+  CUSTOMER_REQUEST: 'pedido do cliente',
+  FRAUD: 'suspeita de fraude',
+  BANK_ERROR: 'erro bancário',
+  PIX_CHANGE_ERROR: 'erro na transação Pix',
+};
+const brl = (cents: number) => `R$ ${(cents / 100).toFixed(2).replace('.', ',')}`;
 
 const mask = (value: unknown): string | null => {
   if (typeof value !== 'string' || !value) return null;
@@ -333,7 +354,52 @@ export function registerPayments(r: Router) {
          from payment_events where payment_id = $1 order by received_at desc limit 50`,
       [id],
     );
-    return json({ payment: adminRow(row, true), events });
+    return json({ payment: { ...adminRow(row, true), refund_available: refundAvailable(row.provider as string) }, events, refunds: await refundsOfPayment(id) });
+  });
+
+  // ---- Devolução (estorno) pelo painel: só o owner. O dinheiro só é dado como devolvido quando a operadora CONFIRMA ----------------------------
+  // Pede à operadora (POST /v1/wallet/refunds) o valor (ou tudo o que falta) de um pagamento confirmado. O servidor trava pedido e pagamento no banco, impede dois
+  // pedidos abertos ao mesmo tempo e, se a resposta da operadora se perder, NÃO repete: o painel manda conferir (refunds/check) antes de qualquer nova tentativa.
+  r.post('/api/admin/payments/:id/refund', 'owner', async (ctx) => {
+    const id = uuidParam(ctx);
+    const body = await readJson(ctx.req, 2 * 1024);
+    if (!isRefundReason(body.reason)) throw new HttpError(400, 'Escolha o motivo da devolução.');
+    const amountCents = refundAmountCents(body.amount);
+    if (body.note !== undefined && body.note !== null && (typeof body.note !== 'string' || body.note.length > 200)) throw new HttpError(400, 'A anotação pode ter até 200 caracteres.');
+    const note = typeof body.note === 'string' ? body.note.replace(/[\u0000-\u001f\u007f]/g, ' ').trim() || null : null;
+    await reserve('refund-request', ctx.admin!.id, 600, 30, 'Muitos pedidos de devolução em pouco tempo. Aguarde alguns minutos.');
+    const exists = await one<Row>('select o.order_number from payments p join orders o on o.id = p.order_id where p.id = $1', [id]);
+    if (!exists) throw new HttpError(404, 'Pagamento não encontrado.');
+    const result = await requestRefund({ paymentId: id, amountCents, reason: body.reason, note, adminId: ctx.admin!.id });
+    await audit(ctx, {
+      action: 'payment.refund_request',
+      summary: `Pediu a devolução de ${brl(result.refund.amount_cents)} do pagamento do pedido #${exists.order_number} (${REASON_LABEL[body.reason]}): ${
+        result.outcome === 'confirmed' ? 'confirmada pela operadora' : result.outcome === 'processing' ? 'aguardando a confirmação da operadora' : result.outcome === 'failed' ? 'falhou' : 'sem resposta da operadora'
+      }`,
+      entity: 'payment',
+      entityId: id,
+      details: { refund_id: result.refund.id, amount_cents: result.refund.amount_cents, reason: body.reason },
+    });
+    const row = await one<Row>('select p.*, o.order_number from payments p join orders o on o.id = p.order_id where p.id = $1', [id]);
+    return json({ payment: adminRow(row!, true), refunds: await refundsOfPayment(id), refund: result.refund, outcome: result.outcome, message: result.message }, result.outcome === 'failed' ? 200 : 201);
+  });
+
+  // "Conferir devolução": pergunta à operadora o que ela tem desta cobrança e põe tudo em dia (confirmada, falhou, ou nunca registrada).
+  r.post('/api/admin/payments/:id/refunds/check', 'owner', async (ctx) => {
+    const id = uuidParam(ctx);
+    const exists = await one<Row>('select o.order_number from payments p join orders o on o.id = p.order_id where p.id = $1', [id]);
+    if (!exists) throw new HttpError(404, 'Pagamento não encontrado.');
+    await reserve('refund-check', ctx.admin!.id, 600, 30, 'Muitas conferências em pouco tempo. Aguarde e tente de novo.');
+    let result;
+    try {
+      result = await reconcileRefunds(id);
+    } catch (error) {
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(503, 'A operadora não respondeu. Tente de novo em instantes.', { code: 'provider_unavailable' });
+    }
+    await audit(ctx, { action: 'payment.refund_check', summary: `Conferiu as devoluções do pagamento do pedido #${exists.order_number} na operadora`, entity: 'payment', entityId: id });
+    const row = await one<Row>('select p.*, o.order_number from payments p join orders o on o.id = p.order_id where p.id = $1', [id]);
+    return json({ payment: adminRow(row!, true), refunds: await refundsOfPayment(id), confirmed_cents: result.confirmedCents, changed: result.changed });
   });
 
   // "Atualizar pagamento": pergunta à operadora como está esta cobrança e aplica a resposta (a mesma regra dos avisos).

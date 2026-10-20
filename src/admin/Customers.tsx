@@ -6,6 +6,7 @@ import { copyText } from '../lib/tracking';
 import type { CustomerRow } from '../lib/types';
 import { useAdmin } from './AdminApp';
 import { PrivacyPanel } from './Privacy';
+import { ExportButton } from './ExportCsv';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, cx, useConfirm, useToast } from './ui';
 
 type ResetLink = { customer: CustomerRow; token: string; expires_at: string; notified: boolean };
@@ -172,6 +173,7 @@ export default function CustomersPage() {
         description={`Contas criadas no site. Criar conta é opcional: quem compra como visitante não aparece aqui. A conta só vale depois que a pessoa confirma o e-mail.${
           user.role === 'owner' ? '' : ' O link de nova senha só pode ser gerado pelo owner.'
         }`}
+        actions={user.role === 'owner' ? <ExportButton kind="customers" /> : undefined}
       />
 
       <MailStatus />

@@ -32,6 +32,10 @@ const productSpec: Spec = {
   swap_base_price: money('Valor do energético que vem no combo', { nullable: true, positive: true }),
   // Quem pede este produto precisa escolher o gelo (normal ou de sabor). Cada produto liga a sua (a categoria não decide mais).
   ice_choice_required: bool('Escolha do gelo'),
+  // Aviso de estoque baixo deste produto (vazio = vale o padrão da loja).
+  low_stock_threshold: int('Aviso de estoque baixo', { min: 0, max: 100000, nullable: true }),
+  // Bebida alcoólica: o pedido com ela exige a declaração de maioridade e a conferência do documento na entrega (migration 0027; nasce verdadeiro).
+  alcoholic: bool('Bebida alcoólica'),
   position: int('Ordem', { max: 100_000 }),
 };
 
@@ -72,6 +76,7 @@ const PRODUCT_LABELS: FieldLabels = {
   swap_base_product_id: { label: 'energético que vem no combo', format: 'changed' },
   swap_base_price: { label: 'valor do energético do combo', format: 'money' },
   ice_choice_required: { label: 'escolha do gelo obrigatória', format: 'bool' },
+  alcoholic: { label: 'bebida alcoólica (exige maioridade)', format: 'bool' },
   position: { label: 'ordem' },
 };
 
@@ -268,8 +273,8 @@ export function registerCatalog(r: Router) {
   // o arquivo só sai do Blob quando nenhum produto o usa mais.
   r.post('/api/admin/products/:id/duplicate', 'admin', async (ctx) => {
     const product = await one<{ id: string; name: string }>(
-      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required)
-       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required
+      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic)
+       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic
          from products where id = $1
        returning *`,
       [uuidParam(ctx)],

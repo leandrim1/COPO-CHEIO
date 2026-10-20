@@ -20,6 +20,12 @@ export class Client {
   async req(method, path, body, { headers = {}, raw = false } = {}) {
     const h = { 'x-real-ip': this.ip, ...headers };
     if (this.cookie) h.cookie = this.cookie;
+    // Pedido de bebida alcoólica exige a declaração de maioridade (migration 0027). Os testes que não tratam disso declaram por padrão, como o checkout
+    // faz depois de a pessoa marcar a caixa; quem quer testar a recusa envia a chave `age_confirmed` explicitamente (mesmo com valor falso ou undefined).
+    if (method === 'POST' && path === '/api/orders' && !raw && body && typeof body === 'object' && !Array.isArray(body) && !('age_confirmed' in body)) body = { ...body, age_confirmed: true };
+    // Pedido com bebida alcoólica só vira "entregue" com a conferência do documento (migration 0027). Os testes que não tratam disso conferem por padrão, como o
+    // painel faz depois do clique em "Conferi: 18 anos ou mais"; quem quer testar a recusa envia a chave `age_checked` explicitamente (mesmo com valor falso ou undefined).
+    if (method === 'PATCH' && /^\/api\/admin\/orders\/[^/?]+$/.test(path) && !raw && body && typeof body === 'object' && !Array.isArray(body) && body.status === 'delivered' && !('age_checked' in body)) body = { ...body, age_checked: true };
     let payload;
     if (body !== undefined && !raw) {
       h['content-type'] = 'application/json';

@@ -94,6 +94,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   const beer2 = await mk('Brahma Lata 350ml', 5, catBeer);
   ok(!!m1?.id && !!c1?.id && !!c2?.id && !!beer?.id, 'dados de teste criados (3 categorias, 6 produtos)');
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   for (const [label, vp] of [['celular 390', { width: 390, height: 844 }], ['computador 1280', { width: 1280, height: 800 }]]) {
     console.log(`# ${label}: adicionar, escolher, trocar`);

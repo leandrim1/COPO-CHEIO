@@ -1,5 +1,5 @@
 import { GlassWater, Info, Minus, Plus, X } from 'lucide-react';
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { comboNote } from '../lib/combo';
 import { DEFAULT_LOGO } from '../lib/defaults';
 import { money } from '../lib/format';
@@ -23,6 +23,14 @@ export const NAV_LINKS = ['Início', 'Bebidas', 'Contato'];
 export const CUSTOMER_LINKS = [
   { label: 'Acompanhar pedido', href: '/acompanhar-pedido' },
   { label: 'Minha conta', href: '/conta' },
+];
+// Termos e políticas (rodapé). O texto de cada página é da loja e se edita no painel.
+export const LEGAL_LINKS = [
+  { label: 'Termos de uso', href: '/termos' },
+  { label: 'Cancelamento e trocas', href: '/trocas-e-cancelamentos' },
+  { label: 'Entrega e retirada', href: '/entrega' },
+  { label: 'Pagamento e reembolso', href: '/pagamento-e-reembolso' },
+  { label: 'Contato e responsável', href: '/contato-e-responsavel' },
 ];
 export const NAV_HREF: Record<string, string> = { Início: '/', Bebidas: '/bebidas', Contato: '/#contato' };
 
@@ -199,12 +207,12 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
         </a>
         <nav aria-label="Rodapé" className="flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm font-medium text-white/65 md:justify-end">
           {NAV_LINKS.map((link) => (
-            <a key={link} href={NAV_HREF[link]} className="-my-1 inline-block py-1 transition-colors hover:text-white">
+            <a key={link} href={NAV_HREF[link]} className="tap -my-1 inline-block py-1 transition-colors hover:text-white">
               {link}
             </a>
           ))}
           {CUSTOMER_LINKS.map((link) => (
-            <a key={link.href} href={link.href} className="-my-1 inline-block py-1 transition-colors hover:text-white">
+            <a key={link.href} href={link.href} className="tap -my-1 inline-block py-1 transition-colors hover:text-white">
               {link.label}
             </a>
           ))}
@@ -214,7 +222,7 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`Instagram @${handle}`}
-              className="grid h-9 w-9 place-items-center rounded-full border border-white/15 text-white/75 transition-all hover:border-white/40 hover:text-white"
+              className="tap grid h-9 w-9 place-items-center rounded-full border border-white/15 text-white/75 transition-all hover:border-white/40 hover:text-white"
             >
               <InstagramIcon className="h-4 w-4" />
             </a>
@@ -227,6 +235,14 @@ export function Footer({ wide = false }: { wide?: boolean } = {}) {
         <a href="/privacidade" className="underline-offset-4 transition-colors hover:text-white hover:underline">
           Política de privacidade
         </a>
+        {LEGAL_LINKS.map((link) => (
+          <Fragment key={link.href}>
+            <span aria-hidden="true"> · </span>
+            <a href={link.href} className="underline-offset-4 transition-colors hover:text-white hover:underline">
+              {link.label}
+            </a>
+          </Fragment>
+        ))}
       </p>
     </footer>
   );
@@ -269,7 +285,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
             type="button"
             onClick={() => setQty(key, product.soldOut ? 0 : qty - 1)}
             aria-label={qty === 1 || product.soldOut ? `Remover ${name}` : `Diminuir ${name}`}
-            className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="tap grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
           >
             {product.soldOut ? <X className="h-4 w-4" aria-hidden="true" /> : <Minus className="h-4 w-4" aria-hidden="true" />}
           </button>
@@ -281,7 +297,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
             onClick={() => setQty(key, qty + 1)}
             disabled={product.soldOut}
             aria-label={`Aumentar ${name}`}
-            className="grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30"
+            className="tap grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
           </button>

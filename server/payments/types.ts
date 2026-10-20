@@ -94,6 +94,30 @@ export type CancelResult = {
   reason?: 'not_cancelable' | 'not_found';
 };
 
+// Devolução (estorno) de um pagamento já confirmado. A loja só considera o dinheiro devolvido quando a operadora CONFIRMA (`confirmed`).
+//  • processing: a operadora recebeu o pedido e está devolvendo (o Pix costuma ficar assim até o banco concluir)
+//  • confirmed: o valor foi devolvido ao pagador · failed: a devolução foi recusada ou falhou
+export type RefundStatus = 'processing' | 'confirmed' | 'failed';
+export type RefundReason = 'CUSTOMER_REQUEST' | 'FRAUD' | 'BANK_ERROR' | 'PIX_CHANGE_ERROR';
+
+export type RefundItem = {
+  providerRefundId: string;
+  status: RefundStatus;
+  amountCents: number;
+  // Quando a operadora criou a devolução (serve para reconhecer um pedido nosso cuja resposta se perdeu).
+  createdAt: Date | null;
+  // O que a operadora diz do motivo da falha, em texto curto (nunca dados do pagador).
+  error?: string | null;
+};
+
+export type CreateRefundInput = {
+  // A cobrança paga a devolver, na operadora, e como foi paga (o Pix e o cartão têm contratos diferentes).
+  providerChargeId: string;
+  method: 'pix' | 'card';
+  amountCents: number;
+  reason: RefundReason;
+};
+
 // O que um aviso diz sobre a conta (subconta) do estabelecimento.
 export type MerchantObservation = {
   formId: string | null;
@@ -173,6 +197,11 @@ export interface PaymentProvider {
   getCharge(providerChargeId: string, ctx?: ProviderContext): Promise<ChargeSnapshot>;
   // Cancela uma cobrança em aberto na operadora (o QR Code deixa de aceitar pagamento). Sem isto, o Pix vence só quando a operadora quiser.
   cancelCharge?(providerChargeId: string, ctx?: ProviderContext): Promise<CancelResult>;
+  // Devolve (total ou parcialmente) um pagamento já confirmado. Sem isto, a devolução é feita no painel da operadora e o servidor só a observa.
+  // Erro 'rejected' = a operadora recusou o pedido (nada foi devolvido); 'unavailable' = sem resposta: PODE ter sido criada (ambíguo, conferir com listRefunds).
+  createRefund?(input: CreateRefundInput, ctx?: ProviderContext): Promise<RefundItem>;
+  // As devoluções de uma cobrança, como a operadora as informa (a fonte da verdade do estado delas).
+  listRefunds?(providerChargeId: string, ctx?: ProviderContext): Promise<RefundItem[]>;
   // Confere a autenticidade do aviso (assinatura) e o traduz. Lança um erro 'invalid_webhook' se não for autêntico.
   verifyWebhook(rawBody: Uint8Array, headers: Headers): Promise<WebhookEvent[]>;
   readonly merchant?: MerchantProvider;

@@ -185,8 +185,34 @@ function resolveRoute(req, url) {
   return { kind: 'none', headers };
 }
 
+// ViaCEP FALSO (só nos testes): a rota /api/cep do site consulta CEP_API_URL; aqui ele aponta para este mesmo servidor. Modo: ok | down | badjson | hang.
+const viacepFake = { mode: 'ok', calls: 0 };
+process.env.CEP_API_URL ??= `http://127.0.0.1:${PORT}/__viacep/ws`;
+const VIACEP = {
+  '38400000': { cep: '38400-000', logradouro: 'Avenida Teste', bairro: 'Centro', localidade: 'Uberlândia', uf: 'MG' },
+  '38400111': { cep: '38400-111', logradouro: 'Rua das Palmeiras', bairro: 'São Sebastião', localidade: 'Uberlândia', uf: 'MG' },
+  '38400222': { cep: '38400-222', logradouro: '=1+1 Rua Maliciosa', bairro: 'Bairro Longe', localidade: 'Uberlândia', uf: 'MG' },
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname.startsWith('/__viacep/')) {
+    const send = (code, data) => res.writeHead(code, { 'content-type': 'application/json' }).end(typeof data === 'string' ? data : JSON.stringify(data));
+    if (url.pathname === '/__viacep/mode' && req.method === 'POST') {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      viacepFake.mode = JSON.parse(Buffer.concat(chunks).toString() || '{}').mode ?? 'ok';
+      return send(200, { mode: viacepFake.mode });
+    }
+    if (url.pathname === '/__viacep/calls') return send(200, { calls: viacepFake.calls });
+    viacepFake.calls++;
+    if (viacepFake.mode === 'down') return send(503, { erro: 'indisponível' });
+    if (viacepFake.mode === 'badjson') return send(200, '<html>nada</html>');
+    if (viacepFake.mode === 'hang') return;
+    const cep = url.pathname.split('/')[3] ?? '';
+    if (!/^\d{8}$/.test(cep)) return send(400, '');
+    return send(200, VIACEP[cep] ?? { erro: 'true' });
+  }
   // Só para os testes: ler os e-mails "enviados" e simular falhas do servidor de e-mail.
   if (url.pathname === '/__mail' && sink) {
     if (req.method === 'DELETE') {

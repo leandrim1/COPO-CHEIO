@@ -21,10 +21,26 @@ export type StoreSettings = {
   pickup_enabled: boolean;
   delivery_fee: number;
   min_order: number;
+  // Frete grátis na entrega a partir de um subtotal (já com o desconto do cupom). Desligado por padrão.
+  free_delivery_enabled: boolean;
+  free_delivery_min: number;
+  // Agendamento de pedidos ligado? (as faixas de horário vêm de GET /api/schedule)
+  scheduling_enabled: boolean;
+  // Só o painel recebe estes (antecedência mínima, dias à frente, tamanho da faixa e pedidos por faixa).
+  schedule_lead_minutes?: number;
+  schedule_max_days?: number;
+  schedule_slot_minutes?: number;
+  schedule_slot_capacity?: number | null;
+  // Estoque baixo: até quantas unidades o produto aparece como "baixo" (cada produto pode ter o seu).
+  low_stock_default?: number;
+  // Dias especiais (feriado fechado ou horário especial) dos próximos dias, para o site saber se está aberto.
+  exceptions: StoreException[];
   delivery_time: string | null;
   tracking_retention_days: number;
   updated_at?: string;
 };
+
+export type StoreException = { day: string; kind: 'closed' | 'custom'; start_time: string | null; end_time: string | null; reason?: string | null };
 
 export type SiteSettings = {
   logo_url: string | null;
@@ -85,6 +101,8 @@ export type ProductRecord = {
   active: boolean;
   sold_out: boolean;
   position: number;
+  // Aviso de estoque baixo deste produto (vazio = vale o padrão da loja).
+  low_stock_threshold?: number | null;
   // Janela da promoção (vazio = sem limite de data).
   promo_starts_at?: string | null;
   promo_ends_at?: string | null;
@@ -96,6 +114,8 @@ export type ProductRecord = {
   swap_option_ids?: string[];
   // Quem pede este produto precisa escolher o gelo (gelo normal ou de sabor). Cada produto liga a sua no painel; a categoria não decide.
   ice_choice_required?: boolean;
+  // Bebida alcoólica (migration 0027): o pedido com ela exige a declaração de maioridade e a conferência do documento na entrega. Ausente = sim.
+  alcoholic?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -160,6 +180,21 @@ export type Order = {
   change_for: number | null;
   payment_status: PaymentStatus;
   order_status: OrderStatus;
+  // Maioridade (migration 0027): o pedido tem bebida alcoólica (o documento com foto é conferido na entrega); quando o cliente declarou ter 18 anos ou
+  // mais e qual versão do texto viu; quem conferiu o documento e quando (só o fato da conferência: nenhum dado do documento é guardado).
+  age_required?: boolean;
+  age_declared_at?: string | null;
+  age_declaration_version?: string | null;
+  // Cupom do pedido (código gravado no pedido) e a taxa de entrega que deixou de ser cobrada.
+  coupon_code?: string | null;
+  delivery_fee_waived?: number | string | null;
+  // Pedido agendado: o início da faixa escolhida pelo cliente (vazio = o quanto antes).
+  scheduled_for?: string | null;
+  // Entregador do pedido (nome gravado no pedido) e o id dele.
+  courier_id?: string | null;
+  courier_name?: string | null;
+  age_checked_at?: string | null;
+  age_checked_by_name?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -182,6 +217,8 @@ export type StatusChange = {
   from_status: OrderStatus | null;
   to_status: OrderStatus;
   changed_by_name: string | null;
+  // Motivo da mudança (cancelamento pelo cliente ou entrega recusada), quando há.
+  reason?: string | null;
   created_at: string;
 };
 
@@ -257,6 +294,12 @@ export type PublicOrder = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
+  // Cupom usado no pedido (código) e a taxa de entrega que deixou de ser cobrada (cupom de entrega grátis ou frete grátis por valor). Só vêm quando existem.
+  coupon_code?: string;
+  delivery_fee_waived?: number;
+  scheduled_for?: string;
+  // Entregador (só o primeiro nome, só enquanto o pedido está a caminho).
+  courier_name?: string;
   // Taxa paga pelo cliente no pagamento pelo site (processamento do cartão ou taxa de serviço do Pix; 0 nas outras formas); já está dentro do total.
   payment_fee: number;
   total: number;
@@ -264,6 +307,11 @@ export type PublicOrder = {
   updated_at: string;
   // Já está na conta de algum cliente?
   linked: boolean;
+  // Pedido com bebida alcoólica: o documento com foto será conferido na entrega ou na retirada (migration 0027).
+  age_check_required?: boolean;
+  // O cliente pode cancelar agora? `why` (quando não pode): cancelled · final (já entregue) · in_progress (a loja já confirmou: só ela cancela) ·
+  // paid (há pagamento recebido: a devolução é combinada com a loja) · payment_processing (um pagamento está sendo processado).
+  cancel?: { allowed: boolean; why: 'cancelled' | 'final' | 'in_progress' | 'paid' | 'payment_processing' | null };
   // Por quantos dias, depois da última atualização, o link continua valendo.
   retention_days: number;
   // product_id só vem para o dono da conta (para "pedir de novo").
@@ -305,6 +353,46 @@ export type CustomerPayment = {
 // Painel: uma cobrança. Todo administrador vê a situação; só o owner recebe comissão, tarifas e códigos da operadora (os campos opcionais).
 // calculated: só calculada · confirmed: a operadora confirmou o repasse · failed: o repasse falhou · not_applicable: sem divisão
 export type CommissionState = 'calculated' | 'confirmed' | 'failed' | 'not_applicable';
+export type Courier = { id: string; name: string; phone: string | null; active: boolean; on_route?: number };
+export type ReviewRow = { id: string; rating: number; comment: string | null; status: 'pending' | 'published' | 'hidden'; created_at: string; moderated_at: string | null; order_number: number; customer_name: string };
+
+// Cupom de desconto (painel, só o owner). `used` = pedidos que usaram o cupom e não foram cancelados.
+export type CouponKind = 'percent' | 'fixed' | 'free_delivery';
+export type Coupon = {
+  id: string;
+  code: string;
+  description: string | null;
+  kind: CouponKind;
+  value: number | string;
+  max_discount: number | string | null;
+  min_order: number | string;
+  starts_at: string | null;
+  ends_at: string | null;
+  usage_limit: number | null;
+  per_customer_limit: number | null;
+  excludes_promo: boolean;
+  active: boolean;
+  created_at: string;
+  used: number;
+  category_ids: string[];
+};
+
+// Devolução (estorno) pedida pelo painel. "confirmed" só quando a operadora confirmou que o valor voltou ao pagador.
+export type RefundReason = 'CUSTOMER_REQUEST' | 'FRAUD' | 'BANK_ERROR' | 'PIX_CHANGE_ERROR';
+export type RefundState = 'requested' | 'processing' | 'confirmed' | 'failed';
+export type RefundRow = {
+  id: string;
+  payment_id: string;
+  amount_cents: number;
+  reason: RefundReason;
+  status: RefundState;
+  provider_refund_id?: string | null;
+  requested_by_name: string | null;
+  note: string | null;
+  last_error: string | null;
+  requested_at: string;
+  confirmed_at: string | null;
+};
 export type AdminPayment = {
   id: string;
   order_id: string;
@@ -328,6 +416,10 @@ export type AdminPayment = {
   fee_cents?: number | null;
   net_cents?: number | null;
   refunded_cents?: number;
+  // Só para o owner: pedidos de devolução feitos pelo painel (do mais antigo ao mais novo).
+  refunds?: RefundRow[];
+  // A devolução pelo painel está ligada no servidor (VALIDAPAY_REFUNDS=on) e a operadora é a deste pagamento.
+  refund_available?: boolean;
   // Cartão: a taxa que o cliente pagou (já dentro de amount_cents) e quantas vezes a tentativa foi enviada à operadora.
   customer_fee_cents?: number;
   card_attempts?: number;

@@ -9,9 +9,10 @@ import { adminResetLinkNoticeMessage, alreadyRegisteredMessage, newAdminLoginMes
 import { hashToken, trackingTokenFromKey } from '../tracking.js';
 import { describeAlert } from './alertText.js';
 import { isKind } from './kinds.js';
+import { isEmptyState, readOpsState } from '../opsState.js';
 import type { KindName } from './kinds.js';
 import { ensurePreferences, preferenceToken } from './preferences.js';
-import { alertMessage, campaignMessage, orderMessage } from './templates.js';
+import { alertMessage, campaignMessage, opsAlertMessage, orderMessage } from './templates.js';
 import type { OrderKind } from './templates.js';
 
 export type RenderInput = { kind: string; to: string | null; spec: Record<string, unknown> | null };
@@ -142,6 +143,22 @@ async function renderAlert(to: string, spec: Record<string, unknown>, brand: Bra
   });
 }
 
+// Estoque baixo/esgotado e rotina automática: o conteúdo é lido AGORA (na hora de enviar, inclusive numa nova tentativa); se tudo já voltou ao normal, não há o que avisar.
+async function renderOps(to: string, spec: Record<string, unknown>, brand: Brand): Promise<Message | null> {
+  const state = await readOpsState();
+  if (isEmptyState(state)) return null;
+  const when = (iso: string) => new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(iso));
+  return opsAlertMessage(brand, {
+    to,
+    name: text(spec.name),
+    low: state.low,
+    out: state.out,
+    job: state.job ? { problem: state.job.problem, lastRun: when(state.job.lastRunAt), detail: state.job.detail } : null,
+    stockUrl: `${brand.siteUrl}/admin/estoque`,
+    systemUrl: `${brand.siteUrl}/admin/configuracoes`,
+  });
+}
+
 // Devolve a mensagem pronta, ou null quando não há mais o que enviar (destinatário esquecido, pedido apagado, etapa que já passou...): a
 // mensagem é cancelada.
 export async function renderMessage(input: RenderInput, req: Request): Promise<Message | null> {
@@ -171,6 +188,8 @@ export async function renderMessage(input: RenderInput, req: Request): Promise<M
       return renderCampaign(kind, input.to, spec, brand);
     case 'deliverability_alert':
       return renderAlert(input.to, spec, brand);
+    case 'ops_alert':
+      return renderOps(input.to, spec, brand);
     default:
       // verification, password_reset e mail_test têm segredo ou são montados por quem chama: nada a refazer aqui.
       return null;

@@ -2,6 +2,8 @@ import { AccountPage, MyOrderPage, MyOrdersPage, RecoverPage, ResetPage, VerifyL
 import { CardPaymentPage } from './CardPayment';
 import { EmailPreferencesPage } from './EmailPreferences';
 import { NotFoundPage, PrivacyPage } from './Privacy';
+import { LegalPage } from './LegalPage';
+import type { LegalSlug } from './LegalPage';
 import { LookupPage, TrackingPage } from './Tracking';
 
 // Páginas do cliente (acompanhamento e conta). Ficam num pacote à parte: a página inicial não carrega nada disso.
@@ -17,6 +19,7 @@ export type CustomerPage =
   | { name: 'verificar'; token: string }
   | { name: 'emails'; token: string }
   | { name: 'privacidade' }
+  | { name: 'legal'; slug: LegalSlug }
   | { name: 'notfound' };
 
 export default function CustomerPages({ page }: { page: CustomerPage }) {
@@ -44,6 +47,8 @@ export default function CustomerPages({ page }: { page: CustomerPage }) {
       return <EmailPreferencesPage key={page.token} token={page.token} />;
     case 'privacidade':
       return <PrivacyPage />;
+    case 'legal':
+      return <LegalPage key={page.slug} slug={page.slug} />;
     case 'notfound':
       return <NotFoundPage />;
   }

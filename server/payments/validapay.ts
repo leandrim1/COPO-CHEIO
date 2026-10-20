@@ -43,6 +43,7 @@ import type {
   ChargeStatus,
   CreateCardInput,
   CreatePixInput,
+  CreateRefundInput,
   CreatedPix,
   MerchantObservation,
   MerchantProvider,
@@ -51,6 +52,8 @@ import type {
   ProposalState,
   ProviderAccount,
   ProviderContext,
+  RefundItem,
+  RefundStatus,
   WebhookEvent,
 } from './types.js';
 
@@ -74,6 +77,9 @@ export type ValidaPayConfig = {
   // Cartão: identificador PÚBLICO da conta em que o cartão é cobrado, a SUBCONTA do estabelecimento (painel → Gerenciamento → Minha Conta → Id Público;
   // não é segredo), que o SDK do navegador usa. Sem o publicId o cartão online não existe.
   publicId?: string | null;
+  // Devolução (estorno) pela API: DESLIGADA por padrão. O escopo que ela exige (wallet/write) é o mesmo que a ValidaPay usa para SAQUE e para simular pagamento,
+  // então só se liga de propósito (VALIDAPAY_REFUNDS=on), com uma credencial que o dono criou sabendo disso. Desligada, a loja nunca pede esse escopo.
+  refundsEnabled?: boolean;
   // Só os testes trocam estes quatro: nunca vêm do ambiente de produção.
   apiUrl?: string;
   authUrl?: string;
@@ -440,6 +446,65 @@ export function createValidaPayProvider(config: ValidaPayConfig): PaymentProvide
     throw failure(reply, 'cancelamento da cobrança');
   }
 
+  // ---- Devoluções (POST e GET /v1/wallet/refunds) ----
+  // Contrato (documentação oficial, consultada pelo servidor MCP da ValidaPay):
+  //  • Pix: { chargeId, amount (em reais), reason } com reason em CUSTOMER_REQUEST | FRAUD | BANK_ERROR | PIX_CHANGE_ERROR (obrigatório). 201 com status
+  //    "PROCESSING" na maioria dos casos: a devolução só vale quando o status vira CONFIRMED (consulta ou aviso refund.confirmed).
+  //    O guia de webhooks cita o corpo { endToEndId, reason }, mas a validação do esquema da rota (validate_request) recusa esse corpo: vale o da rota.
+  //  • Cartão: { chargeId, amount, accountId (subconta, opcional), reason (opcional) }; pode voltar já "CONFIRMED" com success true.
+  //  • Erros documentados: 400 REFUND_AMOUNT_EXCEEDED, 400 CHARGE_WITHOUT_END_TO_END_ID, 404 CHARGE_NOT_FOUND. Não há chave de idempotência documentada:
+  //    quem chama impede o pedido em dobro (um pedido em aberto por pagamento) e, se a resposta se perder, confere com listRefunds antes de pedir de novo.
+  //  • NÃO CONFIRMADO: o Pix de uma subconta exige o cabeçalho X-Sub-Account no POST? Aqui vai o cabeçalho (como na consulta e no cancelamento) e, se a ValidaPay
+  //    disser que não conhece a cobrança, tenta sem ele. Também não está confirmado que a credencial da loja tem o escopo wallet/write: sem ele a ValidaPay recusa.
+  function refundItem(raw: unknown): RefundItem | null {
+    if (!isObject(raw)) return null;
+    const id = text(raw.refundId, 120);
+    if (!id || !/^[A-Za-z0-9_-]{3,120}$/.test(id)) return null;
+    const amountCents = toCents(raw.amount);
+    if (amountCents === null || amountCents <= 0) return null;
+    const rawStatus = text(raw.status, 20)?.toUpperCase() ?? '';
+    // Só CONFIRMED (ou success true) conta como devolvido. ERROR/FAILED: falhou. Qualquer outro (PROCESSING, desconhecido): continua aguardando, nunca "devolvido".
+    const status: RefundStatus = rawStatus === 'CONFIRMED' || raw.success === true ? 'confirmed' : rawStatus === 'ERROR' || rawStatus === 'FAILED' ? 'failed' : 'processing';
+    return { providerRefundId: id, status, amountCents, createdAt: toDate(raw.createdAt), error: status === 'failed' ? text(raw.error, 200) : null };
+  }
+
+  async function listRefunds(chargeId: string, ctx?: ProviderContext): Promise<RefundItem[]> {
+    if (!CHARGE_ID.test(chargeId)) throw new ProviderError('rejected', 'código de cobrança inválido', 'CHARGE_ID');
+    const sub = ctx?.merchantAccountId ?? null;
+    const query: Record<string, string> = { chargeId };
+    if (sub) query.accountId = sub;
+    const reply = await send({ method: 'GET', path: '/v1/wallet/refunds', scope: 'wallet/read', query });
+    if (reply.status !== 200 || !isObject(reply.data) || !Array.isArray(reply.data.items)) throw failure(reply, 'consulta das devoluções');
+    const out: RefundItem[] = [];
+    for (const raw of reply.data.items) {
+      // A lista é desta cobrança: item de outra cobrança nunca entra.
+      if (isObject(raw) && raw.chargeId !== undefined && !sameCharge(raw.chargeId, chargeId)) continue;
+      const item = refundItem(raw);
+      if (item) out.push(item);
+    }
+    return out;
+  }
+
+  async function createRefund(input: CreateRefundInput, ctx?: ProviderContext): Promise<RefundItem> {
+    if (!CHARGE_ID.test(input.providerChargeId)) throw new ProviderError('rejected', 'código de cobrança inválido', 'CHARGE_ID');
+    if (!Number.isSafeInteger(input.amountCents) || input.amountCents <= 0) throw new ProviderError('rejected', 'valor inválido', 'AMOUNT');
+    if (!['CUSTOMER_REQUEST', 'FRAUD', 'BANK_ERROR', 'PIX_CHANGE_ERROR'].includes(input.reason)) throw new ProviderError('rejected', 'motivo inválido', 'REASON');
+    const sub = ctx?.merchantAccountId ?? null;
+    const body: Record<string, unknown> = { chargeId: input.providerChargeId, amount: reais(input.amountCents), reason: input.reason };
+    if (input.method === 'card' && sub) body.accountId = sub;
+    const path = '/v1/wallet/refunds';
+    let reply = await send({ method: 'POST', path, scope: 'wallet/write', body, subAccount: input.method === 'pix' ? sub : null });
+    if (reply.status === 404 && sub && input.method === 'pix') reply = await send({ method: 'POST', path, scope: 'wallet/write', body });
+    if (reply.status !== 201 && reply.status !== 200) throw failure(reply, 'devolução');
+    const item = refundItem(reply.data);
+    // A ValidaPay aceitou (2xx) mas a resposta não diz o que foi criado, ou diz outra cobrança/outro valor: a devolução PODE existir. Ambíguo: quem chama
+    // confere com listRefunds antes de qualquer nova tentativa.
+    if (!item || !isObject(reply.data) || !sameCharge(reply.data.chargeId, input.providerChargeId) || item.amountCents !== input.amountCents) {
+      throw new ProviderError('unavailable', 'resposta da devolução incompleta ou diferente do pedido', 'BAD_RESPONSE', reply.status);
+    }
+    return item;
+  }
+
   // ---- Avisos (webhooks) ----
   const MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -595,6 +660,8 @@ export function createValidaPayProvider(config: ValidaPayConfig): PaymentProvide
     ...(cardCheckout ? { createCardCharge, cardCheckout } : {}),
     getCharge,
     cancelCharge,
+    ...(config.refundsEnabled ? { createRefund } : {}),
+    listRefunds,
     verifyWebhook,
     merchant,
   };
@@ -630,6 +697,7 @@ export function validaPayFromEnv(env: Record<string, string | undefined>): Valid
     webhookSecret: value('VALIDAPAY_WEBHOOK_SECRET'),
     webhookToken: value('VALIDAPAY_WEBHOOK_TOKEN') || null,
     publicId: value('VALIDAPAY_PUBLIC_ID') || null,
+    refundsEnabled: value('VALIDAPAY_REFUNDS').toLowerCase() === 'on',
   });
   return { provider, environment, missing: [], note: null };
 }

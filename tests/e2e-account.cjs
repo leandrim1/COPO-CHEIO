@@ -66,6 +66,7 @@ const { finishAdminLogin } = require('./e2e-code.cjs');
   const fake = await startFakeValidaPay();
   const startServer = (env = {}) => serve({ PAYMENTS_SIM: 'validapay', FAKE_VALIDAPAY_URL: fake.url, FAKE_VALIDAPAY_WEBHOOK_SECRET: FAKE.webhookSecret, FAKE_VALIDAPAY_TIMEOUT_MS: '2500', ...env });
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // ---- 1. Sem as variáveis: só os NOMES do que falta ---------------------------------------------------------------------------------
   console.log('# 1. Operadora não conectada: a página diz exatamente o que falta (só nomes)');

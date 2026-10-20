@@ -25,6 +25,11 @@ export function describePath(path: string): PageInfo {
   if (path === '/') return { known: true, indexable: true, title: '' };
   if (path === '/bebidas') return { known: true, indexable: true, title: 'Bebidas' };
   if (path === '/privacidade') return { known: true, indexable: true, title: 'Política de privacidade' };
+  if (path === '/termos') return { known: true, indexable: true, title: 'Termos de uso' };
+  if (path === '/trocas-e-cancelamentos') return { known: true, indexable: true, title: 'Cancelamento e trocas' };
+  if (path === '/entrega') return { known: true, indexable: true, title: 'Entrega e retirada' };
+  if (path === '/pagamento-e-reembolso') return { known: true, indexable: true, title: 'Pagamento e reembolso' };
+  if (path === '/contato-e-responsavel') return { known: true, indexable: true, title: 'Contato e responsável' };
   if (path === '/checkout') return { known: true, indexable: false, title: 'Finalizar pedido' };
   if (new RegExp(`^/pedido/${token}$`).test(path)) return { known: true, indexable: false, title: 'Seu pedido' };
   if (new RegExp(`^/pagar/${token}$`).test(path)) return { known: true, indexable: false, title: 'Pagamento do pedido' };
@@ -34,6 +39,16 @@ export function describePath(path: string): PageInfo {
   if (path === '/admin' || path.startsWith('/admin/')) return { known: true, indexable: false, title: 'Painel' };
   return { known: false, indexable: false, title: 'Página não encontrada' };
 }
+
+// Páginas que entram no sitemap.xml: as públicas e estáveis (as mesmas marcadas como indexáveis em describePath).
+const SITEMAP_PATHS = ['/', '/bebidas', '/privacidade', '/termos', '/trocas-e-cancelamentos', '/entrega', '/pagamento-e-reembolso', '/contato-e-responsavel'];
+const ROBOTS = `User-agent: *
+Disallow: /api/
+Disallow: /pedido/
+Disallow: /pagar/
+Disallow: /acompanhar-pedido/
+Disallow: /conta
+`;
 
 // Só caminhos de página, sem nada estranho (o valor vem da reescrita do vercel.json, mas quem chama /api/__page direto também chega aqui).
 function cleanPath(raw: string | null): string {
@@ -165,6 +180,31 @@ export function registerSeo(r: Router) {
         ...(info.indexable ? {} : { 'x-robots-tag': 'noindex, nofollow' }),
       },
     });
+  });
+
+  // Mapa do site para o Google: só as páginas públicas e estáveis (o cardápio é uma página só; cada produto não tem endereço próprio). Pedido, conta,
+  // checkout, pagamento e painel ficam de fora de propósito. Sem o endereço do site (SITE_URL) não há como montar endereços completos: 404.
+  r.get('/api/sitemap.xml', 'public', async (ctx) => {
+    let base: string;
+    try {
+      base = siteUrl(ctx.req);
+    } catch {
+      return new Response('Falta definir o endereço do site (SITE_URL).', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+    }
+    const pages = SITEMAP_PATHS.map((path) => `  <url><loc>${esc(`${base}${path === '/' ? '/' : path}`)}</loc></url>`).join('\n');
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${pages}\n</urlset>\n`;
+    return new Response(xml, { status: 200, headers: { 'content-type': 'application/xml; charset=utf-8', 'cache-control': 'public, max-age=0, s-maxage=3600, stale-while-revalidate=86400' } });
+  });
+
+  // robots.txt: o mesmo bloqueio de sempre (veja README) mais o endereço do mapa do site, que precisa ser completo (por isso é montado aqui).
+  r.get('/api/robots.txt', 'public', async (ctx) => {
+    let sitemap = '';
+    try {
+      sitemap = `\nSitemap: ${siteUrl(ctx.req)}/sitemap.xml\n`;
+    } catch {
+      /* sem o endereço do site, só os bloqueios */
+    }
+    return new Response(`${ROBOTS}${sitemap}`, { status: 200, headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=0, s-maxage=3600, stale-while-revalidate=86400' } });
   });
 
   // Relatório de bloqueio da política de segurança (o navegador manda sozinho). Vai só para o log do servidor.

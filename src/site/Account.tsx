@@ -2,6 +2,7 @@ import { Check, ChevronDown, LoaderCircle, LogOut, Mail, RefreshCw, ShoppingBag,
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
+import { fetchCep, maskCep } from '../lib/cep';
 import { swapStillValid } from '../lib/combo';
 import { maskPhone, onlyDigits } from '../lib/format';
 import { isIceChoice } from '../lib/ice';
@@ -10,6 +11,7 @@ import { normalizeCode } from '../lib/tracking';
 import type { AccountOrderSummary, CustomerAccount, PublicOrder, VerificationInfo } from '../lib/types';
 import { ANY_PROVIDER_HINT, EMAIL_INPUT, EmailSuggestion, ErrorLine, InfoLine, OkLine, Panel, Spinner, Submit, Title } from './accountUi';
 import { EmailPrefsPanel } from './EmailPreferences';
+import { LoyaltyPanel } from './LoyaltyPanel';
 import { getLoginPrefill, getRecoverPrefill, logoutCustomer, safeReturn, setCustomer, setLoginPrefill, setRecoverPrefill, useCustomer } from './customer';
 import { useShop } from './data';
 import { Field, PageShell } from './shell';
@@ -656,6 +658,181 @@ function ClaimForm({ onClaimed }: { onClaimed?: () => void }) {
   );
 }
 
+// ---- Endereços extras ----------------------------------------------------------------------------------
+
+type SavedAddress = { id: string; label: string; cep: string | null; address: string; address_number: string; neighborhood: string; complement: string | null; reference: string | null };
+const EMPTY_ADDRESS = { id: '', label: '', cep: '', address: '', address_number: '', neighborhood: '', complement: '', reference: '' };
+
+// Até 4 endereços além do principal (o de "Meus dados"): casa de um parente, trabalho... No checkout aparecem para escolher.
+function AddressesPanel() {
+  const { zones } = useShop();
+  const [list, setList] = useState<SavedAddress[] | null>(null);
+  const [form, setForm] = useState<typeof EMPTY_ADDRESS | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [cepNote, setCepNote] = useState('');
+
+  const load = async () => {
+    try {
+      setList((await api.get<{ addresses: SavedAddress[] }>('/api/account/addresses')).addresses);
+    } catch {
+      setList([]);
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const set = (key: keyof typeof EMPTY_ADDRESS, value: string) => {
+    setForm((f) => (f ? { ...f, [key]: value } : f));
+    setMsg(null);
+  };
+
+  const onCep = async (value: string) => {
+    const masked = maskCep(value);
+    set('cep', masked);
+    setCepNote('');
+    const digits = onlyDigits(masked);
+    if (digits.length !== 8) return;
+    try {
+      const found = await fetchCep(digits);
+      setForm((f) =>
+        f
+          ? { ...f, address: found.address.street || f.address, neighborhood: found.zones_configured ? (found.zone?.name ?? f.neighborhood) : found.address.neighborhood || f.neighborhood }
+          : f,
+      );
+      setCepNote(found.zones_configured && !found.zone && found.address.neighborhood ? `O bairro ${found.address.neighborhood} não está na nossa lista de entrega.` : [found.address.street, found.address.neighborhood].filter(Boolean).join(' · '));
+    } catch (err) {
+      setCepNote(friendlyError(err, 'Não foi possível consultar o CEP agora. Preencha à mão.'));
+    }
+  };
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!form) return;
+    const body = {
+      label: form.label.trim(),
+      cep: onlyDigits(form.cep) || null,
+      address: form.address.trim(),
+      address_number: form.address_number.trim(),
+      neighborhood: form.neighborhood.trim(),
+      complement: form.complement.trim() || null,
+      reference: form.reference.trim() || null,
+    };
+    if (!body.label || !body.address || !body.address_number || !body.neighborhood) return setMsg({ ok: false, text: 'Preencha o apelido, a rua, o número e o bairro.' });
+    setBusy(true);
+    try {
+      if (form.id) await api.patch(`/api/account/addresses/${form.id}`, body);
+      else await api.post('/api/account/addresses', body);
+      setForm(null);
+      setMsg({ ok: true, text: 'Endereço salvo.' });
+      void load();
+    } catch (err) {
+      setMsg({ ok: false, text: friendlyError(err, 'Não foi possível salvar o endereço agora.') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (a: SavedAddress) => {
+    try {
+      await api.delete(`/api/account/addresses/${a.id}`);
+      setMsg({ ok: true, text: `Endereço “${a.label}” apagado.` });
+      void load();
+    } catch (err) {
+      setMsg({ ok: false, text: friendlyError(err, 'Não foi possível apagar agora.') });
+    }
+  };
+
+  return (
+    <Panel id="enderecos" title="Outros endereços" subtitle="Guarde até 4 endereços além do principal e escolha um deles ao finalizar o pedido.">
+      <div data-addresses>
+        {list && list.length > 0 && (
+          <ul className="mb-4 space-y-2" aria-label="Endereços salvos">
+            {list.map((a) => (
+              <li key={a.id} data-address={a.label} className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
+                <div className="min-w-0 flex-1 basis-48 text-sm">
+                  <p className="font-bold text-white">{a.label}</p>
+                  <p className="text-white/70">
+                    {a.address}, {a.address_number} · {a.neighborhood}
+                    {a.complement ? ` · ${a.complement}` : ''}
+                  </p>
+                </div>
+                <button type="button" onClick={() => (setCepNote(''), setForm({ id: a.id, label: a.label, cep: a.cep ? maskCep(a.cep) : '', address: a.address, address_number: a.address_number, neighborhood: a.neighborhood, complement: a.complement ?? '', reference: a.reference ?? '' }))} className="min-h-11 rounded-full border border-white/15 px-4 text-sm font-semibold text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                  Editar
+                </button>
+                <button type="button" onClick={() => void remove(a)} aria-label={`Apagar o endereço ${a.label}`} className="min-h-11 rounded-full border border-rose-400/30 px-4 text-sm font-semibold text-rose-200 hover:bg-rose-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white">
+                  Apagar
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {form ? (
+          <form onSubmit={save} noValidate className="grid gap-4 sm:grid-cols-6" data-address-form>
+            <Field label="Apelido (ex.: Trabalho)" className="sm:col-span-3">
+              {(p) => <input {...p} value={form.label} onChange={(e) => set('label', e.target.value)} maxLength={30} className={FIELD} data-address-label />}
+            </Field>
+            <Field label="CEP (opcional)" hint={cepNote || undefined} className="sm:col-span-3">
+              {(p) => <input {...p} value={form.cep} onChange={(e) => void onCep(e.target.value)} inputMode="numeric" maxLength={9} placeholder="00000-000" className={FIELD} />}
+            </Field>
+            <Field label="Rua / Avenida" className="sm:col-span-4">
+              {(p) => <input {...p} value={form.address} onChange={(e) => set('address', e.target.value)} maxLength={120} className={FIELD} />}
+            </Field>
+            <Field label="Número" className="sm:col-span-2">
+              {(p) => <input {...p} value={form.address_number} onChange={(e) => set('address_number', e.target.value)} maxLength={20} className={FIELD} />}
+            </Field>
+            <Field label="Bairro" className="sm:col-span-3">
+              {(p) =>
+                zones.length ? (
+                  <select {...p} value={zones.some((z) => z.name === form.neighborhood) ? form.neighborhood : ''} onChange={(e) => set('neighborhood', e.target.value)} className={`${FIELD} appearance-none`}>
+                    <option value="" className="bg-[#0A0D14]">
+                      Escolha o bairro
+                    </option>
+                    {zones.map((z) => (
+                      <option key={z.id} value={z.name} className="bg-[#0A0D14]">
+                        {z.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input {...p} value={form.neighborhood} onChange={(e) => set('neighborhood', e.target.value)} maxLength={60} className={FIELD} />
+                )
+              }
+            </Field>
+            <Field label="Complemento" className="sm:col-span-3">
+              {(p) => <input {...p} value={form.complement} onChange={(e) => set('complement', e.target.value)} maxLength={60} className={FIELD} />}
+            </Field>
+            <Field label="Ponto de referência" className="sm:col-span-6">
+              {(p) => <input {...p} value={form.reference} onChange={(e) => set('reference', e.target.value)} maxLength={120} className={FIELD} />}
+            </Field>
+            <div className="space-y-3 sm:col-span-6">
+              {msg && (msg.ok ? <OkLine>{msg.text}</OkLine> : <ErrorLine>{msg.text}</ErrorLine>)}
+              <div className="flex flex-wrap gap-3">
+                <Submit busy={busy}>Salvar endereço</Submit>
+                <button type="button" onClick={() => (setForm(null), setMsg(null))} className={GHOST_BUTTON}>
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </form>
+        ) : (
+          <div className="space-y-3">
+            {msg && (msg.ok ? <OkLine>{msg.text}</OkLine> : <ErrorLine>{msg.text}</ErrorLine>)}
+            {list && list.length >= 4 ? (
+              <p className="text-sm text-white/60">Você chegou ao limite de 4 endereços extras. Apague um para salvar outro.</p>
+            ) : (
+              <button type="button" onClick={() => (setCepNote(''), setMsg(null), setForm({ ...EMPTY_ADDRESS }))} className={GHOST_BUTTON} data-address-add>
+                Adicionar endereço
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 // ---- /conta ----------------------------------------------------------------------------------------------
 
 function Profile({ customer }: { customer: CustomerAccount }) {
@@ -761,6 +938,7 @@ function Profile({ customer }: { customer: CustomerAccount }) {
       </div>
 
       <div className="mt-6 grid gap-5 lg:grid-cols-2 lg:items-start">
+        <div className="space-y-5">
         <Panel id="dados" title="Meus dados" subtitle="O endereço fica guardado só para você não precisar digitar de novo.">
           <form onSubmit={save} noValidate className="grid gap-4 sm:grid-cols-6">
             <Field label="Nome" className="sm:col-span-6">
@@ -806,7 +984,11 @@ function Profile({ customer }: { customer: CustomerAccount }) {
           </form>
         </Panel>
 
+        <AddressesPanel />
+        </div>
+
         <div className="space-y-5">
+          <LoyaltyPanel />
           <Panel id="vincular" title="Vincular um pedido de visitante" subtitle="Fez um pedido sem entrar na conta? Informe o número e o código de acompanhamento para ele aparecer em “Meus pedidos”.">
             <ClaimForm />
           </Panel>

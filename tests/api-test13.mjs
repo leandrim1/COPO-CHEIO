@@ -32,7 +32,7 @@ section('1. Banco de produção antes da mudança: a 0013 marca só as duas cate
       ('Cervejas', 4), ('Copões', 5), ('Copão Infantil', 6), ('Monster', 7), ('Combo Copão com Monster', 8)`);
   const copao = q(`insert into products (name, price, category_id) select 'Copão Teste', 20, id from categories where name = 'Copão' returning id`);
   q(`update store_settings set orders_paused = false, opening_hours = ${lit(JSON.stringify(ALL_DAYS))}::jsonb`);
-  const oldOrder = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Antigo', customer_phone: '34990000001', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 2 }] }))}::jsonb)`));
+  const oldOrder = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Antigo', customer_phone: '34990000001', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 2 }] }))}::jsonb)`));
   check('antes: o pedido de copão ainda entra sem escolher o gelo (como no site de hoje)', oldOrder.order_number >= 1001 && oldOrder.items.length === 1, oldOrder);
 
   const out = migrate();
@@ -47,7 +47,7 @@ section('1. Banco de produção antes da mudança: a 0013 marca só as duas cate
 
   let refused = '';
   try {
-    q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Novo', customer_phone: '34990000002', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 1 }] }))}::jsonb)`);
+    q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Novo', customer_phone: '34990000002', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 1 }] }))}::jsonb)`);
   } catch (error) {
     refused = String(error.stderr ?? error.message);
   }
@@ -59,7 +59,7 @@ section('1. Banco de produção antes da mudança: a 0013 marca só as duas cate
   q(`update products set ice_choice_required = false where id = ${lit(copao)}`);
   const again = migrate();
   check('rodar de novo não faz nada e não desfaz o que o painel mudou (o produto continua sem pedir o gelo)', /Banco já está atualizado/.test(again) && q(`select ice_choice_required from products where id = ${lit(copao)}`) === 'f', again);
-  const free = JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente Livre', customer_phone: '34990000003', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 1 }] }))}::jsonb)`));
+  const free = JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente Livre', customer_phone: '34990000003', delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: copao, quantity: 1 }] }))}::jsonb)`));
   check('...e esse produto (numa categoria que antes pedia o gelo) agora é pedido sem a escolha', free.order_number >= 1002 && free.items.length === 1 && !('ice_choice' in free.items[0]), free);
   execFileSync('psql', [...P, '-q', '-c', `drop database ${db} with (force)`], QUIET);
 }
@@ -74,7 +74,7 @@ section('1b. Banco de produção na versão 0021: a 0022 marca só os produtos d
   execFileSync('psql', [...P, '-d', db, '-q', '-c', `create table schema_migrations (version text primary key, applied_at timestamptz not null default now()); insert into schema_migrations(version) values ${files.map((f) => `('${f}')`).join(',')}`], QUIET);
   const migrate = () => execFileSync('node', ['tests/with-neon-proxy.mjs', 'scripts/migrate.mjs'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, TEST_PG_URL: `postgres://postgres@127.0.0.1:5433/${db}` } });
   const q = (sql) => psql(sql, db);
-  const orderOf = (productId, extra = {}, phone = '34990001000') => JSON.parse(q(`select create_order(${lit(JSON.stringify({ customer_name: 'Cliente 22', customer_phone: phone, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: productId, quantity: 1, ...extra }] }))}::jsonb)`));
+  const orderOf = (productId, extra = {}, phone = '34990001000') => JSON.parse(q(`select create_order(${lit(JSON.stringify({ age_confirmed: true, customer_name: 'Cliente 22', customer_phone: phone, delivery_type: 'pickup', payment_method: 'pix', items: [{ product_id: productId, quantity: 1, ...extra }] }))}::jsonb)`));
   const refusal = (productId, phone) => {
     try {
       orderOf(productId, {}, phone);
@@ -106,7 +106,9 @@ section('1b. Banco de produção na versão 0021: a 0022 marca só os produtos d
   check('os produtos das categorias que pediam o gelo nascem marcados (inclusive o de categoria oculta)', flags['Copão de Gin'] === 'true' && flags['Copão Ballena'] === 'true' && flags['Copão Monster Mango'] === 'true' && flags['Copão no oculto'] === 'true', flags);
   check('cerveja e produto sem categoria NÃO são marcados', flags['Heineken'] === 'false' && flags['Produto solto'] === 'false', flags);
   check('as marcas das categorias ficam como estavam (a coluna só deixou de valer)', q(`select string_agg(name || ':' || ice_choice_required, ',' order by position) from categories`) === 'Copão:true,Copão com Monster:true,Cervejas:false,Copão Oculto:true');
-  check('o pedido que já existia continua igual, byte a byte (mesmo JSON para o cliente)', q(`select order_json(id)::text from orders where order_number = ${old.order_number}`) === jsonBefore);
+  // As migrations seguintes (0027) acrescentaram DUAS chaves ao pedido que o cliente vê (age_check_required e cancel). Tirando essas duas, o JSON é idêntico byte a byte.
+  check('o pedido que já existia continua igual, byte a byte (mesmo JSON para o cliente, fora as chaves acrescentadas pela 0027)', q(`select (order_json(id) - 'age_check_required' - 'cancel')::text from orders where order_number = ${old.order_number}`) === jsonBefore);
+  check('...e as duas chaves novas dizem que o pedido antigo não pede conferência de idade e ainda pode ser cancelado pelo cliente', q(`select (order_json(id) -> 'age_check_required')::text || ',' || (order_json(id) #>> '{cancel,allowed}') from orders where order_number = ${old.order_number}`) === 'false,true');
   check('depois: copão sem escolha continua sendo recusado (nada muda na loja no instante do deploy)', refusal(gin, '34990001002').includes(MESSAGE) && refusal(mango, '34990001003').includes(MESSAGE));
   const withIce = orderOf(gin, { ice_choice: 'normal' }, '34990001004');
   check('...e com a escolha o pedido entra e grava o gelo', withIce.items[0].ice_choice === 'normal', withIce);

@@ -22,6 +22,8 @@ import { navigate } from '../lib/router';
 import { copyText, trackingUrl } from '../lib/tracking';
 import type { AdminPayment, Order, OrderItem, OrderStatus, PaymentStatus, StatusChange, TrackingLinkInfo } from '../lib/types';
 import { useAdmin, useLiveOrders } from './AdminApp';
+import { CourierPicker } from './Couriers';
+import { ExportButton } from './ExportCsv';
 import { OnlinePaymentCard } from './OnlinePayment';
 import { Badge, Button, Card, EmptyState, ErrorState, INPUT, PageHeader, Skeleton, Spinner, StatusBadge, cx, useConfirm, useToast } from './ui';
 
@@ -66,20 +68,58 @@ function nextStatus(o: Order): { status: OrderStatus; label: string } | null {
 }
 
 // Devolve o erro (ou null quando deu certo). O servidor grava o histórico com o nome de quem mudou.
-export async function changeStatus(order: Pick<Order, 'id' | 'order_number'>, status: OrderStatus): Promise<unknown> {
+export async function changeStatus(order: Pick<Order, 'id' | 'order_number'>, status: OrderStatus, extra: { reason?: string; age_checked?: boolean } = {}): Promise<unknown> {
   try {
-    await api.patch(`/api/admin/orders/${order.id}`, { status });
+    await api.patch(`/api/admin/orders/${order.id}`, { status, ...extra });
     return null;
   } catch (error) {
     return error;
   }
 }
 
+// ---- Maioridade (18+) ----------------------------------------------------------------------------
+// Pedido com bebida alcoólica: o documento oficial com foto é conferido na entrega ou na retirada (a tela só registra QUE foi conferido e por quem;
+// nenhum dado do documento é digitado, fotografado ou guardado). Sem comprovação de maioridade a entrega é recusada e o pedido é cancelado com o motivo.
+
+const AGE_REFUSED_REASON = 'Entrega recusada: maioridade não comprovada';
+const needsAgeCheck = (o: Pick<Order, 'age_required' | 'age_checked_at' | 'order_status'>) => o.age_required === true && !o.age_checked_at && o.order_status !== 'delivered' && o.order_status !== 'cancelled';
+
+function ageCheckQuestion(o: Pick<Order, 'order_number' | 'delivery_type'>) {
+  return {
+    title: `Conferiu o documento do cliente (#${o.order_number})?`,
+    description: `Este pedido tem bebida alcoólica. Só conclua depois de conferir um documento oficial com foto que comprove 18 anos ou mais ${o.delivery_type === 'pickup' ? 'na retirada' : 'na entrega'}. Não guarde nem fotografe o documento. Se a maioridade não for comprovada, recuse a entrega: o pedido é cancelado.`,
+    confirmLabel: 'Conferi: 18 anos ou mais',
+  };
+}
+
+// Pedido agendado: o horário que o cliente escolheu (a loja prepara para essa hora).
+function ScheduledBadge({ order }: { order: Pick<Order, 'scheduled_for' | 'delivery_type'> }) {
+  if (!order.scheduled_for) return null;
+  return (
+    <span data-scheduled>
+      <Badge tone="blue" className="shrink-0">
+        Agendado · {formatDateTime(order.scheduled_for)}
+      </Badge>
+    </span>
+  );
+}
+
+function AgeBadge({ order }: { order: Order }) {
+  if (!needsAgeCheck(order)) return null;
+  return (
+    <Badge tone="amber" className="shrink-0">
+      Conferir documento 18+
+    </Badge>
+  );
+}
+
 // ---- Lista (/admin/pedidos) --------------------------------------------------------------------
 
 export function OrdersPage() {
   const { version } = useLiveOrders();
+  const { user } = useAdmin();
   const toast = useToast();
+  const confirm = useConfirm();
   const [filter, setFilter] = useState<OrderStatus | 'all'>(() => {
     const status = new URLSearchParams(window.location.search).get('status');
     return [...FILTERS, AWAITING_FILTER].some((f) => f.value === status) ? (status as OrderStatus) : 'all';
@@ -134,8 +174,11 @@ export function OrdersPage() {
   const advance = async (o: Order) => {
     const next = nextStatus(o);
     if (!next) return;
+    // Concluir a entrega de um pedido com bebida alcoólica exige confirmar a conferência do documento (o servidor também exige).
+    const needsCheck = next.status === 'delivered' && o.age_required === true && !o.age_checked_at;
+    if (needsCheck && !(await confirm(ageCheckQuestion(o)))) return;
     setBusy(o.id);
-    const error = await changeStatus(o, next.status);
+    const error = await changeStatus(o, next.status, needsCheck ? { age_checked: true } : {});
     setBusy(null);
     if (error) toast.error('Não foi possível atualizar o pedido.', friendlyError(error, ''));
     else {
@@ -149,7 +192,7 @@ export function OrdersPage() {
 
   return (
     <>
-      <PageHeader title="Pedidos" description="Os pedidos do site chegam aqui em tempo real." />
+      <PageHeader title="Pedidos" description="Os pedidos do site chegam aqui em tempo real." actions={user.role === 'owner' ? <ExportButton kind="orders" /> : undefined} />
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <div role="group" aria-label="Filtrar por status" className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:px-0 lg:flex-1">
@@ -265,6 +308,8 @@ export function OrdersPage() {
                             <AccountBadge order={o} />
                           </p>
                           <p className="text-xs text-white/60">{formatPhone(o.customer_phone)}</p>
+                          {o.scheduled_for && <p className="mt-1"><ScheduledBadge order={o} /></p>}
+                          {needsAgeCheck(o) && <p className="mt-1"><AgeBadge order={o} /></p>}
                         </td>
                         <td className="px-4 py-3 text-right font-bold tabular-nums text-white">{money(Number(o.total))}</td>
                         <td className="px-4 py-3 text-white/70">{DELIVERY_LABEL[o.delivery_type]}</td>
@@ -311,6 +356,8 @@ export function OrdersPage() {
                             <span className="truncate">{o.customer_name}</span>
                             <AccountBadge order={o} />
                           </p>
+                          {o.scheduled_for && <p className="mt-1"><ScheduledBadge order={o} /></p>}
+                          {needsAgeCheck(o) && <p className="mt-1"><AgeBadge order={o} /></p>}
                         </div>
                         <StatusBadge status={o.order_status} delivery={o.delivery_type} />
                       </div>
@@ -509,13 +556,36 @@ export function OrderDetailPage({ number }: { number: string }) {
       });
       if (!ok) return;
     }
+    // Pedido com bebida alcoólica: concluir a entrega pede a confirmação de que o documento com foto foi conferido (o servidor também exige).
+    const needsCheck = status === 'delivered' && order.age_required === true && !order.age_checked_at;
+    if (needsCheck && !(await confirm(ageCheckQuestion(order)))) return;
     setBusy(status);
-    const err = await changeStatus(order, status);
+    const err = await changeStatus(order, status, needsCheck ? { age_checked: true } : {});
     setBusy(null);
     if (err) toast.error('Não foi possível atualizar o pedido.', friendlyError(err, ''));
     else {
       setOrder({ ...order, order_status: status });
       toast.success('Pedido atualizado.', `#${order.order_number} → ${statusLabel(status, order.delivery_type)}`);
+      void load();
+    }
+  };
+
+  // Maioridade não comprovada na entrega ou na retirada: o pedido é recusado, ou seja, cancelado com o motivo (o estoque volta para a loja).
+  const refuseForAge = async () => {
+    if (!order) return;
+    const ok = await confirm({
+      title: `Recusar a entrega do pedido #${order.order_number}?`,
+      description: 'Use quando o cliente não comprovar ter 18 anos ou mais. O pedido é cancelado com o motivo "maioridade não comprovada" e o estoque dos itens volta para a loja. Se o cliente já pagou pelo site, a devolução do valor é feita à parte. Um pedido cancelado não pode ser reaberto.',
+      confirmLabel: 'Recusar e cancelar',
+    });
+    if (!ok) return;
+    setBusy('cancelled');
+    const err = await changeStatus(order, 'cancelled', { reason: AGE_REFUSED_REASON });
+    setBusy(null);
+    if (err) toast.error('Não foi possível recusar a entrega.', friendlyError(err, ''));
+    else {
+      setOrder({ ...order, order_status: 'cancelled' });
+      toast.success('Entrega recusada.', `#${order.order_number} foi cancelado: maioridade não comprovada.`);
       void load();
     }
   };
@@ -574,6 +644,12 @@ export function OrderDetailPage({ number }: { number: string }) {
           <p className="mt-1 text-sm text-white/50">
             {formatDateTime(order.created_at)} · {timeAgo(order.created_at)} · {DELIVERY_LABEL[order.delivery_type]}
           </p>
+          {order.scheduled_for && (
+            <p className="mt-2" data-scheduled-detail>
+              <ScheduledBadge order={order} />
+              <span className="ml-2 text-xs text-white/60">{order.delivery_type === 'pickup' ? 'Retirada' : 'Entrega'} marcada para esse horário: prepare para a hora combinada.</span>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <a
@@ -654,10 +730,13 @@ export function OrderDetailPage({ number }: { number: string }) {
               </div>
               <div className="flex justify-between text-white/60">
                 <dt>Entrega</dt>
-                <dd className="tabular-nums">{money(Number(order.delivery_fee))}</dd>
+                <dd className="tabular-nums">
+                  {Number(order.delivery_fee_waived) > 0 && <span className="mr-1.5 text-xs text-white/45">(frete grátis: {money(Number(order.delivery_fee_waived))})</span>}
+                  {money(Number(order.delivery_fee))}
+                </dd>
               </div>
               <div className="flex justify-between text-white/60">
-                <dt>Desconto</dt>
+                <dt>Desconto{order.coupon_code ? ` (cupom ${order.coupon_code})` : ''}</dt>
                 <dd className="tabular-nums">{Number(order.discount) > 0 ? `− ${money(Number(order.discount))}` : money(0)}</dd>
               </div>
               {Number(order.payment_fee) > 0 && (
@@ -696,6 +775,7 @@ export function OrderDetailPage({ number }: { number: string }) {
                   <p className="text-xs text-white/60">
                     {formatDateTime(h.created_at)} · {h.changed_by_name ?? '—'}
                   </p>
+                  {h.reason && <p className="mt-0.5 text-xs text-white/75">Motivo: {h.reason}</p>}
                 </li>
               ))}
             </ol>
@@ -736,6 +816,38 @@ export function OrderDetailPage({ number }: { number: string }) {
               </p>
             </div>
           </Card>
+
+          {order.delivery_type === 'delivery' && order.order_status !== 'cancelled' && (
+            <CourierPicker key={`${order.id}-${order.courier_id ?? ''}`} orderId={order.id} current={order.courier_name} onChanged={(name, id) => setOrder((o) => (o ? { ...o, courier_name: name, courier_id: id } : o))} />
+          )}
+
+          {order.age_required && (
+            <Card title="Maioridade (18+)" description="Pedido com bebida alcoólica.">
+              <div data-age-card className="space-y-2 text-sm">
+                <p className="text-white/75">
+                  O cliente declarou ter 18 anos ou mais{order.age_declared_at ? ` em ${formatDateTime(order.age_declared_at)}` : ''}. Isso é uma declaração, não uma prova: confira um documento oficial com foto {order.delivery_type === 'pickup' ? 'na retirada' : 'na entrega'}.
+                </p>
+                {order.age_checked_at ? (
+                  <p className="flex items-start gap-2 text-emerald-200">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                    Documento conferido por {order.age_checked_by_name ?? '—'} em {formatDateTime(order.age_checked_at)}.
+                  </p>
+                ) : cancelled ? (
+                  <p className="text-white/60">Pedido cancelado: nenhuma conferência foi registrada.</p>
+                ) : (
+                  <>
+                    <p className="text-amber-200">Ainda não conferido. Ao concluir a entrega o sistema pede a confirmação.</p>
+                    <p className="text-xs text-white/60">Não guarde nem fotografe o documento. O sistema registra só quem conferiu e quando.</p>
+                    {order.order_status !== 'delivered' && (
+                      <Button size="sm" variant="danger-ghost" loading={busy === 'cancelled'} onClick={() => void refuseForAge()} className="border border-rose-500/30">
+                        Recusar entrega (maioridade não comprovada)
+                      </Button>
+                    )}
+                  </>
+                )}
+              </div>
+            </Card>
+          )}
 
           <TrackingCard order={order} links={links} retention={retention} onChanged={() => void load()} />
           <Card title={order.delivery_type === 'delivery' ? 'Endereço de entrega' : 'Retirada'}>
@@ -801,6 +913,8 @@ export function OrderDetailPage({ number }: { number: string }) {
         <p className="text-center text-lg font-bold">PEDIDO #{order.order_number}</p>
         <p className="text-center">{formatDateTime(order.created_at)}</p>
         <p className="text-center font-bold">{DELIVERY_LABEL[order.delivery_type].toUpperCase()} · {statusLabel(order.order_status, order.delivery_type)}</p>
+        {order.scheduled_for && <p className="text-center text-base font-bold">AGENDADO PARA {formatDateTime(order.scheduled_for)}</p>}
+        {order.courier_name && <p className="text-center">Entregador: {order.courier_name}</p>}
         <hr className="my-2 border-black" />
         <p>Cliente: {order.customer_name}</p>
         <p>Telefone: {formatPhone(order.customer_phone)}</p>
@@ -826,7 +940,7 @@ export function OrderDetailPage({ number }: { number: string }) {
         </p>
         {Number(order.discount) > 0 && (
           <p className="flex justify-between">
-            <span>Desconto</span>
+            <span>Desconto{order.coupon_code ? ` (${order.coupon_code})` : ''}</span>
             <span>− {money(Number(order.discount))}</span>
           </p>
         )}
@@ -845,6 +959,7 @@ export function OrderDetailPage({ number }: { number: string }) {
           {order.change_for ? ` (troco para ${money(Number(order.change_for))})` : ''} – {PAYMENT_STATUS_LABEL[order.payment_status]}
         </p>
         {order.notes && <p className="mt-1">Obs.: {order.notes}</p>}
+        {order.age_required && <p className="mt-1 font-bold">CONFERIR DOCUMENTO COM FOTO: 18 ANOS OU MAIS{order.age_checked_at ? ' (conferido)' : ''}</p>}
       </div>
     </>
   );

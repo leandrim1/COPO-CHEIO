@@ -13,7 +13,7 @@ import { BLUE_BUTTON, ProductImage, SoldOutBadge } from './ui';
 // novo (o botão vira um contador para trocar mais ou voltar atrás) e o preço do combo passa a levar a diferença entre os dois
 // energéticos. O banco recalcula tudo ao criar o pedido.
 
-const STEP = 'grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30';
+const STEP = 'tap grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30';
 
 function EnergeticRow({ energetic, basePrice, n, available, onSwap }: { energetic: Product; basePrice: number; n: number; available: number; onSwap: (delta: number) => void }) {
   const diff = swapDifference(energetic, basePrice);

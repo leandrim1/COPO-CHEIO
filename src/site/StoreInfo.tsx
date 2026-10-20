@@ -14,7 +14,7 @@ import { BrandName } from './ui';
 // "Aberto agora" / "Fechado · Abre amanhã às 09:00"
 export function OpenStatus() {
   const { store, isOpen } = useShop();
-  const next = isOpen ? '' : store.orders_paused ? 'Pedidos pausados' : nextOpening(store.opening_hours, store.timezone);
+  const next = isOpen ? '' : store.orders_paused ? 'Pedidos pausados' : nextOpening(store.opening_hours, store.timezone, new Date(), store.exceptions);
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${

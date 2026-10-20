@@ -82,6 +82,7 @@ const submitSignup = (page) => page.getByRole('button', { name: /Criar conta e r
 const { finishLogin, latestLoginCode, finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const errors = [];
   const track = (page) => {
     page.on('pageerror', (e) => errors.push(e.message));

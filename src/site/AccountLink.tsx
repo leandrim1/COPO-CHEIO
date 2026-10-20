@@ -19,7 +19,7 @@ export function AccountLink({ className = '' }: { className?: string }) {
       // visível é só "Conta" e abaixo disso só o ícone; "Minha conta" contém o que se vê).
       aria-label={loggedIn ? 'Minha conta' : undefined}
       title={loggedIn ? undefined : 'Entrar na sua conta ou criar uma conta'}
-      className={`inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-white/20 bg-black px-3.5 text-sm font-semibold text-white transition-colors hover:border-[#2563FF] hover:bg-[#145CFF]/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${className}`}
+      className={`tap inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-white/20 bg-black px-3.5 text-sm font-semibold text-white transition-colors hover:border-[#2563FF] hover:bg-[#145CFF]/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white ${className}`}
     >
       {loggedIn ? (
         <>

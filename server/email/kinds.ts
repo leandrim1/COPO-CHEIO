@@ -23,6 +23,7 @@ export type KindName =
   | 'payment_confirmed'
   | 'payment_refunded'
   | 'deliverability_alert'
+  | 'ops_alert'
   | 'campaign'
   | 'campaign_test'
   | 'template_test';
@@ -76,6 +77,8 @@ export const KINDS: Record<KindName, KindDef> = {
   admin_new_login: { category: 'transactional', audience: 'staff', label: 'Aviso: novo acesso ao painel', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 10 },
   mail_test: { category: 'transactional', audience: 'staff', label: 'E-mail de teste do painel', sensitive: true, mode: 'sync', userInitiated: true, maxAttempts: 1, perRecipientDay: 10, test: true },
   deliverability_alert: { category: 'transactional', audience: 'staff', label: 'Alerta de entregabilidade', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 4, perRecipientDay: 3 },
+  // Estoque baixo/esgotado e falha da rotina automática: um e-mail por dia para os donos, só quando a situação muda (server/opsAlerts.ts).
+  ops_alert: { category: 'transactional', audience: 'staff', label: 'Aviso da operação (estoque e rotina automática)', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 4, perRecipientDay: 3 },
   // ---- Pedido e pagamento ----
   order_received: { category: 'transactional', audience: 'customer', label: 'Pedido recebido', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 4, group: 'order', respectsOrderPref: true, checkDomain: true },
   order_confirmed: { category: 'transactional', audience: 'customer', label: 'Pedido confirmado pela loja', sensitive: false, mode: 'queued', userInitiated: false, maxAttempts: 6, perRecipientDay: 4, group: 'order', respectsOrderPref: true, checkDomain: true },

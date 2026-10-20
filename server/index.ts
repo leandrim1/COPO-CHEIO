@@ -6,6 +6,7 @@ import { adminFromRequest } from './auth.js';
 import { clientIp } from './clientIp.js';
 import { blobConfigured, databaseUrl, MissingConfig } from './env.js';
 import { runAlerts } from './email/alerts.js';
+import { runOpsAlerts } from './opsAlerts.js';
 import { kickQueue, onQueueRun, rememberRequest } from './email/service.js';
 import { mailConfigured, mailMissing } from './mail.js';
 import { siteUrl } from './mailBrand.js';
@@ -16,6 +17,16 @@ import { registerAccount } from './routes/account.js';
 import { registerAudit } from './routes/audit.js';
 import { registerCatalog } from './routes/catalog.js';
 import { registerContent } from './routes/content.js';
+import { registerCoupons } from './routes/coupons.js';
+import { registerExports } from './routes/exports.js';
+import { registerCep } from './routes/cep.js';
+import { registerCouriers } from './routes/couriers.js';
+import { registerCron } from './routes/cron.js';
+import { registerReviews } from './routes/reviews.js';
+import { registerSchedule } from './routes/schedule.js';
+import { registerAddresses } from './routes/addresses.js';
+import { registerLegal } from './routes/legal.js';
+import { registerLoyalty } from './routes/loyalty.js';
 import { registerOrders } from './routes/orders.js';
 import { registerPayments } from './routes/payments.js';
 import { registerPrivacy } from './routes/privacy.js';
@@ -74,7 +85,9 @@ router.get('/api/admin/health', 'admin', async (ctx) => {
   const status = await systemStatus(ctx.req);
   const payments = status.database === 'ok' ? await onlineReadiness().catch(() => null) : null;
   // `admin_login_code`: 'on' = o login do painel exige o código enviado por e-mail (o normal); 'off' = interruptor de emergência ADMIN_EMAIL_CODE=off ligado.
-  return json({ ...status, payments, admin_login_code: adminEmailCodeEnabled() ? 'on' : 'off' });
+  // `jobs`: quando a rotina automática (Pix vencido, fila de e-mails, limpeza) rodou pela última vez e se deu certo; `cron_secret`: sem o segredo o cron da Vercel recebe 401.
+  const sweep = status.database === 'ok' ? await one<{ last_run_at: string; ok: boolean; detail: string | null }>("select last_run_at, ok, detail from job_runs where name = 'sweep'").catch(() => null) : null;
+  return json({ ...status, payments, admin_login_code: adminEmailCodeEnabled() ? 'on' : 'off', jobs: { sweep: sweep ?? null, cron_secret: (process.env.CRON_SECRET ?? '').trim() ? 'ok' : 'missing' } });
 });
 
 registerPublic(router);
@@ -86,13 +99,26 @@ registerOrders(router);
 registerPayments(router);
 registerCatalog(router);
 registerContent(router);
+registerCoupons(router);
+registerExports(router);
+registerCep(router);
+registerSchedule(router);
+registerAddresses(router);
+registerLegal(router);
+registerReviews(router);
+registerLoyalty(router);
+registerCouriers(router);
+registerCron(router);
 registerTeam(router);
 registerCustomers(router);
 registerMailAdmin(router);
 registerEmailAdmin(router);
 registerEmailPublic(router);
 // Depois que a fila de e-mails roda, confere os alertas de entregabilidade (no máximo a cada 10 minutos por instância).
-onQueueRun((req) => runAlerts(req));
+onQueueRun(async (req) => {
+  await runAlerts(req);
+  await runOpsAlerts(req).catch(() => 0);
+});
 registerAudit(router);
 registerPrivacy(router);
 registerSeo(router);
@@ -108,6 +134,8 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
   products_sku_key: 'Já existe um produto com esse SKU.',
   banners_has_content: 'O banner precisa de pelo menos uma imagem ou um título.',
   banners_cover_needs_image: 'O banner da capa precisa de uma imagem.',
+  coupons_code_key: 'Já existe um cupom com este código.',
+  store_settings_loyalty_rules: 'Para ligar o programa de pontos, preencha as quatro regras.',
 };
 
 function failure(error: unknown, admin: Admin | null, requestId: string): Response {
@@ -159,7 +187,7 @@ function failure(error: unknown, admin: Admin | null, requestId: string): Respon
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
 // As rotas que mudam pedido ou pagamento (e, por isso, podem ter enfileirado um e-mail pelos gatilhos do banco).
-const ENQUEUES_EMAIL = /^\/api\/(orders|payments\/|admin\/(orders|payments)(\/|$)|tracking\/[^/]+\/payment|account\/orders\/\d+\/payment)/;
+const ENQUEUES_EMAIL = /^\/api\/(orders|payments\/|admin\/(orders|payments)(\/|$)|tracking\/[^/]+\/(payment|cancel)|account\/orders\/\d+\/(payment|cancel))/;
 
 // Defesa extra contra CSRF (além do cookie SameSite=Lax): escritas só da própria origem.
 function foreignOrigin(req: Request, url: URL): boolean {

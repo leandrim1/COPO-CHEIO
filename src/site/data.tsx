@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api } from '../lib/api';
+import { initAnalytics, isMeasurementId } from '../lib/analytics';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
 import { comboNote, swapBasePrice, swapDifference, swapStillValid } from '../lib/combo';
 import { isOpenNow } from '../lib/hours';
@@ -27,6 +28,9 @@ export type Product = {
   position: number;
   // O produto pede a escolha do gelo (gelo normal ou de sabor) antes de ir para o pedido (a loja liga produto a produto, no painel).
   iceRequired: boolean;
+  // Bebida alcoólica (a loja marca no painel; sem a marca vale "sim", o lado seguro): o pedido que a contém exige a declaração de maioridade no checkout
+  // e a conferência do documento na entrega. O servidor decide de novo ao criar o pedido (create_order).
+  alcoholic: boolean;
   // Combos (troca de energético): o produto do cardápio que é o energético que vem no combo e/ou o VALOR dele (o painel define; sem nenhum dos
   // dois o produto não aceita a troca) e os energéticos que o cliente pode escolher (lista vazia = qualquer energético de 2L).
   swapBaseId: string | null;
@@ -48,6 +52,8 @@ type ShopData = {
   coverBanners: Banner[];
   zones: DeliveryZone[];
   payments: PaymentOption[];
+  // Identificador da medição de visitas (Google Analytics 4), se a loja ligou. Sem ele nada é medido (src/lib/analytics.ts).
+  analyticsId: string | null;
 };
 
 // v3: os produtos passaram a trazer `iceRequired`. Uma cópia v2 (sem essa informação) seria um cardápio que deixa pedir copão sem
@@ -55,7 +61,7 @@ type ShopData = {
 // v4: `iceRequired` passou a vir do PRODUTO (a loja escolhe, produto a produto, quais perguntam o gelo); antes vinha da categoria. Uma cópia
 // v3 teria o gelo nos produtos errados, então também não é mais lida.
 const CACHE_KEY = 'copocheio:site-v4';
-const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS };
+const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS, analyticsId: null };
 
 // ---- Dados defensivos --------------------------------------------------------------------------
 // O que vem da API (ou da cópia salva no navegador, que pode ser de uma versão antiga do site) nunca derruba a página: campo
@@ -98,6 +104,10 @@ export function normalizeStore(raw: unknown): StoreSettings {
     pickup_enabled: typeof r.pickup_enabled === 'boolean' ? r.pickup_enabled : DEFAULT_STORE.pickup_enabled,
     delivery_fee: amount(r.delivery_fee, DEFAULT_STORE.delivery_fee),
     min_order: amount(r.min_order, 0),
+    free_delivery_enabled: r.free_delivery_enabled === true,
+    free_delivery_min: amount(r.free_delivery_min, 0),
+    scheduling_enabled: r.scheduling_enabled === true,
+    exceptions: Array.isArray(r.exceptions) ? r.exceptions.filter((x) => x && typeof x.day === 'string' && (x.kind === 'closed' || x.kind === 'custom')).slice(0, 120) : [],
     tracking_retention_days: amount(r.tracking_retention_days, DEFAULT_STORE.tracking_retention_days),
   };
 }
@@ -127,6 +137,7 @@ type ContentFromApi = {
   cover_banners?: unknown;
   zones?: unknown;
   payments?: unknown;
+  analytics_id?: unknown;
 };
 
 export function normalizeContent(raw: ContentFromApi): Omit<ShopData, 'products'> {
@@ -139,6 +150,7 @@ export function normalizeContent(raw: ContentFromApi): Omit<ShopData, 'products'
     coverBanners: list<Banner>(raw.cover_banners, bannerOk),
     zones: list<DeliveryZone>(raw.zones, zoneOk).map((zone) => ({ ...zone, fee: Number(zone.fee) })),
     payments: payments.length ? payments : DEFAULT_PAYMENTS,
+    analyticsId: isMeasurementId(raw.analytics_id) ? raw.analytics_id : null,
   };
 }
 
@@ -147,7 +159,7 @@ function readCache(): ShopData | null {
     const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) ?? 'null') as Record<string, unknown> | null;
     if (!isObject(parsed) || !isObject(parsed.store) || !isObject(parsed.site) || !isObject(parsed.hero) || !Array.isArray(parsed.products)) return null;
     // A cópia salva passa pelas mesmas conferências da resposta da API (um formato antigo ou corrompido não derruba a página).
-    const content = normalizeContent({ ...parsed, cover_banners: parsed.coverBanners });
+    const content = normalizeContent({ ...parsed, cover_banners: parsed.coverBanners, analytics_id: parsed.analyticsId });
     const products = (parsed.products as unknown[])
       .filter(
         (p): p is Product =>
@@ -156,6 +168,8 @@ function readCache(): ShopData | null {
       // A cópia salva por uma versão de antes da troca de energético não tem esse campo.
       .map((p) => ({
         ...p,
+        // A cópia salva por uma versão de antes da confirmação de maioridade não tem este campo: sem ele, o produto conta como alcoólico.
+        alcoholic: p.alcoholic !== false,
         // A cópia salva por uma versão de antes das miniaturas não tem estes campos.
         imageSm: typeof p.imageSm === 'string' ? p.imageSm : undefined,
         imageSrcSet: typeof p.imageSrcSet === 'string' ? p.imageSrcSet : undefined,
@@ -186,6 +200,7 @@ type ProductRowFromDb = {
   swap_base_price?: number | string | null;
   swap_option_ids?: string[] | null;
   ice_choice_required?: boolean;
+  alcoholic?: boolean;
 };
 
 // As miniaturas viram o `srcset` do <img> (a largura de cada uma é a de quando o painel as gera: 400 e 720). Endereço com vírgula ou espaço
@@ -221,6 +236,7 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         soldOut: row.sold_out,
         position: row.position,
         iceRequired: row.ice_choice_required === true,
+        alcoholic: row.alcoholic !== false,
         swapBaseId: typeof row.swap_base_product_id === 'string' ? row.swap_base_product_id : null,
         swapBasePrice: row.swap_base_price === null || row.swap_base_price === undefined || !Number.isFinite(Number(row.swap_base_price)) ? null : Number(row.swap_base_price),
         swapOptionIds: Array.isArray(row.swap_option_ids) ? row.swap_option_ids.filter((x): x is string => typeof x === 'string') : [],
@@ -254,6 +270,7 @@ export function reuseUnchanged(prev: ShopData, next: ShopData): ShopData {
     coverBanners: keep('coverBanners'),
     zones: keep('zones'),
     payments: keep('payments'),
+    analyticsId: next.analyticsId,
     products: products.length === prev.products.length && products.every((p, i) => p === prev.products[i]) ? prev.products : products,
   };
 }
@@ -470,6 +487,9 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   const cart = useCart(data.products, fresh && !failed);
   const [now, setNow] = useState(() => Date.now());
 
+  // Medição de visitas: só liga se a loja cadastrou o identificador (e, mesmo assim, só depois do "Aceitar" da pessoa).
+  useEffect(() => initAnalytics(data.analyticsId), [data.analyticsId]);
+
   // Recalcula "aberto/fechado" a cada minuto.
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -477,7 +497,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const isOpen = useMemo(
-    () => !data.store.orders_paused && isOpenNow(data.store.opening_hours, data.store.timezone, new Date(now)),
+    () => !data.store.orders_paused && isOpenNow(data.store.opening_hours, data.store.timezone, new Date(now), data.store.exceptions),
     [data.store, now],
   );
 

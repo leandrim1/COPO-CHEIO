@@ -241,3 +241,56 @@ export function alertMessage(brand: Brand, o: { to: string; name: string; alerts
     reason: 'Esta mensagem foi enviada porque você é dono da loja no painel.',
   });
 }
+
+// ---- Aviso da operação para os donos (estoque e rotina automática) ------------------------------------------
+
+export type OpsMail = {
+  to: string;
+  name: string;
+  low: { name: string; stock: number; limit: number }[];
+  out: { name: string }[];
+  job: { problem: 'failed' | 'stale'; lastRun: string; detail: string | null } | null;
+  stockUrl: string;
+  systemUrl: string;
+};
+
+const MAX_LISTED = 15;
+
+export function opsAlertMessage(brand: Brand, o: OpsMail): Message {
+  const hi = greetingName(o.name);
+  const parts: string[] = [];
+  if (o.low.length) parts.push(o.low.length === 1 ? '1 produto com estoque baixo' : `${o.low.length} produtos com estoque baixo`);
+  if (o.out.length) parts.push(o.out.length === 1 ? '1 produto esgotado' : `${o.out.length} produtos esgotados`);
+  if (o.job) parts.push('rotina automática com problema');
+  const blocks: Block[] = [{ kind: 'text', text: 'O sistema encontrou o que está abaixo ao acompanhar o estoque e as rotinas da loja.' }];
+  if (o.job) {
+    blocks.push({
+      kind: 'notice',
+      text:
+        o.job.problem === 'failed'
+          ? `**A rotina automática falhou na última execução** (${o.job.lastRun}). Ela encerra o Pix vencido, devolve o estoque do pedido não pago e manda a fila de e-mails. ${o.job.detail ? `Motivo: ${o.job.detail}. ` : ''}Veja o estado em Configurações → Painel → Estado do sistema.`
+          : `**A rotina automática não roda há mais de um dia** (última vez: ${o.job.lastRun}). Confira a variável CRON_SECRET na Vercel e as execuções do cron. Enquanto isso, o Pix vencido só é encerrado de passagem, quando entra movimento.`,
+    });
+  }
+  if (o.low.length) {
+    blocks.push({ kind: 'text', text: '**Estoque baixo**' });
+    blocks.push({ kind: 'facts', rows: o.low.slice(0, MAX_LISTED).map((p) => ({ label: p.name, value: `${p.stock} un. (aviso com até ${p.limit})` })) });
+    if (o.low.length > MAX_LISTED) blocks.push({ kind: 'text', text: `E mais ${o.low.length - MAX_LISTED} produto(s).`, tone: 'muted' });
+  }
+  if (o.out.length) {
+    blocks.push({ kind: 'text', text: '**Esgotados**' });
+    blocks.push({ kind: 'facts', rows: o.out.slice(0, MAX_LISTED).map((p) => ({ label: p.name, value: 'esgotado' })) });
+    if (o.out.length > MAX_LISTED) blocks.push({ kind: 'text', text: `E mais ${o.out.length - MAX_LISTED} produto(s).`, tone: 'muted' });
+  }
+  blocks.push({ kind: 'button', label: o.low.length || o.out.length ? 'Abrir o estoque' : 'Abrir o painel', url: o.low.length || o.out.length ? o.stockUrl : o.systemUrl });
+  return renderEmail(brand, {
+    to: o.to,
+    subject: `Aviso: ${parts.join(' e ')} – ${brand.name}`,
+    preheader: parts.join(' · '),
+    eyebrow: 'Operação da loja',
+    title: o.job ? 'Há algo para olhar na loja' : 'Estoque para repor',
+    greeting: hi ? `Olá, **${hi}**!` : 'Olá!',
+    blocks,
+    reason: 'Você recebe este aviso porque é dono da loja no painel. Mandamos no máximo um por dia, só quando a situação muda. O aviso de estoque se desliga em Estoque → "Avisar por e-mail".',
+  });
+}

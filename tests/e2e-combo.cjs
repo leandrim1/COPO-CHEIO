@@ -91,6 +91,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   for (const c of [combo, combo2]) await api('PATCH', `/api/admin/products/${c.id}`, { swap_base_product_id: jack.id });
   ok([combo, combo2, combo3, beer, other, jack, en1, en2, tropical, fusion, baly, en7, soda, copaoEn].every((p) => !!p?.id), 'dados de teste criados (5 categorias, 14 produtos; os 2 combos com o Jack Power como energético)');
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const notice = (page) => page.locator('[data-add-notice]');
   const swapDialog = (page) => page.getByRole('dialog', { name: 'Trocar o energético' });
   const R = (n) => 'R\\$\\s*' + n.toFixed(2).replace('.', ',');

@@ -133,6 +133,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   const bottle = (await api('POST', '/api/admin/products', { name: 'Garrafa Cem', price: 100, category_id: cat.id, image_url: img, description: 'Teste.', featured: true, stock: 100, confirm_duplicate: true })).data.product;
   ok(!!bottle?.id, 'dados de teste criados');
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // ---- 1. Desligado: o checkout é o de sempre ---------------------------------------------------------------------------------------------
   console.log('# 1. Cartão online desligado: nada muda no checkout');

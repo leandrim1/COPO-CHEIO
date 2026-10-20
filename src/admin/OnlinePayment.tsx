@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { api, friendlyError } from '../lib/api';
 import { formatDateTime, money, percentFromBps, taxaWording } from '../lib/format';
 import type { AdminPayment, CommissionState, Order, PaymentState } from '../lib/types';
+import { RefundPanel } from './RefundPanel';
 import { Badge, Button, Card, useToast } from './ui';
 
 // Pedaços do pagamento online no painel: a mesma linguagem na página do pedido e na página de Pagamentos.
@@ -218,6 +219,7 @@ export function OnlinePaymentCard({
                 </dl>
               )}
               {owner && <div className="mt-3"><PaymentActions payment={p} onChanged={onChanged} /></div>}
+              {owner && <RefundPanel payment={p} onChanged={onChanged} />}
             </li>
           ))}
         </ul>

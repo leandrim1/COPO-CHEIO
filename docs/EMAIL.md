@@ -62,6 +62,7 @@ rota / gatilho do banco ──► deliver() ──► regras ──► registro 
 | Aviso: novo acesso ao painel (equipe) | transacional | fila | não | 10 |
 | Pedido recebido · confirmado · saiu para entrega · entregue · cancelado · pagamento confirmado · reembolso | transacional | fila | não | 4 de cada, **12 no grupo “pedido”** |
 | Alerta de entregabilidade (dono) | transacional (equipe) | fila | não | 3 |
+| Aviso da operação: estoque baixo/esgotado e rotina automática com problema (dono; `server/opsAlerts.ts`) | transacional (equipe) | fila | não | 3 |
 | Campanha promocional | **promocional** | fila | não | **2** |
 
 Teto geral de último recurso: **40 mensagens por endereço em 24 h**, somando todos os tipos. Os **testes do painel** (e-mail de teste, teste de campanha e exemplos) vão sempre para o

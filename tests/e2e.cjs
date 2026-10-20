@@ -67,6 +67,7 @@ const noHScroll = (page) => page.evaluate(() => document.documentElement.scrollW
 const { finishAdminLogin } = require('./e2e-code.cjs');
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const errors = [];
   const adminPage = await newPage(browser, { width: 1440, height: 900 }, errors);
   await adminPage.addInitScript(() => {
@@ -369,6 +370,8 @@ const { finishAdminLogin } = require('./e2e-code.cjs');
   ok(/João Silva/.test(detail) && /\(34\) 99999-0000/.test(detail) && /2x Heineken Long Neck/.test(detail) && /Rua A, 123/.test(detail) && /Perto da praça/.test(detail) && /PIX/.test(detail) && /Bem gelada/.test(detail) && /TOTAL\s*R\$\s?32,80/.test(detail), 'detail shows client, items, address, payment, notes, total');
   for (const label of ['CONFIRMAR PEDIDO', 'EM PREPARO', 'SAIU PARA ENTREGA', 'ENTREGUE']) {
     await a.getByRole('button', { name: label, exact: true }).click();
+    // Pedido com bebida alcoólica: concluir a entrega pede a conferência do documento (migration 0027). Sem o clique abaixo o pedido NÃO é entregue.
+    if (label === 'ENTREGUE') await a.getByRole('button', { name: 'Conferi: 18 anos ou mais', exact: true }).click();
     await a.waitForSelector('text=Pedido atualizado.');
     await a.waitForTimeout(600);
   }

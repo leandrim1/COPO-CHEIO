@@ -80,6 +80,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   const { load } = await import('./unit/load.mjs');
   const totp = await load('server/totp.ts');
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const errors = [];
 
   const login = await adminLoginViaApi(api, OWNER, { cookieArg: true });
@@ -336,7 +337,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   await c1.waitForSelector('text=Marcado como atendido.');
   ok(psql("select status || '|' || handled_note from privacy_requests where name='Pedro Titular'") === 'done|Atendido por WhatsApp', 'atendimento registrado com a observação');
   // anonimizar
-  const order = await api('POST', '/api/orders', { customer_name: 'Pedro Titular', customer_phone: '34977771234', customer_email: 'pedro@exemplo.com', delivery_type: 'pickup', payment_method: 'pix', fill_ms: 5000, items: [{ product_id: p2.id, quantity: 1 }] }, '', nextIp());
+  const order = await api('POST', '/api/orders', { customer_name: 'Pedro Titular', customer_phone: '34977771234', customer_email: 'pedro@exemplo.com', delivery_type: 'pickup', payment_method: 'pix', age_confirmed: true, fill_ms: 5000, items: [{ product_id: p2.id, quantity: 1 }] }, '', nextIp());
   ok(order.status === 201, 'pedido de visitante criado para o teste de anonimização');
   await c1.getByRole('button', { name: 'Anonimizar uma pessoa' }).click();
   await c1.getByLabel('Telefone com DDD').fill('34977771234');

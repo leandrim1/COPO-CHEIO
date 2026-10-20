@@ -254,6 +254,7 @@ async function run(browser, label, viewport) {
 
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   await run(browser, 'celular 390', { width: 390, height: 844 });
   await run(browser, 'computador 1280', { width: 1280, height: 800 });
   await browser.close();

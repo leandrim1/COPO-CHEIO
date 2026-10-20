@@ -444,6 +444,219 @@ export async function settleOverdue(paymentId: string): Promise<PaymentStatus | 
   return after?.status ?? null;
 }
 
+// ---- Pedido cancelado: a cobrança Pix em aberto também é cancelada na operadora ------------------------------------------------------------------------
+
+// As cobranças Pix ainda em aberto de um pedido. A consulta vem ANTES do cancelamento: depois dele o banco já as marcou como canceladas.
+export async function openPixCharges(orderId: string): Promise<{ id: string; chargeId: string }[]> {
+  const rows = await query<Row>(
+    `select id, provider_charge_id from payments where order_id = $1::uuid and method = 'pix' and status = 'pending' and provider_charge_id is not null`,
+    [orderId],
+  );
+  return rows.map((row) => ({ id: String(row.id), chargeId: String(row.provider_charge_id) }));
+}
+
+// Depois de o pedido ser cancelado (pelo cliente ou pela loja): o QR Code deixa de aceitar pagamento. Melhor esforço, nunca derruba o cancelamento: se a
+// operadora não cancela (fora do ar, não conhece a cobrança, ela já foi paga) o pagamento fica sinalizado no painel com o que fazer. Sem isto, quem pagasse o
+// QR Code de um pedido cancelado só seria notado quando o aviso da operadora chegasse.
+export async function cancelProviderCharges(charges: { id: string; chargeId: string }[]): Promise<void> {
+  const provider = getProvider();
+  for (const charge of charges) {
+    let reason: string | null = null;
+    try {
+      const found = await contextOf(charge.id);
+      if (!provider || !provider.cancelCharge || (found && provider.name !== found.row.provider)) {
+        reason = 'Pedido cancelado com o Pix em aberto na operadora. Cancele a cobrança lá para ninguém pagar um pedido cancelado.';
+      } else {
+        const result = await withTimeout(provider.cancelCharge(charge.chargeId, found?.ctx));
+        if (!result.cancelled) {
+          reason =
+            result.reason === 'not_found'
+              ? 'A operadora não encontrou a cobrança deste Pix. Confira lá se ele existe e cancele-o.'
+              : 'O Pix foi pago ou encerrado na operadora enquanto o pedido era cancelado. Confira lá e devolva o valor ao cliente se ele pagou.';
+        }
+      }
+    } catch (error) {
+      reason = 'Não foi possível cancelar o Pix na operadora. Cancele a cobrança lá para ninguém pagar um pedido cancelado.';
+      log('cancelamento do Pix na operadora falhou', { payment: charge.id, kind: providerErrorKind(error) ?? 'erro' });
+    }
+    if (reason) await query('update payments set needs_attention = true, attention_reason = $2 where id = $1::uuid', [charge.id, reason]).catch(() => undefined);
+  }
+}
+
+// ---- Devolução (estorno) pelo painel ------------------------------------------------------------------------------------------------------
+//
+// Regras: (1) o dinheiro só é "devolvido" quando a operadora CONFIRMA (consulta ou aviso); pedir não é devolver. (2) Nunca duas devoluções abertas para o
+// mesmo pagamento (índice no banco). (3) Resposta perdida/tempo esgotado: o pedido fica "aguardando resposta" e NADA é repetido às cegas: antes de qualquer
+// nova tentativa o servidor pergunta à operadora o que ela tem (listRefunds). (4) O estado final vem da operadora, a mesma fonte da conciliação dos avisos.
+
+const REFUND_REASONS = ['CUSTOMER_REQUEST', 'FRAUD', 'BANK_ERROR', 'PIX_CHANGE_ERROR'] as const;
+export type RefundReasonCode = (typeof REFUND_REASONS)[number];
+export const isRefundReason = (value: unknown): value is RefundReasonCode => typeof value === 'string' && (REFUND_REASONS as readonly string[]).includes(value);
+// Quanto esperar a operadora ao pedir uma devolução (mais que nas consultas: ela fala com o banco).
+const REFUND_TIMEOUT_MS = 12_000;
+// Um pedido sem resposta que a operadora não reconhece depois deste tempo é dado como não registrado (e pode ser pedido de novo).
+const REFUND_UNKNOWN_MINUTES = 10;
+
+export type RefundRow = {
+  id: string;
+  payment_id: string;
+  order_id: string;
+  provider: string;
+  provider_refund_id: string | null;
+  amount_cents: number;
+  reason: RefundReasonCode;
+  status: 'requested' | 'processing' | 'confirmed' | 'failed';
+  requested_by_name: string | null;
+  note: string | null;
+  last_error: string | null;
+  requested_at: string;
+  confirmed_at: string | null;
+};
+
+export async function refundsOfPayment(paymentId: string): Promise<RefundRow[]> {
+  const rows = await query<Row>(
+    `select id, payment_id, order_id, provider, provider_refund_id, amount_cents, reason, status, requested_by_name, note, last_error, requested_at, confirmed_at
+       from payment_refunds where payment_id = $1::uuid order by created_at`,
+    [paymentId],
+  );
+  return rows.map((row) => ({ ...(row as unknown as RefundRow), requested_at: isoOrNull(row.requested_at) ?? new Date(0).toISOString(), confirmed_at: isoOrNull(row.confirmed_at) }));
+}
+
+function refundProvider(paymentRow: Row | undefined): PaymentProvider & Required<Pick<PaymentProvider, 'listRefunds'>> {
+  const provider = getProvider();
+  if (!provider || !provider.listRefunds || (paymentRow && provider.name !== paymentRow.provider)) {
+    throw new HttpError(409, 'Esta operadora não permite consultar devoluções por aqui. Faça a devolução no painel dela e use “Atualizar pagamento”.', { code: 'refund_unavailable' });
+  }
+  return provider as PaymentProvider & Required<Pick<PaymentProvider, 'listRefunds'>>;
+}
+
+// Pergunta à operadora quais devoluções ela tem desta cobrança e põe os nossos registros em dia: reconhece o pedido cujo código não chegou até nós, marca o que
+// foi confirmado ou falhou e, havendo valor devolvido a mais do que sabíamos, aplica no pagamento (e no pedido, se foi total). Quem a operadora devolveu
+// pelo painel dela também entra na soma. Devolve o total confirmado pela operadora.
+export async function reconcileRefunds(paymentId: string): Promise<{ confirmedCents: number; changed: boolean }> {
+  const found = await contextOf(paymentId);
+  if (!found || !found.row.provider_charge_id) throw new HttpError(409, 'Este pagamento ainda não tem código na operadora.', { code: 'refund_unavailable' });
+  const provider = refundProvider(found.row);
+  const chargeId = String(found.row.provider_charge_id);
+  const items = await withTimeout(provider.listRefunds(chargeId, found.ctx));
+  const rows = await query<Row>('select * from payment_refunds where payment_id = $1::uuid order by created_at', [paymentId]);
+  const claimed = new Set<string>(rows.map((row) => row.provider_refund_id as string | null).filter((id): id is string => Boolean(id)));
+  let changed = false;
+
+  for (const row of rows) {
+    if (row.status === 'confirmed' || row.status === 'failed') continue;
+    let item = row.provider_refund_id ? items.find((it) => it.providerRefundId === row.provider_refund_id) : undefined;
+    if (!item && !row.provider_refund_id) {
+      // O pedido cuja resposta se perdeu: reconhecido pelo valor e por ter sido criado depois do nosso pedido.
+      const since = new Date(String(row.requested_at)).getTime() - 2 * 60_000;
+      item = items.find((it) => !claimed.has(it.providerRefundId) && it.amountCents === Number(row.amount_cents) && (it.createdAt === null || it.createdAt.getTime() >= since));
+      if (item) claimed.add(item.providerRefundId);
+    }
+    if (item) {
+      const updated = await one<Row>('select * from refund_update($1::uuid, $2, $3, $4)', [row.id, item.status, item.providerRefundId, item.error ?? null]);
+      changed = changed || updated?.status !== row.status;
+    } else if (!row.provider_refund_id && Date.now() - new Date(String(row.requested_at)).getTime() > REFUND_UNKNOWN_MINUTES * 60_000) {
+      // A operadora respondeu a consulta e não tem nenhuma devolução assim: o pedido não chegou a ser registrado. Pode ser pedido de novo.
+      await one('select * from refund_update($1::uuid, $2, null, $3)', [row.id, 'failed', 'A operadora não registrou este pedido de devolução.']);
+      changed = true;
+    }
+  }
+
+  const confirmedCents = items.filter((it) => it.status === 'confirmed').reduce((sum, it) => sum + it.amountCents, 0);
+  const current = await one<Row>('select amount_cents, refunded_cents from payments where id = $1::uuid', [paymentId]);
+  if (current && confirmedCents > Number(current.refunded_cents)) {
+    const amount = Number(current.amount_cents);
+    await applySnapshot(
+      paymentId,
+      { providerChargeId: chargeId, status: 'refunded', providerStatus: confirmedCents >= amount ? 'REFUNDED' : 'PARTIALLY_REFUNDED', amountCents: amount, refundedCents: Math.min(confirmedCents, amount) },
+      'admin',
+    );
+    changed = true;
+  }
+  return { confirmedCents, changed };
+}
+
+// Pede a devolução à operadora. Quem chama já provou ser o owner. `amountCents` vazio = tudo o que ainda não foi devolvido.
+// A devolução pelo painel está disponível para este pagamento? (a operadora é a do pagamento e a devolução pela API foi ligada de propósito)
+export function refundAvailable(providerName: string | null | undefined): boolean {
+  const provider = getProvider();
+  return Boolean(provider && provider.createRefund && provider.listRefunds && provider.name === providerName);
+}
+
+export async function requestRefund(opts: { paymentId: string; amountCents: number | null; reason: RefundReasonCode; note: string | null; adminId: string }): Promise<{ refund: RefundRow; outcome: 'processing' | 'confirmed' | 'failed' | 'unknown'; message: string }> {
+  const found = await contextOf(opts.paymentId);
+  if (!found) throw new HttpError(404, 'Pagamento não encontrado.');
+  const provider = getProvider();
+  if (!provider || !provider.createRefund || !provider.listRefunds || provider.name !== found.row.provider) {
+    throw new HttpError(409, 'A devolução pelo painel está desligada (ou a operadora não permite). Faça a devolução no painel da operadora e depois use “Atualizar pagamento”.', { code: 'refund_unavailable' });
+  }
+  // Antes de pedir: põe em dia o que a operadora já sabe (uma devolução feita no painel dela, um pedido anterior sem resposta). Sem conseguir conferir, não
+  // pede às cegas (poderia devolver em dobro).
+  try {
+    await reconcileRefunds(opts.paymentId);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, 'Não foi possível conferir as devoluções na operadora agora. Tente de novo em instantes.', { code: 'provider_unavailable' });
+  }
+
+  const begun = await one<{ r: Row }>('select refund_begin($1::uuid, $2::integer, $3, $4::uuid, $5) as r', [opts.paymentId, opts.amountCents, opts.reason, opts.adminId, opts.note]);
+  const draft = begun!.r;
+  const refundId = String(draft.id);
+  const method = draft.method === 'card' ? 'card' : 'pix';
+  const fail = async (message: string): Promise<never> => {
+    await one('select * from refund_update($1::uuid, $2, null, $3)', [refundId, 'failed', message]);
+    throw new HttpError(422, message, { code: 'refund_rejected' });
+  };
+
+  let item;
+  try {
+    item = await withTimeout(
+      provider.createRefund({ providerChargeId: String(draft.provider_charge_id), method, amountCents: Number(draft.amount_cents), reason: opts.reason }, found.ctx),
+      REFUND_TIMEOUT_MS,
+    );
+  } catch (error) {
+    const kind = providerErrorKind(error);
+    const code = (error as { code?: string }).code;
+    if (kind === 'rejected') {
+      log('devolução recusada pela operadora', { payment: opts.paymentId, code: code ?? 'sem_codigo' });
+      const text: Record<string, string> = {
+        REFUND_AMOUNT_EXCEEDED: 'A ValidaPay diz que este valor passa do que ainda pode ser devolvido desta cobrança.',
+        CHARGE_WITHOUT_END_TO_END_ID: 'A ValidaPay não encontrou o pagamento Pix desta cobrança (ainda não confirmado ou não é Pix).',
+        CHARGE_NOT_FOUND: 'A ValidaPay não encontrou esta cobrança.',
+        TOKEN_REJECTED: 'A ValidaPay recusou as credenciais da loja. Confira as variáveis VALIDAPAY_* na Vercel.',
+        TOKEN_UNAVAILABLE: 'Não foi possível entrar na ValidaPay agora. Nada foi devolvido.',
+      };
+      const status = (error as { httpStatus?: number }).httpStatus;
+      return fail(text[code ?? ''] ?? (status === 403 || status === 401 ? 'A ValidaPay recusou o pedido: a credencial da loja pode não ter permissão para devolver (escopo wallet/write). Nada foi devolvido.' : `A ValidaPay recusou o pedido de devolução${code ? ` (${code})` : ''}. Nada foi devolvido.`));
+    }
+    // Sem resposta / resposta que não dá para entender: a operadora PODE ter criado a devolução. O pedido fica "aguardando resposta" e o painel avisa.
+    log('devolução sem resposta da operadora', { payment: opts.paymentId, kind: kind ?? 'erro' });
+    await query('update payment_refunds set last_error = $2 where id = $1::uuid', [refundId, 'Sem resposta da operadora: a devolução pode ou não ter sido criada. Confira antes de pedir de novo.']);
+    await query('update payments set needs_attention = true, attention_reason = left(coalesce(attention_reason || \' \', \'\') || $2, 300) where id = $1::uuid', [
+      opts.paymentId,
+      'Pedido de devolução sem resposta da operadora: confira se a devolução existe antes de pedir de novo.',
+    ]);
+    const refund = (await refundsOfPayment(opts.paymentId)).find((r) => r.id === refundId)!;
+    await audit({ admin: null, ip: 'unknown' }, { action: 'payment.refund_unknown', summary: `Pedido de devolução do pedido #${draft.order_number} sem resposta da operadora (${brl(Number(draft.amount_cents))})`, entity: 'payment', entityId: opts.paymentId });
+    return { refund, outcome: 'unknown', message: 'A ValidaPay não respondeu. A devolução pode ou não ter sido criada: use “Conferir devolução” antes de pedir de novo.' };
+  }
+
+  const updated = await one<Row>('select * from refund_update($1::uuid, $2, $3, $4)', [refundId, item.status, item.providerRefundId, item.error ?? null]);
+  if (item.status === 'confirmed') {
+    // O cartão pode voltar confirmado na hora: aplica no pagamento (e no pedido, se foi total) com a mesma regra dos avisos.
+    await reconcileRefunds(opts.paymentId).catch(() => undefined);
+  }
+  const refund = (await refundsOfPayment(opts.paymentId)).find((r) => r.id === refundId)!;
+  const outcome = (updated?.status ?? item.status) as 'processing' | 'confirmed' | 'failed';
+  const message =
+    outcome === 'confirmed'
+      ? 'A ValidaPay confirmou a devolução.'
+      : outcome === 'failed'
+        ? 'A ValidaPay informou que a devolução falhou. Nada foi devolvido.'
+        : 'Devolução pedida à ValidaPay. O valor só é dado como devolvido quando ela confirmar: atualize em alguns instantes.';
+  return { refund, outcome, message };
+}
+
 // ---- O que o cliente vê ------------------------------------------------------------------------------------------------------------
 
 export type PaymentView = {
@@ -617,6 +830,8 @@ async function processEvent(provider: PaymentProvider, event: WebhookEvent): Pro
       return;
     }
     const result = await applySnapshot(String(payment.id), snapshot, 'webhook');
+    // Aviso de devolução (refund.requested / confirmed / failed): põe em dia os pedidos de devolução da loja com o que a operadora tem da cobrança.
+    if (event.type.startsWith('refund.') && provider.listRefunds) await reconcileRefunds(String(payment.id));
     await finish(String(payment.id), result?.outcome ?? 'ignored', null);
   } catch (error) {
     // Não processado até o fim: o aviso volta a ser processado na próxima entrega (processed_at continua vazio).

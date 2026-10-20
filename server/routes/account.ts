@@ -7,6 +7,7 @@ import { batch, one, query, updateRow } from '../db.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
 import { maskEmail, normalizeLoginEmail, parseEmail } from '../emailAddress.js';
+import { cancelForCustomer } from '../orderCancel.js';
 import { clearAutoSuppression } from '../email/ledger.js';
 import { confirmPendingMarketing, setMarketingPending } from '../email/preferences.js';
 import { DOMAIN_MESSAGE, checkMailDomain } from '../mailDomain.js';
@@ -471,5 +472,17 @@ export function registerAccount(r: Router) {
     const row = await one<{ order: unknown }>('select get_customer_order($1::uuid, $2::bigint) as "order"', [customer.id, number]);
     if (!row?.order) throw new HttpError(404, 'Pedido não encontrado.');
     return json({ order: row.order });
+  });
+
+  // Cancelamento pela conta: só o pedido da própria conta (o número sozinho nunca basta; a sessão vem do cookie). Mesmas regras do cancelamento por código.
+  r.post('/api/account/orders/:number/cancel', 'public', async (ctx) => {
+    const customer = await requireCustomer(ctx);
+    const number = ctx.params.number;
+    if (!/^\d{1,12}$/.test(number)) throw new HttpError(404, 'Pedido não encontrado.');
+    await limit('order-cancel', customer.id, 600, 12, 'Muitas tentativas de cancelamento. Aguarde alguns minutos ou fale com a loja.');
+    const body = await readJson(ctx.req, 1024);
+    const result = await cancelForCustomer({ hash: null, number, customerId: customer.id, actor: 'Cliente (conta)', reason: body.reason });
+    if (!result) throw new HttpError(404, 'Pedido não encontrado.');
+    return json({ order: result.order, already_cancelled: result.already });
   });
 }

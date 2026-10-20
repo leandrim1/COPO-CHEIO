@@ -99,6 +99,7 @@ const { adminLoginViaApi, finishAdminLogin } = require('./e2e-code.cjs');
   await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   await clearBanners();
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
 
   // =============================================================================================
   console.log('# sem banner de capa: a capa de sempre (gelos)');

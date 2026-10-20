@@ -21,6 +21,7 @@ const body = (page) => page.evaluate(() => document.body.innerText);
 
 (async () => {
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await ctx.route('**/*.mp4', (r) => r.abort());
   await ctx.setExtraHTTPHeaders({ 'x-real-ip': '10.60.0.1' });

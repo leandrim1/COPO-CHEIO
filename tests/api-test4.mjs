@@ -218,7 +218,7 @@ section('9. Pedidos antigos (migração): o UUID do link /pedido/:id continua va
 
   // Versão anterior do site ainda no ar durante um deploy (ou rollback): create_order sem hash devolve "token" UUID
   const old = JSON.parse(
-    psql(`select create_order(jsonb_build_object('customer_name','Compat Antigo','customer_phone','34955553333','delivery_type','pickup','payment_method','pix','items', jsonb_build_array(jsonb_build_object('product_id','${coca.id}','quantity',1))))`),
+    psql(`select create_order(jsonb_build_object('age_confirmed', true, 'customer_name','Compat Antigo','customer_phone','34955553333','delivery_type','pickup','payment_method','pix','items', jsonb_build_array(jsonb_build_object('product_id','${coca.id}','quantity',1))))`),
   );
   check('compat: create_order sem hash (site anterior) devolve token UUID', /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(old.token), old.token);
   check('compat: esse UUID abre o pedido na rota nova', (await x.get(`/api/tracking/${old.token}`)).data?.order?.order_number === old.order_number);

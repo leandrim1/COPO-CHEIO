@@ -130,6 +130,7 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
   await adminLoginViaApi(api, { email: 'dono@copocheio.local', password: 'senha-forte-123' });
   const cat = (await api('POST', '/api/admin/categories', { name: 'Bebidas' })).data.category;
   const browser = await chromium.launch();
+  require('./e2e-age.cjs').patchBrowser(browser);
   const big1 = await makeImage(browser, 1800, 1350, 'image/png', 1);
   const big2 = await makeImage(browser, 1600, 1600, 'image/png', 2);
   const small = await makeImage(browser, 300, 300, 'image/png', 3);

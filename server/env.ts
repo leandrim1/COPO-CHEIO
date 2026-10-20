@@ -3,6 +3,13 @@
 //   credencial do Vercel Blob "copocheio-uploads" (veja blobToken abaixo)
 // Ficam só no servidor: nada aqui é exposto ao navegador.
 
+// Identificador da medição de visitas (Google Analytics 4, formato G-XXXXXXXXXX). NÃO é segredo: ele aparece em qualquer site que usa o GA. Vai ao navegador
+// por GET /api/site; o site só o usa depois do consentimento da pessoa (src/lib/analytics.ts). Valor fora do formato é ignorado.
+export const analyticsId = (): string | null => {
+  const value = (process.env.GA_MEASUREMENT_ID ?? '').trim();
+  return /^G-[A-Z0-9]{4,14}$/.test(value) ? value : null;
+};
+
 export const databaseUrl = (): string | undefined => process.env.DATABASE_URL || process.env.POSTGRES_URL || undefined;
 
 // Vercel Blob tem dois modos de autenticação, e o servidor aceita os dois:

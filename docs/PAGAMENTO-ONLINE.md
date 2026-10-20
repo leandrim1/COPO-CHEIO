@@ -23,8 +23,9 @@
 
 - **3DS** no cartão online (`@validapay/3ds`) e **parcelamento**: o cartão online é só à vista e sem 3DS (veja [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md)). A
   documentação da ValidaPay também **não** mostra divisão (split) para cobrança no cartão, então não há a taxa de serviço do Pix (5%) no cartão online.
-- **Estorno/devolução pela API**: o sistema **registra** a devolução que a ValidaPay informar (consulta de `GET /v1/wallet/refunds` e avisos
-  `refund.*`); devolver o dinheiro continua manual, pelo painel da ValidaPay (o adaptador nunca pede o escopo `wallet/write`).
+- **Estorno/devolução pela API, ligado por padrão**: não. O código existe (migration 0028, botão **Devolver pagamento** para o owner), mas fica **desligado**
+  até a variável `VALIDAPAY_REFUNDS=on` (veja "Devolução pelo painel"). Desligado, o sistema só **registra** a devolução que a ValidaPay informar (consulta de
+  `GET /v1/wallet/refunds` e avisos `refund.*`) e o adaptador **nunca** pede o escopo `wallet/write`. A devolução pela API **nunca foi testada na ValidaPay real**.
 - **Teste no sandbox ou na produção da ValidaPay**: nunca foi feito. Tudo que depende de como a ValidaPay realmente se comporta está listado em
   "O que a documentação não confirma".
 
@@ -181,6 +182,56 @@ A forma "Cartão" (maquininha) continua sendo **paga na entrega ou na retirada**
 O **cartão de crédito online** (o cliente paga pelo site e a taxa do cartão é repassada a ele) é outra forma de pagamento, `card_online`, que nasce **desligada** e
 está descrita em [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md). Ele **não** tem comissão: a documentação do cartão da ValidaPay (`POST /v1/charges`) **não traz o campo
 `split`**; a divisão está documentada **só para o Pix** (`POST /v1/charges/pix`). Os dois fluxos são **separados**: o Pix continua com a subconta e a divisão de 5% (2,5% do cliente + 2,5% do estabelecimento; este guia); o cartão é cobrado na mesma subconta, mas sem divisão.
+
+## Devolução (estorno) pelo painel — desligada por padrão
+
+O que existe (`server/payments/service.ts`, `server/routes/payments.ts`, `src/admin/RefundPanel.tsx`, migration `0028_payment_refunds.sql`):
+
+- Só o **owner** vê **Devolver pagamento** (no detalhe do pedido, em pagamento "Pago"), com valor (inteiro ou parcial), motivo (`CUSTOMER_REQUEST`, `FRAUD`, `BANK_ERROR`, `PIX_CHANGE_ERROR`) e anotação.
+- Cada pedido de devolução vira uma linha em `payment_refunds` (quem pediu, quanto, estado). Um índice do banco impede **dois pedidos abertos** para o mesmo pagamento
+  (duplo clique, nova tentativa depois de resposta perdida): nunca se devolve em dobro.
+- **O dinheiro só é "devolvido" quando a ValidaPay CONFIRMA** (resposta final, `GET /v1/wallet/refunds` ou aviso `refund.confirmed`). Até lá o painel diz "Aguardando a operadora".
+  O pedido **não** muda para "reembolsado" por clique do dono; e o status manual de um pedido ("cancelado") **não é** uma transação financeira.
+- **Resposta perdida / tempo esgotado / 5xx**: o pedido fica "Sem resposta da operadora", o pagamento é marcado para conferência e **nada é repetido às cegas**. O owner usa **Conferir devolução**:
+  a loja pergunta à ValidaPay o que ela tem (por valor e horário); se não houver nada depois de 10 minutos, marca como "não foi devolvida".
+- Antes de cada pedido a loja já consulta a ValidaPay (uma devolução feita direto no painel dela entra em dia) e, **sem conseguir conferir, não pede**.
+- Limites: 30 pedidos / 10 min por administrador; cada pedido e conferência vai para o **registro de atividades** do painel.
+
+**Por que está desligada.** Na documentação da ValidaPay o escopo `wallet/write` é o **mesmo** de `POST /v1/wallet/withdraw` (**saque**) e de `POST /v1/wallet/pay/{chargeId}` (simula pagamento). Uma credencial com esse escopo,
+se vazar, pode **tirar dinheiro da conta**. A loja nunca chama o saque, mas a decisão de dar essa permissão à credencial é do dono. Para ligar (só depois do sandbox):
+crie uma credencial **separada**, com `wallet/write` além dos escopos de [Ligar](#ligar-passo-a-passo-começando-pelo-sandbox), no ambiente certo, e defina `VALIDAPAY_REFUNDS=on`.
+Sem a variável, o botão não aparece e o servidor responde 409 `refund_unavailable`.
+
+**O que a documentação não confirma (e precisa do sandbox)**
+
+| Dúvida | O que a loja faz |
+| --- | --- |
+| A devolução de Pix da subconta exige `X-Sub-Account`? | envia o cabeçalho e, se a ValidaPay responder 404, tenta de novo sem ele |
+| A credencial da loja tem `wallet/write`? | se a ValidaPay recusar (401/403), o painel diz isso e que **nada foi devolvido** |
+| O guia e o schema do `POST /v1/wallet/refunds` divergem no corpo | envia `{ chargeId, amount (em reais), reason }`; cartão acrescenta `accountId`; valida a resposta (valor e cobrança) e trata resposta diferente como ambígua |
+| Quando a devolução do cartão é imediata | só confirma quando a ValidaPay disser |
+
+## Homologação (checklist para o sandbox)
+
+**Nada abaixo foi executado contra a ValidaPay real** (não há credencial de sandbox neste ambiente de desenvolvimento). A coluna "Teste automático" diz o que já é provado
+contra o servidor **FALSO** (`tests/validapay-fake.mjs`), que prova a lógica da loja e não o comportamento da ValidaPay. A integração **não** deve ser dada como validada antes de todos os itens passarem no sandbox.
+
+| # | Item | Teste automático (contra o falso) | Falta no sandbox real |
+| - | ---- | --------------------------------- | --------------------- |
+| 1 | Criação de cobrança Pix | `api-test15` §4, `api-test14`, `e2e-pix` | Pix com divisão para a master; `X-Sub-Account`; validade |
+| 2 | Pagamento confirmado | `api-test15` §5 (aviso verificado + consulta à operadora) | `payment.success` real; comissão "efetivada" no extrato da master |
+| 3 | Recusado ou expirado | `api-test15` §7 (Pix vencido), `api-test22` §7 (cartão recusado) | `charge.expired` e `payment.failed` reais; mensagens de recusa do cartão |
+| 4 | Cartão aprovado e recusado | `api-test22` §4, §7, §8, `e2e-card` | cartões de teste do sandbox; Id Público da subconta gera token válido |
+| 5 | Webhook válido e inválido | `api-test15` §5, `api-test22` §9 (assinatura, token, aviso forjado) | segredo e cabeçalho reais |
+| 6 | Webhook duplicado | `api-test14`, `api-test22` §9 (reentrega não repete efeito) | reentregas reais |
+| 7 | Valor divergente | `api-test15` §6, `api-test22` §13 (não libera; "precisa de conferência") | idem com o aviso real |
+| 8 | Pedido inexistente | `api-test15` §8 (cobrança "órfã" é registrada e sinalizada, não aplicada) | idem com o aviso real |
+| 9 | Falha temporária da API | `api-test15` §8 e §11, `api-test22` §12, `api-test29` (fora do ar, tempo esgotado, resposta perdida) | 5xx e 429 reais; limites de taxa |
+| 10 | Cancelamento do pedido | `api-test15` §7 (Pix cancelado na operadora), `api-test29` (cancelar pelo cliente/painel cancela a cobrança; falha vira "precisa de conferência"), `api-test28` | `DELETE /v1/charges/{id}` real; corrida pagamento × cancelamento |
+| 11 | Reembolso, se disponível | `api-test29`, `tests/unit/validapay-refunds.test.mjs` | **todo o contrato** (tabela acima) e a permissão `wallet/write` |
+| 12 | Reconciliação financeiro × pedido | `api-test14`, `api-test15`, `api-test29` (varredura, "Atualizar pagamento", "Conferir devolução") | extrato real; comissão efetivada |
+
+**Bloqueios hoje:** (a) nenhuma credencial de sandbox da ValidaPay no ambiente; (b) conta/subconta de sandbox aprovada; (c) decisão do dono sobre dar `wallet/write` a uma credencial. Quem tem as credenciais executa a seção "Ligar" e este quadro, anotando o resultado de cada linha aqui.
 
 ## Ligar (passo a passo, começando pelo SANDBOX)
 

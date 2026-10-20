@@ -1,7 +1,8 @@
 import { Check, LoaderCircle, ShieldCheck, Trash2, XCircle } from 'lucide-react';
-import { useId, useState } from 'react';
+import { useId, useState, useSyncExternalStore } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { api, friendlyError } from '../lib/api';
+import { analyticsConfigured, readConsent, setConsent, subscribeConsent } from '../lib/analytics';
 import { formatPhone } from '../lib/format';
 import { fullAddress, storeWhatsappUrl, useShop } from './data';
 import { Field, PageShell } from './shell';
@@ -11,7 +12,7 @@ import { BLUE_BUTTON, FIELD, GHOST_BUTTON, WHATSAPP_BUTTON, WhatsAppIcon } from 
 // O texto não substitui a revisão de um profissional jurídico; razão social, CNPJ e o encarregado (DPO) da loja são dela e não
 // estão inventados aqui: a página usa o nome, o WhatsApp e o endereço cadastrados no painel.
 
-const UPDATED = '11 de outubro de 2026';
+const UPDATED = '20 de outubro de 2026';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   const id = useId();
@@ -146,8 +147,32 @@ function RequestForm() {
   );
 }
 
+// Só aparece se a loja ligou a medição de visitas (Google Analytics): mostra a escolha atual e deixa mudar de ideia a qualquer momento.
+function MeasurementPreferences() {
+  const consent = useSyncExternalStore(subscribeConsent, readConsent, () => null);
+  return (
+    <Section title="Medição de visitas">
+      <p>
+        A loja pode contar as visitas ao site com o Google Analytics, para saber quais páginas ajudam e quais atrapalham. Só acontece se você aceitar: sem o seu “sim”, o site nem se conecta ao Google para isso. A medição não leva seu nome, telefone, e-mail, endereço nem o conteúdo do pedido, e o endereço das páginas pessoais (pedido, acompanhamento e conta) é reduzido ao tipo da página.
+      </p>
+      <p data-measurement-state={consent ?? 'unset'} className="font-semibold text-white">
+        {consent === 'granted' ? 'Você aceitou a medição de visitas.' : consent === 'denied' ? 'Você recusou a medição de visitas.' : 'Você ainda não escolheu.'}
+      </p>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" data-measurement-allow onClick={() => setConsent('granted')} disabled={consent === 'granted'} className={`${BLUE_BUTTON} disabled:opacity-50`}>
+          Permitir a medição
+        </button>
+        <button type="button" data-measurement-deny onClick={() => setConsent('denied')} disabled={consent === 'denied'} className={`${GHOST_BUTTON} disabled:opacity-50`}>
+          Não permitir
+        </button>
+      </div>
+    </Section>
+  );
+}
+
 export function PrivacyPage() {
   const { store, cart } = useShop();
+  const measured = useSyncExternalStore(subscribeConsent, analyticsConfigured, () => false);
   const [cleared, setCleared] = useState(false);
   const address = fullAddress(store);
   const phone = store.whatsapp ? formatPhone(store.whatsapp) : '';
@@ -182,10 +207,22 @@ export function PrivacyPage() {
           <List
             items={[
               <>
-                <strong className="text-white">Ao fazer um pedido:</strong> nome, telefone, e-mail (opcional), endereço de entrega (rua, número, bairro, complemento e referência) ou retirada, forma de pagamento, valor do troco, observações e os itens. Servem para preparar, entregar e permitir que você acompanhe o pedido.
+                <strong className="text-white">Ao fazer um pedido:</strong> nome, telefone, e-mail (opcional), endereço de entrega (rua, número, bairro, complemento e referência) ou retirada, o horário combinado quando você agenda, forma de pagamento, valor do troco, observações, o código do cupom usado e os itens. Servem para preparar, entregar e permitir que você acompanhe o pedido.
               </>,
               <>
-                <strong className="text-white">Se criar uma conta (opcional):</strong> nome, e-mail, telefone, senha e endereço salvo. A senha é guardada só de forma embaralhada (hash): nem a loja consegue lê-la. Servem para guardar o histórico e agilizar os próximos pedidos. A conta só vale depois de você confirmar o e-mail.
+                <strong className="text-white">Maioridade (18+):</strong> em pedidos com bebida alcoólica, guardamos apenas que você declarou ter 18 anos ou mais (data, hora e versão do texto que você viu) e, depois, quem conferiu o documento na entrega e quando. <em>Não</em> pedimos nem guardamos data de nascimento, número ou foto de documento: o documento é só mostrado ao entregador ou ao atendente, na hora. Serve para cumprir a regra de que bebida alcoólica não é vendida a menores de 18 anos.
+              </>,
+              <>
+                <strong className="text-white">CEP (opcional):</strong> se você informa o CEP no pedido, o nosso servidor consulta o serviço público ViaCEP para preencher rua e bairro. Esse serviço recebe apenas o CEP: não recebe o seu nome, telefone nem o seu endereço de rede (IP), que ficam só conosco. O CEP digitado não é gravado no pedido.
+              </>,
+              <>
+                <strong className="text-white">Se criar uma conta (opcional):</strong> nome, e-mail, telefone, senha e endereços salvos (até 5). A senha é guardada só de forma embaralhada (hash): nem a loja consegue lê-la. Servem para guardar o histórico e agilizar os próximos pedidos. A conta só vale depois de você confirmar o e-mail.
+              </>,
+              <>
+                <strong className="text-white">Pontos (só se a loja tiver programa de pontos e você tiver conta):</strong> guardamos o seu saldo e o extrato (que pedido deu pontos, a data e a quantidade) e os cupons que você trocou. Servem para creditar, estornar e trocar os pontos. Visitante (sem conta) não acumula pontos. Excluir a conta apaga o saldo, o extrato e os cupons de troca.
+              </>,
+              <>
+                <strong className="text-white">Avaliação do pedido (opcional):</strong> depois de entregue, você pode dar uma nota de 1 a 5 e escrever um comentário. A avaliação fica ligada ao pedido para a loja moderar; ela só aparece no site depois que a loja publica e, nele, aparecem apenas a nota, o comentário e a data, nunca o seu nome ou telefone. Por isso, não escreva dados pessoais no comentário. Você pode pedir a remoção pelo formulário desta página.
               </>,
               <>
                 <strong className="text-white">Segurança:</strong> o seu endereço de rede (IP) e o horário das tentativas de entrar, criar conta, enviar pedido ou usar formulários. Servem para barrar fraudes e abusos e são apagados automaticamente em até 1 dia.
@@ -204,7 +241,12 @@ export function PrivacyPage() {
               </>,
             ]}
           />
-          <p>Não vendemos os seus dados, não fazemos perfil de consumo e o site não usa anúncios nem ferramentas de estatística de terceiros.</p>
+          <p>
+            Não vendemos os seus dados e não fazemos perfil de consumo.{' '}
+            {measured
+              ? 'O site não usa anúncios. A contagem de visitas com o Google Analytics só acontece se você aceitar (veja “Medição de visitas” abaixo).'
+              : 'O site não usa anúncios nem ferramentas de estatística de terceiros.'}
+          </p>
         </Section>
 
         <Section title="Cookies e dados guardados no seu aparelho">
@@ -214,8 +256,15 @@ export function PrivacyPage() {
                 <strong className="text-white">Cookies necessários:</strong> um mantém você logado na conta (30 dias) e outro protege o cadastro contra uso indevido (7 dias). Não são cookies de publicidade nem de rastreamento.
               </>,
               <>
-                <strong className="text-white">Armazenamento local do navegador:</strong> o seu pedido em andamento (carrinho), os dados do último pedido para preencher o próximo (nome, telefone, e-mail e endereço), uma cópia do cardápio para abrir mais rápido e a lista de pedidos recentes deste aparelho.
+                <strong className="text-white">Armazenamento local do navegador:</strong> o seu pedido em andamento (carrinho), os dados do último pedido para preencher o próximo (nome, telefone, e-mail e endereço), uma cópia do cardápio para abrir mais rápido, a lista de pedidos recentes deste aparelho e a sua resposta à pergunta de maioridade (para não perguntar de novo a cada visita){measured ? ' e a sua escolha sobre a medição de visitas' : ''}.
               </>,
+              ...(measured
+                ? [
+                    <>
+                      <strong className="text-white">Cookies de medição (Google Analytics):</strong> só existem se você aceitar a medição de visitas. Servem para contar visitas e páginas; não levam seu nome, telefone, e-mail, endereço nem o conteúdo do pedido, e a loja não usa anúncios.
+                    </>,
+                  ]
+                : []),
             ]}
           />
           <p>Em computador compartilhado, apague tudo no botão abaixo.</p>
@@ -231,6 +280,8 @@ export function PrivacyPage() {
           </div>
         </Section>
 
+        {measured && <MeasurementPreferences />}
+
         <Section title="Com quem os dados passam">
           <p>Para o site funcionar, usamos serviços de terceiros. Cada um recebe só o necessário para a sua função:</p>
           <List
@@ -244,6 +295,13 @@ export function PrivacyPage() {
               <>
                 <strong className="text-white">WhatsApp:</strong> ao tocar num botão de WhatsApp você sai do site e a conversa segue as regras do WhatsApp.
               </>,
+              ...(measured
+                ? [
+                    <>
+                      <strong className="text-white">Google Analytics:</strong> só se você aceitar a medição de visitas; o Google recebe o seu IP e dados do navegador para contar a visita, sem nenhum dado do seu pedido.
+                    </>,
+                  ]
+                : []),
               <>
                 <strong className="text-white">Google Maps:</strong> quando a loja cadastra o endereço, a seção Contato mostra um mapa do Google. Ele só carrega quando você rola até essa seção e, nesse momento, o Google recebe o seu IP e dados do navegador.
               </>,

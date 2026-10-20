@@ -1,6 +1,7 @@
 import {
   Boxes,
   ExternalLink,
+  Gift,
   Image as ImageIcon,
   LayoutDashboard,
   LogOut,
@@ -10,7 +11,9 @@ import {
   Package,
   Settings,
   ShoppingBag,
+  Star,
   Tags,
+  Ticket,
   Users,
   Volume2,
   VolumeX,
@@ -26,6 +29,9 @@ import type { AdminAccount } from '../lib/types';
 import { ConfirmProvider, IconButton, Spinner, ToastProvider, cx, useToast } from './ui';
 import BannersPage from './Banners';
 import CategoriesPage from './Categories';
+import CouponsPage from './Coupons';
+import LoyaltyPage from './Loyalty';
+import ReviewsPage from './Reviews';
 import CustomersPage from './Customers';
 import DashboardPage from './Dashboard';
 import EmailsPage from './Emails';
@@ -258,6 +264,9 @@ const MENU: { href: string; label: string; icon: typeof Package; owner?: boolean
   { href: '/admin/emails', label: 'E-mails', icon: Mail },
   { href: '/admin/produtos', label: 'Produtos', icon: Package },
   { href: '/admin/categorias', label: 'Categorias', icon: Tags },
+  { href: '/admin/cupons', label: 'Cupons', icon: Ticket, owner: true },
+  { href: '/admin/fidelidade', label: 'Fidelidade', icon: Gift, owner: true },
+  { href: '/admin/avaliacoes', label: 'Avaliações', icon: Star },
   { href: '/admin/estoque', label: 'Estoque', icon: Boxes },
   { href: '/admin/site', label: 'Site', icon: Monitor },
   { href: '/admin/banners', label: 'Banners', icon: ImageIcon },
@@ -421,6 +430,12 @@ function route(pathname: string): { title: string; page: ReactNode } | null {
       return id ? { title: id === 'novo' ? 'Novo produto' : 'Editar produto', page: <ProductFormPage id={id} key={id} /> } : { title: 'Produtos', page: <ProductsPage /> };
     case 'categorias':
       return { title: 'Categorias', page: <CategoriesPage /> };
+    case 'cupons':
+      return { title: 'Cupons', page: <CouponsPage /> };
+    case 'fidelidade':
+      return { title: 'Fidelidade', page: <LoyaltyPage /> };
+    case 'avaliacoes':
+      return { title: 'Avaliações', page: <ReviewsPage /> };
     case 'estoque':
       return { title: 'Estoque', page: <StockPage /> };
     case 'site':

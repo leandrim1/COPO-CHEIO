@@ -1,11 +1,14 @@
-import { Bell, CheckCircle2, Clock, CreditCard, History, Plus, RefreshCw, ShieldAlert, Store, Trash2, Truck, Users } from 'lucide-react';
+import { Bell, CheckCircle2, Clock, CreditCard, History, Plus, RefreshCw, Scale, ShieldAlert, Store, Trash2, Truck, Users } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
-import { formatPhone, maskPhone, money, moneyInput, onlyDigits, parseMoney } from '../lib/format';
+import { formatDateTime, formatPhone, maskPhone, money, moneyInput, onlyDigits, parseMoney } from '../lib/format';
 import { DAYS, isOpenNow } from '../lib/hours';
 import type { AdminAccount, AuditEntry, DeliveryZone, OpeningHours, PaymentOption, StoreSettings } from '../lib/types';
 import { playOrderChime, useAdmin, useLiveOrders } from './AdminApp';
+import { CouriersCard } from './Couriers';
+import { LegalPagesCard } from './LegalPages';
+import { SchedulingCard, SpecialDaysCard } from './Scheduling';
 import { TwoFactorCard } from './TwoFactor';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, IconButton, Modal, PageHeader, Spinner, Switch, cx, useConfirm, useToast } from './ui';
 
@@ -16,7 +19,8 @@ const TABS = [
   { id: 'pagamento', label: 'Pagamento', icon: CreditCard },
   { id: 'painel', label: 'Painel', icon: Bell },
   { id: 'equipe', label: 'Administradores', icon: Users },
-  // Só o owner vê (a lista de quem fez o quê no painel).
+  // Só o owner vê: textos de termos e políticas e a lista de quem fez o quê no painel.
+  { id: 'politicas', label: 'Termos e políticas', icon: Scale },
   { id: 'atividades', label: 'Atividades', icon: History },
 ] as const;
 type Tab = (typeof TABS)[number]['id'];
@@ -199,6 +203,7 @@ function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
   };
 
   return (
+    <>
     <form onSubmit={submit} noValidate>
       <Card
         title="Horário de funcionamento"
@@ -240,6 +245,8 @@ function HoursTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: Store
         <Footer saving={saving} />
       </Card>
     </form>
+    <SpecialDaysCard />
+    </>
   );
 }
 
@@ -255,6 +262,8 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
     fee: moneyInput(Number(store.delivery_fee)),
     min: moneyInput(Number(store.min_order)),
     time: store.delivery_time ?? '',
+    free_enabled: store.free_delivery_enabled === true,
+    free_min: Number(store.free_delivery_min) > 0 ? moneyInput(Number(store.free_delivery_min)) : '',
   });
   const [zones, setZones] = useState<DeliveryZone[] | null>(null);
   const [zone, setZone] = useState<{ id?: string; name: string; fee: string; active: boolean } | null>(null);
@@ -284,8 +293,21 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
       toast.error('Deixe pelo menos uma opção ativa.', 'Delivery ou retirada.');
       return;
     }
+    const freeMin = form.free_min.trim() ? parseMoney(form.free_min) : 0;
+    if (freeMin === null || Number.isNaN(freeMin) || (form.free_enabled && freeMin <= 0)) {
+      toast.error('Confira a entrega grátis.', 'Informe o valor do pedido a partir do qual a entrega é grátis (maior que zero).');
+      return;
+    }
     await save(
-      { delivery_enabled: form.delivery_enabled, pickup_enabled: form.pickup_enabled, delivery_fee: fee, min_order: min, delivery_time: form.time.trim() || null },
+      {
+        delivery_enabled: form.delivery_enabled,
+        pickup_enabled: form.pickup_enabled,
+        delivery_fee: fee,
+        min_order: min,
+        delivery_time: form.time.trim() || null,
+        free_delivery_enabled: form.free_enabled,
+        free_delivery_min: freeMin,
+      },
       'Entrega salva.',
     );
   };
@@ -340,9 +362,26 @@ function DeliveryTab({ store, onSaved }: { store: StoreSettings; onSaved: (s: St
               {(p) => <input {...p} value={form.time} maxLength={30} onChange={(e) => setForm({ ...form, time: e.target.value })} className={INPUT} placeholder="30 a 45 min" />}
             </Field>
           </div>
+          <div className="mt-5 space-y-4 border-t border-white/[0.06] pt-5" data-free-delivery-settings>
+            <Switch
+              checked={form.free_enabled}
+              onChange={(v) => setForm({ ...form, free_enabled: v })}
+              label="Entrega grátis a partir de um valor"
+              description="Só na entrega. O valor conta os itens já com o desconto de cupom. Vale a taxa única ou a do bairro: se o pedido chegar ao valor, a taxa não é cobrada."
+            />
+            {form.free_enabled && (
+              <Field label="Entrega grátis a partir de (R$)" hint="Pedidos já feitos não mudam.">
+                {(p) => <input {...p} inputMode="decimal" value={form.free_min} onChange={(e) => setForm({ ...form, free_min: e.target.value })} className={`${INPUT} sm:max-w-xs`} placeholder="80,00" data-free-delivery-min />}
+              </Field>
+            )}
+          </div>
           <Footer saving={saving} />
         </Card>
       </form>
+
+      <SchedulingCard store={store} onSaved={onSaved} />
+
+      <CouriersCard />
 
       <Card
         title="Taxa por bairro"
@@ -534,7 +573,29 @@ function PanelTab() {
 
 // ---- Estado do sistema --------------------------------------------------------------------------
 
-type Health = { database: 'ok' | 'missing' | 'error'; blob: 'ok' | 'missing'; mail: 'ok' | 'missing'; site_url: 'ok' | 'missing'; missing: string[]; admin_login_code?: 'on' | 'off' };
+type Health = {
+  database: 'ok' | 'missing' | 'error';
+  blob: 'ok' | 'missing';
+  mail: 'ok' | 'missing';
+  site_url: 'ok' | 'missing';
+  missing: string[];
+  admin_login_code?: 'on' | 'off';
+  // Rotina automática (cron): quando rodou pela última vez e se deu certo; `cron_secret` ausente = a Vercel recebe 401 ao chamá-la.
+  jobs?: { sweep: { last_run_at: string; ok: boolean; detail: string | null } | null; cron_secret: 'ok' | 'missing' };
+};
+
+// "Rotina automática" no estado do sistema: a rotina diária da Vercel (ou um agendador externo) encerra o Pix/cartão vencido, manda a fila de e-mails e limpa dados vencidos.
+// Mais de 26 horas sem rodar = atrasada (o cron da Vercel roda uma vez por dia).
+function jobRow(jobs: Health['jobs']): { label: string; hint: string; state: string } {
+  const label = 'Rotina automática';
+  if (!jobs) return { label, hint: 'Pix vencido, fila de e-mails e limpeza.', state: 'never' };
+  if (jobs.cron_secret === 'missing' && !jobs.sweep) return { label, hint: 'Falta o CRON_SECRET na Vercel: o cron diário recebe "não autorizado".', state: 'missing' };
+  if (!jobs.sweep) return { label, hint: 'Ainda não rodou. Ela roda uma vez por dia na Vercel (ou por um agendador externo).', state: 'never' };
+  const hours = (Date.now() - new Date(jobs.sweep.last_run_at).getTime()) / 3_600_000;
+  const when = `Última vez: ${formatDateTime(jobs.sweep.last_run_at)}${jobs.sweep.detail ? ` (${jobs.sweep.detail})` : ''}.`;
+  if (!jobs.sweep.ok) return { label, hint: `${when} Falhou.`, state: 'failed' };
+  return { label, hint: when, state: hours > 26 ? 'stale' : 'ok' };
+}
 
 // Mostra se as peças de que o site depende estão funcionando (banco, imagens, e-mail, endereço do site) e, se faltar alguma
 // configuração, qual (só o nome da variável: valores e senhas nunca aparecem).
@@ -565,6 +626,7 @@ function SystemStatusCard() {
         { label: 'Endereço do site', hint: 'Usado nos links dos e-mails.', state: health.site_url },
         // O login do painel exige um código enviado por e-mail a cada entrada. "Desligado" só existe com o interruptor de emergência (ADMIN_EMAIL_CODE=off).
         { label: 'Código por e-mail no login do painel', hint: 'Cada entrada no painel pede o código enviado ao e-mail do administrador.', state: health.admin_login_code === 'off' ? 'off' : 'ok' },
+        jobRow(health.jobs),
       ]
     : [];
   return (
@@ -602,6 +664,14 @@ function SystemStatusCard() {
                   <Badge tone="red">
                     <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Desligado (emergência)
                   </Badge>
+                ) : row.state === 'failed' ? (
+                  <Badge tone="red">
+                    <ShieldAlert className="h-3 w-3" aria-hidden="true" /> Falhou
+                  </Badge>
+                ) : row.state === 'stale' ? (
+                  <Badge tone="amber">Atrasada</Badge>
+                ) : row.state === 'never' ? (
+                  <Badge tone="amber">Nunca rodou</Badge>
                 ) : (
                   <Badge tone="amber">Não configurado</Badge>
                 )}
@@ -966,7 +1036,7 @@ function ActivityTab() {
 
 export default function SettingsPage() {
   const { user } = useAdmin();
-  const tabs = useMemo(() => TABS.filter((t) => t.id !== 'atividades' || user.role === 'owner'), [user.role]);
+  const tabs = useMemo(() => TABS.filter((t) => (t.id !== 'atividades' && t.id !== 'politicas') || user.role === 'owner'), [user.role]);
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.slice(1) as Tab;
     return tabs.some((t) => t.id === hash) ? hash : 'loja';
@@ -1019,6 +1089,8 @@ export default function SettingsPage() {
         return <PanelTab />;
       case 'equipe':
         return <TeamTab />;
+      case 'politicas':
+        return <LegalPagesCard />;
       case 'atividades':
         return <ActivityTab />;
     }

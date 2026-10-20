@@ -238,7 +238,7 @@ export function EmptyState({ icon, title, description, action }: { icon: ReactNo
   return (
     <div className="flex flex-col items-center px-6 py-14 text-center">
       <span className="grid h-14 w-14 place-items-center rounded-2xl bg-[#145CFF]/[0.12] text-[#5B8CFF] ring-1 ring-[#145CFF]/30">{icon}</span>
-      <h3 className="mt-4 text-base font-bold text-white">{title}</h3>
+      <h2 className="mt-4 text-base font-bold text-white">{title}</h2>
       {description && <p className="mt-1 max-w-sm text-sm text-white/55">{description}</p>}
       {action && <div className="mt-5">{action}</div>}
     </div>
