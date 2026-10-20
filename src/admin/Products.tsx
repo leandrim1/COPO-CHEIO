@@ -6,7 +6,7 @@ import { comboNote, isEnergetico2L } from '../lib/combo';
 import { isoToLocal, localToIso, money, moneyInput, normalizeText, parseMoney, promoState } from '../lib/format';
 import { navigate } from '../lib/router';
 import type { Category, ProductRecord } from '../lib/types';
-import { commitProductPhoto, discardImages, emptyImage, generateThumbnailsFor, isStoredProductPhoto } from './client';
+import { commitProductPhoto, discardImages, emptyImage, generateThumbnailsFor } from './client';
 import type { ImageValue } from './client';
 import { Badge, Button, Card, EmptyState, ErrorState, Field, INPUT, ImageInput, Modal, PageHeader, Skeleton, Spinner, Switch, cx, useConfirm, useToast } from './ui';
 
@@ -410,14 +410,14 @@ export function ProductsPage() {
     }
   };
 
-  // Fotos do Blob da loja que ainda não têm miniatura (as cadastradas antes das miniaturas existirem).
-  const withoutThumbs = useMemo(() => (products ?? []).filter((p) => isStoredProductPhoto(p.image_url) && !p.image_sm_url), [products]);
+  // Todo produto que tem foto e ainda não tem miniatura: as cadastradas antes das miniaturas existirem, as que falharam ao salvar e as importadas de outros endereços.
+  const withoutThumbs = useMemo(() => (products ?? []).filter((p) => Boolean(p.image_url) && !p.image_sm_url), [products]);
 
   const generateThumbs = async () => {
     const queue = withoutThumbs;
     const go = await confirm({
       title: 'Gerar miniaturas das fotos',
-      description: `${queue.length} foto(s) ainda não têm miniatura. Com elas, o cardápio do site baixa umas 7 vezes menos dados no celular (cada foto da lista passa de ~150 KB para ~15 KB) e rola mais leve. A foto original não muda. Pode levar alguns minutos: deixe esta página aberta. Se fechar, é só voltar e clicar de novo: continua de onde parou.`,
+      description: `${queue.length} foto(s) ainda não têm miniatura. Com elas, o cardápio do site baixa umas 7 vezes menos dados no celular (cada foto da lista passa de ~150 KB para ~15 KB) e rola mais leve. A foto original não muda (as miniaturas ficam guardadas no armazenamento da loja, mesmo quando a foto veio de outro endereço). Pode levar alguns minutos: deixe esta página aberta. Se fechar, é só voltar e clicar de novo: continua de onde parou.`,
       confirmLabel: 'Gerar agora',
       tone: 'primary',
     });
@@ -480,6 +480,7 @@ export function ProductsPage() {
       {p.featured && <Badge tone="blue">Destaque</Badge>}
       {p.ice_choice_required && <Badge tone="blue">Pede o gelo</Badge>}
       {p.alcoholic === false && <Badge>Sem álcool</Badge>}
+      {p.image_url && !p.image_sm_url && <Badge tone="amber">Miniatura pendente</Badge>}
       {promoState(p) === 'scheduled' && <Badge tone="violet">Promoção agendada</Badge>}
       {promoState(p) === 'expired' && <Badge>Promoção encerrada</Badge>}
       {p.active && hiddenByCategory(p) && <Badge tone="amber">Categoria oculta</Badge>}
@@ -781,6 +782,23 @@ export function ProductFormPage({ id }: { id: string }) {
   const [missing, setMissing] = useState(false);
   const [newCategory, setNewCategory] = useState<string | null>(null);
   const { remove } = useProductActions(() => navigate('/admin/produtos'));
+  const [makingThumbs, setMakingThumbs] = useState(false);
+
+  // A foto que já está salva neste produto não tem miniatura: gera agora, sem esperar a lista (a foto não muda).
+  const makeThumbsHere = async () => {
+    if (!original?.image_url) return;
+    setMakingThumbs(true);
+    try {
+      const made = await generateThumbnailsFor(original.image_url);
+      const { product } = await api.patch<{ product: ProductRecord }>(`/api/admin/products/${original.id}`, { image_sm_url: made.sm, image_md_url: made.md, thumbnails_for: original.image_url });
+      setOriginal((o) => (o ? { ...o, image_sm_url: product.image_sm_url, image_md_url: product.image_md_url } : o));
+      toast.success('Miniaturas geradas.', 'O site já usa as versões leves desta foto.');
+    } catch (err) {
+      toast.error('Não foi possível gerar as miniaturas.', friendlyError(err, err instanceof Error ? err.message : ''));
+    } finally {
+      setMakingThumbs(false);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -1155,6 +1173,14 @@ export function ProductFormPage({ id }: { id: string }) {
         <div className="space-y-4">
           <Card title="Imagem">
             <ImageInput label="Foto do produto" value={form.image} onChange={(v) => set('image', v)} hint="Quadrada, de preferência com fundo transparente (PNG/WebP)." />
+            {original?.image_url && !original.image_sm_url && !form.image.file && form.image.url === original.image_url && (
+              <div data-thumbs-here className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/[0.07] p-3">
+                <p className="text-sm text-amber-100">Esta foto ainda não tem miniatura: o site baixa a foto inteira em cada lista. Gerar a miniatura deixa o cardápio mais leve no celular (a foto não muda).</p>
+                <Button type="button" variant="secondary" className="mt-2" loading={makingThumbs} icon={<Images className="h-4 w-4" aria-hidden="true" />} onClick={() => void makeThumbsHere()}>
+                  Gerar miniatura desta foto
+                </Button>
+              </div>
+            )}
           </Card>
           <Card title="Venda de bebida alcoólica">
             <Switch

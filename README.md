@@ -208,6 +208,9 @@ produto e envie a foto.
     miniatura continua mostrando a foto original, como antes. O servidor garante que as miniaturas **sempre pertencem à foto atual** (trocar ou
     tirar a foto zera as duas) e as libera do Blob junto com ela. **Fotos que já existem** ganham miniatura pelo botão **Gerar miniaturas (N)**
     em *Produtos* (uma vez, depois do deploy da 0025: o navegador busca cada foto pelo servidor, gera as duas cópias e grava; pode parar e continuar).
+    O botão aparece **sempre que houver produto com foto e sem miniatura**, inclusive quando a foto veio de **outro endereço** (cardápio importado): a miniatura
+    é gravada no armazenamento da loja e a foto continua apontando para o endereço de origem. Cada produto assim ganha o selo **Miniatura pendente** na lista e,
+    no cadastro do produto, o botão **Gerar miniatura desta foto**.
     Detalhes e números em [`docs/DESEMPENHO.md`](docs/DESEMPENHO.md).
 - **Estoque**: vazio = não controla. Com controle, cada pedido desconta; chegou a 0, vira ESGOTADO; repôs, volta a vender. Mexer na
   quantidade de um produto que **não** controla estoque exige ativar o controle de propósito (botão "Começar a controlar" em

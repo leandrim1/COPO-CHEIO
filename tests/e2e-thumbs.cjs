@@ -68,7 +68,7 @@ async function newCtx(browser, viewport, opts = {}) {
   const blobRequests = [];
   // Nada sai da máquina de teste: a foto "de outro endereço" (https://exemplo.invalid) falha na hora em vez de esperar a internet de verdade (no CI ela pode
   // demorar a responder, e o `networkidle` das páginas esperaria por ela até estourar o tempo).
-  await ctx.route(/^https:\/\/exemplo\.invalid\//, (route) => route.abort());
+  await ctx.route(/^https:\/\/(exemplo\.invalid|fotos-externas\.example)\//, (route) => route.abort());
   await ctx.route(/\.public\.blob\.vercel-storage\.com\//, async (route) => {
     const path = new URL(route.request().url()).pathname;
     blobRequests.push(path);
@@ -227,10 +227,15 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
   // =============================================================================================
   console.log('# painel: "Gerar miniaturas" cobre as fotos que já existiam');
   {
-    // Foto antiga (só a original no Blob, como as cadastradas antes das miniaturas existirem) + uma foto de outro endereço (importada).
+    // Foto antiga (só a original no Blob, como as cadastradas antes das miniaturas existirem) + duas fotos de outro endereço (cardápio importado): uma que o servidor
+    // consegue ler (site público) e uma que não (o site não existe).
     const up = await api('POST', '/api/admin/upload?folder=products', bigWebp, 'image/webp');
     const old = (await api('POST', '/api/admin/products', { name: 'Foto antiga', price: 6, category_id: cat.id, image_url: up.data.url })).data.product;
-    await api('POST', '/api/admin/products', { name: 'Foto de fora', price: 6, category_id: cat.id, image_url: 'https://exemplo.invalid/foto.webp' });
+    const outsideUrl = `https://fotos-externas.example${new URL((await api('POST', '/api/admin/upload?folder=products', bigWebp, 'image/webp')).data.url).pathname}`;
+    const outside = (await api('POST', '/api/admin/products', { name: 'Foto de fora', price: 6, category_id: cat.id, image_url: outsideUrl })).data.product;
+    const outside2Url = `https://fotos-externas.example${new URL((await api('POST', '/api/admin/upload?folder=products', bigWebp, 'image/webp')).data.url).pathname}`;
+    const outside2 = (await api('POST', '/api/admin/products', { name: 'Foto de fora dois', price: 6, category_id: cat.id, image_url: outside2Url })).data.product;
+    await api('POST', '/api/admin/products', { name: 'Foto quebrada', price: 6, category_id: cat.id, image_url: 'https://exemplo.invalid/foto.webp' });
     // Antes de gerar: no site, a foto antiga é um <img> simples (sem srcset), exatamente como era.
     {
       const { ctx, page } = await newCtx(browser, { width: 390, height: 844 });
@@ -241,22 +246,70 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
       await ctx.close();
     }
     await a.goto(BASE + '/admin/produtos', { waitUntil: 'networkidle' });
-    // Contam: "Sem miniatura" (acima) e "Foto antiga". A de outro endereço e as que já têm miniatura não contam.
-    const button = a.getByRole('button', { name: /Gerar miniaturas \(2\)/ });
-    ok(await button.isVisible(), 'o botão aparece com a contagem certa (2 fotos do Blob sem miniatura)');
+    // Contam TODOS os produtos com foto e sem miniatura: "Sem miniatura" (acima), "Foto antiga", as duas "Foto de fora" e "Foto quebrada". As que já têm miniatura não contam.
+    const button = a.getByRole('button', { name: /Gerar miniaturas \(5\)/ });
+    ok(await button.isVisible(), 'o botão aparece com a contagem certa (5 fotos sem miniatura, inclusive as de outro endereço)');
+    ok((await a.getByText('Miniatura pendente').count()) >= 5, 'a lista marca cada produto sem miniatura com "Miniatura pendente"');
     await button.click();
     const dialog = a.getByRole('dialog');
-    ok(await dialog.getByText(/2 foto\(s\) ainda não têm miniatura/).isVisible(), 'a confirmação explica o que vai acontecer');
+    ok(await dialog.getByText(/5 foto\(s\) ainda não têm miniatura/).isVisible(), 'a confirmação explica o que vai acontecer');
     await dialog.getByRole('button', { name: 'Gerar agora' }).click();
-    ok(await until(async () => /Miniaturas geradas/.test(await toasts(a)), 60000), 'termina com o aviso de sucesso', await toasts(a));
+    ok(await until(async () => /ficaram sem miniatura/.test(await toasts(a)), 60000), 'termina avisando de quantas fotos ficaram sem miniatura (a do site que não existe)', await toasts(a));
+    ok(/1 de 5 foto\(s\) ficaram sem miniatura/.test(await toasts(a)), 'e diz que foi 1 de 5', await toasts(a));
     const made = psql(`select image_sm_url, image_md_url from products where id = '${old.id}'`).split('|');
     ok(made.every(Boolean) && made[0] !== up.data.url && made[1] !== up.data.url, 'a foto antiga ganhou duas miniaturas novas', made);
     const [mw, sw] = await Promise.all([blobBytes(made[1]), blobBytes(made[0])]).then((b) => b.map(webpSize));
     ok(mw?.w === 720 && sw?.w === 400, 'de 720 e 400 px', [mw, sw]);
     ok(psql(`select image_url from products where id = '${old.id}'`) === up.data.url, 'a foto original não mudou');
     ok(psql("select count(*) from products where name = 'Sem miniatura' and image_sm_url is not null and image_sm_url <> image_url") === '1', 'a outra foto sem miniatura também foi atendida');
-    ok(psql("select count(*) from products where name = 'Foto de fora' and image_sm_url is null") === '1', 'a foto de outro endereço ficou como estava');
-    ok((await a.getByRole('button', { name: /Gerar miniaturas/ }).count()) === 0, 'o botão some quando não há mais nada a fazer');
+    const ext = psql(`select image_url || '|' || image_sm_url || '|' || image_md_url from products where id = '${outside.id}'`).split('|');
+    ok(ext[0] === outsideUrl && /\.blob\.vercel-storage\.com\/products\//.test(ext[1]) && /\.blob\.vercel-storage\.com\/products\//.test(ext[2]), 'a foto de outro endereço ganhou miniaturas no armazenamento da loja e continua apontando para o endereço de origem', ext);
+    ok(psql("select count(*) from products where name = 'Foto quebrada' and image_sm_url is null") === '1', 'a foto de um site que não existe ficou como estava');
+    // O botão NÃO some enquanto houver produto com foto e sem miniatura (era o defeito: sumia por causa das fotos de outro endereço).
+    const again = a.getByRole('button', { name: /Gerar miniaturas \(1\)/ });
+    await again.waitFor({ timeout: 10000 });
+    ok(await again.isVisible(), 'sobrou 1 sem miniatura: o botão continua na tela, com a contagem 1');
+    ok((await a.getByText('Miniatura pendente').count()) >= 1, 'e a lista ainda marca o produto pendente');
+
+    // Formulário do produto: a foto sem miniatura oferece gerar só a dela. O lote acima já atendeu este produto; volta a deixá-lo pendente (como uma foto
+    // recém-importada) para testar o botão do cadastro.
+    ok(psql(`select (image_sm_url is not null)::text || (image_md_url is not null)::text from products where id = '${outside2.id}'`) === 'truetrue', 'o lote já tinha atendido esta foto de outro endereço também');
+    const staleThumbs = psql(`select image_sm_url || '|' || image_md_url from products where id = '${outside2.id}'`).split('|');
+    await fetch(`${BLOB}/delete`, { method: 'POST', body: JSON.stringify({ urls: staleThumbs }) });
+    psql(`update products set image_sm_url = null, image_md_url = null where id = '${outside2.id}'`);
+    await a.goto(BASE + `/admin/produtos/${outside2.id}`, { waitUntil: 'networkidle' });
+    const here = a.locator('[data-thumbs-here]');
+    await here.waitFor({ timeout: 10000 });
+    ok(/ainda não tem miniatura/.test(await here.innerText()), 'no cadastro do produto o aviso e o botão "Gerar miniatura desta foto" aparecem');
+    await here.getByRole('button', { name: 'Gerar miniatura desta foto' }).click();
+    ok(await until(async () => /Miniaturas geradas/.test(await toasts(a)), 60000), 'gera só a deste produto e avisa', await toasts(a));
+    ok((await a.locator('[data-thumbs-here]').count()) === 0, 'depois de gerar o aviso some do cadastro');
+    ok(psql(`select (image_sm_url is not null)::text || (image_md_url is not null)::text from products where id = '${outside2.id}'`) === 'truetrue', 'e as duas miniaturas ficaram gravadas');
+    await a.goto(BASE + '/admin/produtos', { waitUntil: 'networkidle' });
+    ok((await a.getByRole('button', { name: /Gerar miniaturas \(1\)/ }).count()) === 1, 'na lista a contagem continua certa (só a quebrada)');
+    // Produto com a foto de um site que não existe: o botão do cadastro avisa o motivo em vez de falhar calado.
+    const broken = psql("select id from products where name = 'Foto quebrada'");
+    await a.goto(BASE + `/admin/produtos/${broken}`, { waitUntil: 'networkidle' });
+    await a.locator('[data-thumbs-here]').getByRole('button', { name: 'Gerar miniatura desta foto' }).click();
+    ok(await until(async () => /Não foi possível gerar as miniaturas/.test(await toasts(a)), 30000), 'foto que o servidor não consegue ler: aviso claro', await toasts(a));
+    ok((await a.locator('[data-thumbs-here]').count()) === 1, 'e o botão continua lá para tentar de novo');
+    // Celular (390 px): o aviso do cadastro e o botão da lista cabem na tela, sem rolagem lateral, e o botão do cadastro tem 40 px de altura (tamanho padrão dos botões do painel).
+    await a.setViewportSize({ width: 390, height: 844 });
+    await a.reload({ waitUntil: 'networkidle' });
+    const hereBtn = a.locator('[data-thumbs-here]').getByRole('button', { name: 'Gerar miniatura desta foto' });
+    await hereBtn.scrollIntoViewIfNeeded();
+    const hb = await hereBtn.boundingBox();
+    ok(hb && hb.height >= 40 && hb.x >= 0 && hb.x + hb.width <= 390, 'celular: o botão do cadastro cabe na tela e dá para tocar', hb);
+    ok(await a.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'celular: cadastro do produto sem rolagem horizontal');
+    await a.screenshot({ path: `${SP}/e2ethumbs-admin-form-mobile.png` });
+    await a.goto(BASE + '/admin/produtos', { waitUntil: 'networkidle' });
+    const listBtn = a.getByRole('button', { name: /Gerar miniaturas \(1\)/ });
+    await listBtn.waitFor({ timeout: 10000 });
+    const lb = await listBtn.boundingBox();
+    ok(lb && lb.x >= 0 && lb.x + lb.width <= 390, 'celular: o botão "Gerar miniaturas" da lista cabe na tela', lb);
+    ok(await a.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'celular: lista de produtos sem rolagem horizontal');
+    await a.screenshot({ path: `${SP}/e2ethumbs-admin-list-mobile.png` });
+    await a.setViewportSize({ width: 1280, height: 900 });
   }
   await actx.close();
 
@@ -308,6 +361,8 @@ const toasts = (page) => page.evaluate(() => [...document.querySelectorAll('[ari
   // Nenhuma foto nem miniatura sobrando no Blob: tudo que está em products/ pertence a algum produto.
   {
     const used = new Set(psql("select image_url from products where image_url is not null union select image_sm_url from products where image_sm_url is not null union select image_md_url from products where image_md_url is not null").split('\n').filter(Boolean).filter((u) => /blob\.vercel-storage\.com/.test(u)).map(pathOf));
+    // As fotos "de outro endereço" (fotos-externas.example) são servidas, neste teste, por arquivos do Blob fake: contam como em uso pelo caminho.
+    for (const u of psql("select image_url from products where image_url like 'https://fotos-externas.example/%'").split('\n').filter(Boolean)) used.add(pathOf(u));
     const orphans = (await blobList()).filter((f) => f.startsWith('products/') && !used.has(f));
     ok(orphans.length === 0, 'nenhum arquivo órfão em products/ no Blob', orphans);
   }

@@ -79,11 +79,11 @@ Limites (contados no banco, atômicos — `server/auth.ts → reserve`): login d
 
 ## 9. Upload de arquivos
 
-`POST /api/admin/upload` (só painel): tamanho máximo, **tipo decidido pela estrutura do arquivo** (cabeçalho mágico JPEG/PNG/WebP, `server/images.ts`), nunca pelo nome nem pelo `Content-Type` enviado; pasta de destino numa lista fixa; nome gerado pelo servidor. `GET /api/admin/image-source` só lê fotos de produto do Blob da própria loja (host `*.blob.vercel-storage.com`, pasta `products/`, sem seguir redirecionamento) — **não é proxy aberto**. Testes: `tests/api-test10.mjs`, `tests/api-test27.mjs`.
+`POST /api/admin/upload` (só painel): tamanho máximo, **tipo decidido pela estrutura do arquivo** (cabeçalho mágico JPEG/PNG/WebP, `server/images.ts`), nunca pelo nome nem pelo `Content-Type` enviado; pasta de destino numa lista fixa; nome gerado pelo servidor. `GET /api/admin/image-source` (só admin, com limite de uso) só lê o endereço que **já está cadastrado como foto de algum produto** (o endereço tem de ser igual ao `image_url` de um produto): https, porta 443, sem usuário/senha, sem seguir redirecionamento, 8 s de espera, até 4 MB, e o conteúdo precisa ser JPEG/PNG/WebP de verdade (cabeçalho mágico). Para fotos que não estão no Blob da loja (cardápio importado) o servidor resolve o nome do site e **recusa endereços não públicos** (127.x, 10.x, 172.16–31.x, 192.168.x, 169.254.x/metadados de nuvem, 100.64.x, `localhost`, `*.local`, `*.internal`, IPv6 local/privado/mapeado) — **não é proxy aberto** e não serve para sondar a rede interna (SSRF). Texto do cliente nunca vira endereço consultado: o endereço precisa ter sido cadastrado por um admin como foto de produto. Testes: `tests/api-test27.mjs` (inclui as recusas de endereços internos). Testes: `tests/api-test10.mjs`, `tests/api-test27.mjs`.
 
 ## 10. SSRF
 
-O servidor só faz requisições de saída para destinos **fixos no código**: ValidaPay (hosts oficiais), ViaCEP (`viacep.com.br`), API do Resend (opcional) e o Blob da própria loja. Nenhum endereço vem do usuário. As variáveis `CEP_API_URL`, `RESEND_API_URL` e `FAKE_*` existem só para os testes e são **ignoradas em produção** (`VERCEL_ENV=production`).
+O servidor só faz requisições de saída para destinos **fixos no código**: ValidaPay (hosts oficiais), ViaCEP (`viacep.com.br`), API do Resend (opcional) e o Blob da própria loja. Nenhum endereço vem do usuário. **Única exceção controlada:** a leitura, pelo painel, da foto de um produto cadastrada com endereço de outro site (`GET /api/admin/image-source`, descrita acima). As variáveis `CEP_API_URL`, `RESEND_API_URL` e `FAKE_*` existem só para os testes e são **ignoradas em produção** (`VERCEL_ENV=production`).
 
 ## 11. Segredos e variáveis de ambiente
 

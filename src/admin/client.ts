@@ -134,18 +134,7 @@ export async function commitProductPhoto(value: ImageValue): Promise<ProductPhot
   }
 }
 
-// Foto de produto que está no Blob da loja (as importadas de outros endereços não passam pelo servidor do painel).
-export const isStoredProductPhoto = (url: string | null | undefined): url is string => {
-  if (!url) return false;
-  try {
-    const u = new URL(url);
-    return u.protocol === 'https:' && u.hostname.endsWith('.blob.vercel-storage.com') && u.pathname.startsWith('/products/');
-  } catch {
-    return false;
-  }
-};
-
-// Gera as miniaturas de uma foto que já existe no Blob (o servidor repassa os bytes: ver /api/admin/image-source) e devolve as URLs.
+// Gera as miniaturas de uma foto que já está cadastrada num produto, no Blob da loja ou em outro endereço (o servidor repassa os bytes: ver /api/admin/image-source) e devolve as URLs.
 export async function generateThumbnailsFor(photoUrl: string): Promise<{ sm: string; md: string }> {
   const res = await fetch(`/api/admin/image-source?url=${encodeURIComponent(photoUrl)}`, { credentials: 'same-origin' });
   if (!res.ok) throw new Error(res.status === 404 ? 'A foto não existe mais no armazenamento.' : 'Não foi possível ler a foto.');

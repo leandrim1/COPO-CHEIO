@@ -172,7 +172,10 @@ section('Blob: trocar a foto libera a foto e as miniaturas antigas');
 // ------------------------------------------------------------------------------------------------
 section('Rota do painel que repassa a foto (/api/admin/image-source)');
 {
+  // Só vale o endereço que já é a foto de um produto cadastrado (não é um proxy aberto), no Blob da loja ou em outro endereço público.
   const url = await upload('a.webp');
+  await make({ image_url: url });
+  const src = (value) => owner.get(`/api/admin/image-source?url=${encodeURIComponent(value)}`);
   let r = await anon.get(`/api/admin/image-source?url=${encodeURIComponent(url)}`);
   check('sem login: 401', r.status === 401, r.status);
   r = await owner.get(`/api/admin/image-source?url=${encodeURIComponent(url)}`, { headers: {} });
@@ -182,19 +185,51 @@ section('Rota do painel que repassa a foto (/api/admin/image-source)');
   const bytes = Buffer.from(await raw.arrayBuffer());
   check('os bytes são os da foto enviada', Buffer.compare(bytes, fx('a.webp')) === 0, [bytes.length, fx('a.webp').length]);
   const bad = async (value, label, status = 400) => {
-    const x = await owner.get(`/api/admin/image-source?url=${encodeURIComponent(value)}`);
+    const x = await src(value);
     check(`recusa ${label}`, x.status === status, [x.status, x.data]);
   };
   await bad('http://teststore.public.blob.vercel-storage.com/products/x.webp', 'endereço sem https');
-  await bad('https://exemplo.com/products/a.webp', 'endereço fora do Blob da loja');
-  await bad('https://teststore.public.blob.vercel-storage.com/banners/a.webp', 'pasta que não é de produtos');
+  await bad('https://exemplo.com/products/a.webp', 'endereço que não é a foto de nenhum produto');
+  await bad('https://teststore.public.blob.vercel-storage.com/banners/a.webp', 'arquivo do Blob que não é foto de produto');
   await bad('https://teststore.public.blob.vercel-storage.com.exemplo.com/products/a.webp', 'domínio que só imita o do Blob');
-  await bad('http://127.0.0.1:4181/f/products/a.webp', 'endereço interno');
+  await bad('http://127.0.0.1:4181/f/products/a.webp', 'endereço interno (sem https)');
   await bad('não é um link', 'texto que não é um link');
   r = await owner.get('/api/admin/image-source');
   check('recusa pedido sem endereço', r.status === 400, r.status);
-  r = await owner.get(`/api/admin/image-source?url=${encodeURIComponent('https://teststore.public.blob.vercel-storage.com/products/nao-existe.webp')}`);
-  check('foto que não existe mais no Blob: 404 claro', r.status === 404, [r.status, r.data]);
+
+  // Foto de OUTRO endereço (cardápio importado): vale quando é a foto de um produto cadastrado e o endereço é público.
+  const outside = `https://fotos-externas.example/${pathOf(url)}`;
+  await make({ image_url: outside });
+  r = await src(outside);
+  const outsideBytes = Buffer.from(await (await fetch(`${owner.base}/api/admin/image-source?url=${encodeURIComponent(outside)}`, { headers: { cookie: owner.cookie, 'x-real-ip': owner.ip } })).arrayBuffer());
+  check('foto de outro endereço público, cadastrada num produto: 200 com os bytes dela', r.status === 200 && Buffer.compare(outsideBytes, fx('a.webp')) === 0, [r.status, outsideBytes.length]);
+  await bad(`https://fotos-externas.example/${pathOf(url)}?outra=1`, 'o mesmo site com outro endereço (não é a foto cadastrada)');
+
+  // Endereços internos, mesmo cadastrados como foto de produto, nunca são lidos (rede interna / metadados da nuvem).
+  const internal = ['https://127.0.0.1/foto.webp', 'https://10.0.0.5/foto.webp', 'https://192.168.1.10/foto.webp', 'https://169.254.169.254/latest/meta-data/x.webp', 'https://172.16.0.1/foto.webp', 'https://100.64.0.1/foto.webp', 'https://[::1]/foto.webp', 'https://[fd00::1]/foto.webp', 'https://[fe80::1]/foto.webp', 'https://[::ffff:127.0.0.1]/foto.webp', 'https://localhost/foto.webp', 'https://servico.internal/foto.webp'];
+  for (const value of internal) await make({ image_url: value });
+  for (const value of internal) await bad(value, `foto cadastrada num endereço interno (${value.replace('https://', '').split('/')[0]})`);
+  const port = 'https://fotos-externas.example:8443/foto.webp';
+  await make({ image_url: port });
+  await bad(port, 'porta diferente da padrão');
+  const cred = 'https://usuario:senha@fotos-externas.example/foto.webp';
+  await make({ image_url: cred });
+  await bad(cred, 'endereço com usuário e senha');
+  const ghost = 'https://exemplo.invalid/foto.webp';
+  await make({ image_url: ghost });
+  await bad(ghost, 'site que não existe (502 claro, nada travado)', 502);
+
+  const missing = 'https://teststore.public.blob.vercel-storage.com/products/nao-existe.webp';
+  await make({ image_url: missing });
+  r = await src(missing);
+  check('foto cadastrada que não existe mais no Blob: 404 claro', r.status === 404, [r.status, r.data]);
+
+  // O que volta precisa ser uma imagem: um endereço de foto que responde texto (uma página, um JSON de serviço interno) nunca sai pela rota.
+  await fetch(`${BLOB}/?pathname=products/texto-no-lugar-da-foto.webp`, { method: 'PUT', body: '<html>conteudo que nao e imagem</html>', headers: { 'x-content-type': 'image/webp' } });
+  const notImage = 'https://teststore.public.blob.vercel-storage.com/products/texto-no-lugar-da-foto.webp';
+  await make({ image_url: notImage });
+  r = await src(notImage);
+  check('endereço que responde algo que não é imagem: 415 e o conteúdo não é repassado', r.status === 415 && !JSON.stringify(r.data).includes('conteudo'), [r.status, r.data]);
 }
 
 // ------------------------------------------------------------------------------------------------

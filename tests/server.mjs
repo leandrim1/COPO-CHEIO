@@ -6,6 +6,7 @@ import http from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { createRequire } from 'node:module';
+import dnsPromises from 'node:dns/promises';
 import { fileURLToPath } from 'node:url';
 import { startNeonProxy } from './neon-proxy.mjs';
 import { CNAME, MX_OF, TXT, installDnsMock, resetRecords } from './dnsmock.mjs';
@@ -65,10 +66,15 @@ process.env.VERCEL_BLOB_API_URL = `http://127.0.0.1:${blobStore.address().port}`
 // A rota /api/admin/image-source (painel → "Gerar miniaturas") busca a foto no endereço público do Blob. No teste esse endereço não existe
 // na internet: aqui ele aponta para o armazenamento falso (arquivos enviados pelo próprio teste).
 const realFetch = globalThis.fetch;
+// Um site "de fora" de mentira (fotos de cardápio importado): o nome fotos-externas.example resolve para um endereço público e serve os mesmos arquivos do armazenamento falso.
+// Qualquer outro nome de fora (exemplo.invalid, localhost...) continua sem existir ou sendo recusado de verdade.
+const EXTERNAL_PHOTOS = 'fotos-externas.example';
+const realLookup = dnsPromises.lookup.bind(dnsPromises);
+dnsPromises.lookup = (host, options) => (host === EXTERNAL_PHOTOS ? Promise.resolve([{ address: '93.184.216.34', family: 4 }]) : realLookup(host, options));
 globalThis.fetch = (input, init) => {
   const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
   const url = new URL(href);
-  if (url.hostname === 'teststore.public.blob.vercel-storage.com') return realFetch(`http://127.0.0.1:${blobStore.address().port}/f/${url.pathname.slice(1)}`, init);
+  if (url.hostname === 'teststore.public.blob.vercel-storage.com' || url.hostname === EXTERNAL_PHOTOS) return realFetch(`http://127.0.0.1:${blobStore.address().port}/f/${url.pathname.slice(1)}`, init);
   return realFetch(input, init);
 };
 const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
