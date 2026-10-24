@@ -60,14 +60,3 @@ test('mudança de pagamento', () => {
   assert.ok(p({ order_status: 'new', payment_status: 'pending' }, 'refunded'));
   assert.equal(p({ order_status: 'cancelled', payment_status: 'paid' }, 'refunded'), null);
 });
-
-test('na tela o repasse se chama "taxa": percentual com vírgula e avisos do banco com a palavra trocada', () => {
-  assert.equal(f.percentFromBps(200), '2%');
-  assert.equal(f.percentFromBps(250), '2,5%');
-  assert.equal(f.percentFromBps(null), '0%');
-  assert.equal(f.taxaWording('Comissão efetivada (40 centavos) diferente da calculada (50).'), 'Taxa efetivada (40 centavos) diferente da calculada (50).');
-  assert.equal(f.taxaWording('Falha no repasse da comissão: saldo insuficiente.'), 'Falha no repasse da taxa: saldo insuficiente.');
-  assert.equal(f.taxaWording('Estorno registrado. Confira se a comissão também foi devolvida.'), 'Estorno registrado. Confira se a taxa também foi devolvida.');
-  assert.equal(f.taxaWording(null), '');
-  assert.equal(f.taxaWording('Sem a palavra antiga.'), 'Sem a palavra antiga.');
-});

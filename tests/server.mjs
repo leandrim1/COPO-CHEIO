@@ -11,7 +11,6 @@ import { fileURLToPath } from 'node:url';
 import { startNeonProxy } from './neon-proxy.mjs';
 import { CNAME, MX_OF, TXT, installDnsMock, resetRecords } from './dnsmock.mjs';
 import { startMailSink } from './mailsink.mjs';
-import { describeState, signBody, sim, updateCharge } from './payments-sim.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const root = join(here, '..');
@@ -112,20 +111,6 @@ await build({
   packages: 'external',
   outfile: join(here, 'build/api.mjs'),
   logLevel: 'error',
-  // Só nos testes: no lugar da fábrica de operadoras (que em produção não devolve nenhuma), entra o SIMULADOR de tests/payments-sim.mjs.
-  plugins: [
-    {
-      name: 'simulador-de-pagamento',
-      setup(b) {
-        b.onResolve({ filter: /\/factory\.js$/ }, (args) => {
-          if (!args.importer.endsWith('server/payments/provider.ts')) return undefined;
-          // PAYMENTS_SIM=validapay: o adaptador REAL da ValidaPay (server/payments/validapay.ts), apontado para o servidor ValidaPay FALSO dos testes.
-          if (process.env.PAYMENTS_SIM === 'validapay') return { path: join(here, 'factory-validapay.ts') };
-          return { path: join(here, 'payments-sim.mjs'), external: true };
-        });
-      },
-    },
-  ],
 });
 // O HTML que a função entrega aos robôs é o index.html da mesma pasta de arquivos estáticos que este servidor serve.
 process.env.SHELL_HTML_FILE ??= join(DIST, 'index.html');
@@ -253,35 +238,6 @@ const server = http.createServer(async (req, res) => {
       else table[body.name] = body.value;
     }
     return res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
-  }
-  // Só para os testes: controla o simulador de operadora de pagamento e dispara "avisos" (webhooks) assinados para a rota real.
-  if (url.pathname.startsWith('/__pay/')) {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString() || '{}') : {};
-    const reply = (status, data) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(data));
-    if (url.pathname === '/__pay/reset') {
-      sim.reset();
-      return reply(200, {});
-    }
-    if (url.pathname === '/__pay/mode') {
-      Object.assign(sim.mode, body);
-      return reply(200, sim.mode);
-    }
-    if (url.pathname === '/__pay/state') return reply(200, describeState());
-    if (url.pathname.startsWith('/__pay/charge/')) {
-      const snap = updateCharge(decodeURIComponent(url.pathname.slice('/__pay/charge/'.length)), body);
-      return snap ? reply(200, snap) : reply(404, { error: 'cobrança desconhecida' });
-    }
-    if (url.pathname === '/__pay/webhook') {
-      // body: { events | (id, type, chargeId, reference, snapshot), sign: false | 'wrong', raw: 'texto qualquer' }
-      const text = typeof body.raw === 'string' ? body.raw : JSON.stringify(body.events ? { events: body.events } : { id: body.id, type: body.type, charge_id: body.chargeId, reference: body.reference, snapshot: body.snapshot });
-      const headers = { 'content-type': 'application/json' };
-      if (body.sign !== false) headers['x-simulador-assinatura'] = body.sign === 'wrong' ? 'a'.repeat(64) : signBody(text);
-      const response = await fetch(`http://127.0.0.1:${PORT}/api/payments/webhook`, { method: 'POST', headers, body: text });
-      return reply(200, { status: response.status, body: await response.json().catch(() => null) });
-    }
-    return reply(404, {});
   }
   // Roteamento IGUAL ao do vercel.json: as regras vêm da biblioteca da própria Vercel (@vercel/routing-utils), na mesma ordem em que a
   // plataforma as aplica: cabeçalhos, arquivos estáticos e só então as reescritas (que podem exigir um cabeçalho, como o User-Agent).

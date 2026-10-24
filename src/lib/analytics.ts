@@ -93,7 +93,7 @@ export const analyticsConfigured = (): boolean => measurementId !== null;
 
 // O tipo da página, sem nada que identifique pessoa ou pedido. `null` = não medir.
 export function sanitizePath(pathname: string): string | null {
-  if (pathname === '/admin' || pathname.startsWith('/admin/') || pathname.startsWith('/pagar/')) return null;
+  if (pathname === '/admin' || pathname.startsWith('/admin/')) return null;
   if (pathname.startsWith('/pedido/')) return '/pedido';
   if (pathname === '/acompanhar-pedido' || pathname.startsWith('/acompanhar-pedido/')) return '/acompanhar-pedido';
   if (pathname === '/conta' || pathname.startsWith('/conta/')) return '/conta';

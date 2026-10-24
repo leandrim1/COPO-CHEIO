@@ -345,18 +345,6 @@ section('8. Direto no banco e consistência');
   check('nenhum pedido tem desconto maior que o subtotal nem total negativo', psql('select count(*) from orders where discount > subtotal or total < 0') === '0');
   check('total = subtotal - desconto + entrega + taxa de pagamento, em todos os pedidos', psql('select count(*) from orders where total <> subtotal - discount + delivery_fee + payment_fee') === '0');
   check('todo pedido com cupom tem desconto > 0 ou taxa dispensada', psql("select count(*) from orders where coupon_code is not null and discount = 0 and delivery_fee_waived = 0") === '0');
-  // Cupom que cobre o pedido inteiro (total R$ 0): vale para pagar na entrega/retirada; com pagamento ONLINE a operadora não cobra R$ 0, então o banco recusa.
-  psql("update payment_methods set enabled = true where code = 'pix_online'");
-  psql("insert into merchant_accounts (provider, status, provider_account_id) values ('teste', 'approved', 'acc-teste')");
-  let zero = '';
-  try {
-    psql(`select create_order(${lit(JSON.stringify(order([{ product_id: soda.id, quantity: 1 }], { payment_method: 'pix_online', coupon_code: 'GRANDE', customer_email: 'zero@exemplo.com' })))}::jsonb)`);
-  } catch (error) {
-    zero = String(error.stderr ?? error.message);
-  }
-  check('cupom que zera o total + pagamento online: recusado com explicação', /cobre o pedido inteiro/i.test(zero), zero);
-  psql("delete from merchant_accounts where provider = 'teste'");
-  psql("update payment_methods set enabled = false where code = 'pix_online'");
   check('pedidos de antes (sem cupom) seguem com desconto 0', psql("select count(*) from orders where coupon_code is null and discount <> 0") === '0');
   check('o JSON público do pedido sem cupom não ganha chaves novas', !('coupon_code' in JSON.parse(psql(`select order_json(id)::text from orders where coupon_code is null order by order_number limit 1`))));
 }

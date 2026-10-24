@@ -25,7 +25,7 @@ section('1. robots.txt: bloqueios de sempre + endereço do mapa do site');
 {
   const r = await text('/robots.txt');
   check('responde 200 em texto puro', r.status === 200 && /text\/plain/.test(r.headers.get('content-type')), [r.status, r.headers.get('content-type')]);
-  check('mantém os bloqueios (/api/, /pedido/, /pagar/, /acompanhar-pedido/, /conta)', ['/api/', '/pedido/', '/pagar/', '/acompanhar-pedido/', '/conta'].every((p) => r.body.includes(`Disallow: ${p}`)), r.body);
+  check('mantém os bloqueios (/api/, /pedido/, /acompanhar-pedido/, /conta)', ['/api/', '/pedido/', '/acompanhar-pedido/', '/conta'].every((p) => r.body.includes(`Disallow: ${p}`)), r.body);
   check('não anuncia o painel', !/admin/i.test(r.body));
   check('anuncia o sitemap com endereço completo', r.body.includes(`Sitemap: ${BASE}/sitemap.xml`), r.body);
 }
@@ -38,7 +38,7 @@ section('2. sitemap.xml: só páginas públicas e estáveis');
   const locs = [...r.body.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
   const wanted = ['/', '/bebidas', '/privacidade', '/termos', '/trocas-e-cancelamentos', '/entrega', '/pagamento-e-reembolso', '/contato-e-responsavel'];
   check('lista as 8 páginas públicas, com endereço completo', locs.length === wanted.length && wanted.every((p) => locs.includes(p === '/' ? `${BASE}/` : `${BASE}${p}`)), locs);
-  check('nada de checkout, pedido, acompanhamento, conta, pagamento, painel nem API', !locs.some((l) => /\/(checkout|pedido|acompanhar-pedido|conta\b|pagar|admin|api)/.test(l.replace(BASE, ''))), locs);
+  check('nada de checkout, pedido, acompanhamento, conta, painel nem API', !locs.some((l) => /\/(checkout|pedido|acompanhar-pedido|conta\b|admin|api)/.test(l.replace(BASE, ''))), locs);
   check('o cache é público e curto o bastante para refletir mudança de endereço', /s-maxage=3600/.test(r.headers.get('cache-control')));
   const post = await fetch(`${BASE}/sitemap.xml`, { method: 'POST' });
   check('só leitura: POST não é aceito', post.status >= 400, post.status);

@@ -127,7 +127,7 @@ export function normalizeHero(raw: unknown): HeroSettings {
 
 const bannerOk = (item: unknown) => isObject(item) && typeof item.id === 'string';
 const zoneOk = (item: unknown) => isObject(item) && typeof item.id === 'string' && typeof item.name === 'string' && item.name.trim() !== '' && Number.isFinite(Number(item.fee));
-const paymentOk = (item: unknown) => isObject(item) && (item.code === 'pix' || item.code === 'cash' || item.code === 'card' || item.code === 'pix_online' || item.code === 'card_online');
+const paymentOk = (item: unknown) => isObject(item) && (item.code === 'pix' || item.code === 'cash' || item.code === 'card');
 
 type ContentFromApi = {
   store?: unknown;
@@ -527,13 +527,8 @@ export function useShop(): Shop {
 export const storeWhatsappUrl = (store: StoreSettings, text: string) =>
   `https://wa.me/${(store.whatsapp ?? '').replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
 
-// Cartão online: percentual (pontos-base) e tarifa fixa (centavos) que o servidor mandou, só se forem números válidos. Sem eles, a opção nem aparece.
-export const cardFeeRates = (fee: PaymentOption['card_fee']) =>
-  fee && Number.isSafeInteger(fee.bps) && Number.isSafeInteger(fee.fixed_cents) && fee.bps >= 0 && fee.fixed_cents >= 0 ? { bps: fee.bps, fixedCents: fee.fixed_cents } : null;
-
-// As formas de pagamento que a loja aceita agora (as ativas no painel; o cartão online só com a taxa conhecida). Checkout e a janela de
-// informações da loja usam a mesma lista.
-export const acceptedPayments = (payments: PaymentOption[]) => payments.filter((p) => p.code !== 'card_online' || cardFeeRates(p.card_fee) !== null);
+// As formas de pagamento que a loja aceita agora (as ativas no painel; todas pagas à loja). Checkout e a janela de informações da loja usam a mesma lista.
+export const acceptedPayments = (payments: PaymentOption[]) => payments;
 
 export const instagramHandle =(store: StoreSettings) => (store.instagram ?? '').replace(/^@/, '');
 

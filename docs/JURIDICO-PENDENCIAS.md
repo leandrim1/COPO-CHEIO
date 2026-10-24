@@ -34,7 +34,7 @@
 **Perguntas para o responsável jurídico**
 
 - A autodeclaração + conferência na entrega atende ao que a legislação aplicável exige de quem vende bebida alcoólica a distância? Falta algum procedimento (por exemplo, guardar registro da conferência por mais tempo)? **A confirmar.**
-- Pode-se aceitar pagamento online (Pix/cartão) antes da conferência, ou o pedido deve ficar condicionado a ela? Hoje o pagamento é aceito e a conferência é na entrega.
+- O pedido deve ficar condicionado à conferência do documento antes de ser aceito? Hoje o pedido é aceito (o pagamento é feito à loja) e a conferência é na entrega.
 - Há restrição de horário, local ou de entrega a terceiros (portaria, outra pessoa que recebe) para bebida alcoólica? O sistema não trata isso. **A confirmar.**
 - Prazo de guarda de `age_declared_at`, `age_checked_at` e `age_checked_by_name`: hoje acompanham o pedido (não são apagados sozinhos; ver *Docs → OPERACAO.md*, item 7).
 
@@ -51,16 +51,16 @@
 
 **Perguntas para o responsável jurídico:** o prazo e as condições de cancelamento/arrependimento aplicáveis a esta loja (compra à distância de alimento/bebida) e o prazo para devolver o dinheiro. **A confirmar** — o sistema hoje não promete prazo de devolução.
 
-## 3. Pagamento online e devolução
+## 3. Pagamento e devolução
 
-- Texto sobre devolução: o painel só diz "devolvido" quando a **operadora confirma**; antes disso diz "aguardando". Não existe estado "reembolsado" por clique do dono.
+- Texto sobre devolução: o sistema **não devolve dinheiro** (o pagamento é feito à loja: dinheiro, cartão na entrega ou chave PIX). A devolução é combinada com a loja e o dono marca o pedido como "reembolsado" à mão. O pagamento pelo site (ValidaPay) foi retirado do sistema.
 - O status manual de pedido (por exemplo, "cancelado") **não é** uma transação financeira.
 - Nota fiscal: o sistema **não emite** nota fiscal. Se a loja precisar, é um processo separado (contador/emissor); nada foi integrado nem inventado aqui.
 - **Páginas de políticas (migration 0033)**: `/termos`, `/trocas-e-cancelamentos`, `/entrega`, `/pagamento-e-reembolso` e `/contato-e-responsavel`. O texto padrão descreve **o que o sistema faz hoje** e foi escrito para **não prometer** prazos, valores, garantias nem direitos, **nem citar leis**.
   O owner edita em *Configurações → Termos e políticas*; cada página mostra "ainda não revisada juridicamente" até alguém marcar como revisada (quem e quando); **editar o texto tira essa marca**. Itens a validar:
   1. Prazo e condições de **arrependimento/cancelamento** e de troca (o texto padrão só diz que o cliente cancela até a loja confirmar e que o resto se combina pelo WhatsApp). **A confirmar** o que a legislação aplicável exige.
-  2. Prazo para a devolução do dinheiro (o texto padrão não promete prazo: diz que só vale como devolvido depois da confirmação da operadora e que o prazo no banco/cartão depende dele).
-  3. Taxas do meio de pagamento exibidas ao cliente (Pix online e cartão): conferir a forma de informá-las.
+  2. Prazo para a devolução do dinheiro (o texto padrão não promete prazo: diz que a devolução é combinada com a loja e que o prazo depende da forma de pagamento e do banco).
+  3. Forma de pagamento: o texto diz que o Pix é enviado para a chave da loja e que o site não coleta dados de cartão. Conferir.
   4. **Contato e responsável**: a razão social, o CNPJ e o endereço do responsável **não existem no sistema** e **não foram inventados**; a loja precisa escrevê-los na página (o bloco de WhatsApp/Instagram/endereço que a loja já cadastrou aparece automaticamente).
   5. Condições de entrega (bairros atendidos, tempo estimado "é uma previsão") e de retirada.
 
@@ -78,8 +78,7 @@ A página `/privacidade` descreve o que o sistema realmente faz, mas **razão so
 | **Cupons e entrega grátis** | Regras objetivas calculadas no banco; o pedido guarda o que foi aplicado. | Se há regra de publicidade/oferta (validade, limite de uso, "enquanto durarem os estoques") a informar ao cliente. **A confirmar.** |
 | **Agendamento** | O cliente escolhe a faixa de horário; o sistema só recebe pedido dentro do horário de funcionamento. | Se a entrega agendada de bebida alcoólica tem restrição de horário no município. **A confirmar** (o sistema não trata). |
 | **Dados do entregador** | A loja cadastra nome e telefone (opcional). O cliente vê só o primeiro nome, enquanto o pedido está a caminho. | Relação com o entregador (vínculo/terceirizado) e base legal do tratamento. **Fora do sistema.** |
-| **Nota fiscal (NFC-e/NF-e)** | **Não é emitida.** O sistema não tem integração fiscal e nenhuma foi inventada. A ValidaPay documenta uma API de notas fiscais, mas ela emite só NFS-e (serviço) e **não foi ligada** — detalhes em [`FISCAL.md`](FISCAL.md). | Regime tributário, obrigatoriedade e emissor: **definir com o contador**. Se for emitir, é um projeto próprio (cadastro fiscal dos produtos — NCM, CFOP, CST —, certificado digital, ambiente de homologação da SEFAZ). |
-| **Pagamento online (Pix/cartão)** | Funciona contra um servidor falso; a ValidaPay real ainda precisa de homologação. | Contrato com a ValidaPay (split/comissão da conta master, subconta do estabelecimento, responsabilidade por estorno e chargeback). |
+| **Nota fiscal (NFC-e/NF-e)** | **Não é emitida.** O sistema não tem integração fiscal e nenhuma foi inventada. Detalhes em [`FISCAL.md`](FISCAL.md). | Regime tributário, obrigatoriedade e emissor: **definir com o contador**. Se for emitir, é um projeto próprio (cadastro fiscal dos produtos — NCM, CFOP, CST —, certificado digital, ambiente de homologação da SEFAZ). |
 
 ## 6. Como registrar a validação
 

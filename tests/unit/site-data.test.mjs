@@ -56,15 +56,10 @@ test('limite de destaques sempre fica entre 1 e 24', () => {
   assert.equal(d.normalizeSite({ featured_limit: 6 }).featured_limit, 6);
 });
 
-test('formas de pagamento aceitas: as do painel; o cartão online só com a taxa conhecida (a mesma regra do checkout)', () => {
-  const pay = (code, extra = {}) => ({ code, label: code, details: null, ...extra });
+test('formas de pagamento aceitas: as que a loja ativou no painel, todas pagas à loja (o pagamento pelo site não existe mais)', () => {
+  const pay = (code) => ({ code, label: code, details: null });
   assert.deepEqual(d.acceptedPayments([pay('pix'), pay('cash'), pay('card')]).map((p) => p.code), ['pix', 'cash', 'card']);
-  assert.deepEqual(d.acceptedPayments([pay('pix'), pay('card_online')]).map((p) => p.code), ['pix'], 'cartão online sem taxa não aparece');
-  for (const bad of [{ bps: -1, fixed_cents: 37 }, { bps: 537, fixed_cents: -1 }, { bps: 5.5, fixed_cents: 37 }, { bps: '537', fixed_cents: 37 }, null])
-    assert.deepEqual(d.acceptedPayments([pay('card_online', { card_fee: bad })]), [], `taxa inválida ${JSON.stringify(bad)}`);
-  assert.deepEqual(d.acceptedPayments([pay('card_online', { card_fee: { bps: 537, fixed_cents: 37 } })]).map((p) => p.code), ['card_online']);
-  assert.deepEqual(d.cardFeeRates({ bps: 537, fixed_cents: 37 }), { bps: 537, fixedCents: 37 });
-  assert.equal(d.cardFeeRates(undefined), null);
+  assert.deepEqual(d.acceptedPayments([]), []);
 });
 
 // ---- Miniaturas das fotos (srcset) ---------------------------------------------------------------------------------------------------------

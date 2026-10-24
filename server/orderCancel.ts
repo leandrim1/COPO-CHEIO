@@ -1,11 +1,10 @@
 // Cancelamento do pedido pelo próprio cliente (pelo código de acompanhamento ou pela conta).
 //
 // As regras ficam no banco (migration 0027): customer_cancel_order trava o pedido, confere se ainda pode ser cancelado (order_cancel_why: só até a loja
-// confirmar e sem dinheiro recebido), grava quem, quando, o motivo e o estado anterior, devolve o estoque UMA vez e encerra a cobrança em aberto. Este módulo
-// cuida do que o banco não alcança: achar o pedido ANTES (para saber quais cobranças Pix estavam em aberto) e cancelar essas cobranças na operadora DEPOIS.
+// confirmar e sem dinheiro recebido), grava quem, quando, o motivo e o estado anterior e devolve o estoque UMA vez. Este módulo cuida de achar o pedido (pelo
+// código de acompanhamento ou pela conta) e de validar o motivo.
 import { one } from './db.js';
 import { HttpError } from './http.js';
-import { cancelProviderCharges, openPixCharges } from './payments/service.js';
 
 export type CancelRequest = {
   // Código de acompanhamento (hash) com ou sem o número do pedido, OU a conta (customerId) com o número. Um dos dois, nunca nenhum.
@@ -45,7 +44,6 @@ export async function cancelForCustomer(request: CancelRequest): Promise<{ order
       );
   if (!found) return null;
 
-  const open = await openPixCharges(found.id);
   const row = await one<{ order: Record<string, unknown> | null }>('select customer_cancel_order($1, $2::bigint, $3::uuid, $4, $5) as "order"', [
     request.hash,
     request.number,
@@ -55,7 +53,5 @@ export async function cancelForCustomer(request: CancelRequest): Promise<{ order
   ]);
   if (!row?.order) return null;
   const { already_cancelled: already, ...order } = row.order as Record<string, unknown> & { already_cancelled?: boolean };
-  // Só quem acabou de cancelar mexe na operadora (um segundo toque, que devolve o pedido já cancelado, não repete nada).
-  if (already !== true) await cancelProviderCharges(open);
   return { order, already: already === true };
 }

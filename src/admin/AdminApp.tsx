@@ -17,7 +17,6 @@ import {
   Users,
   Volume2,
   VolumeX,
-  Wallet,
   X,
 } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
@@ -37,7 +36,6 @@ import DashboardPage from './Dashboard';
 import EmailsPage from './Emails';
 import LoginPage from './Login';
 import { OrderDetailPage, OrdersPage } from './Orders';
-import PaymentsPage from './Payments';
 import { ProductFormPage, ProductsPage } from './Products';
 import SettingsPage from './Settings';
 import SitePage from './Site';
@@ -98,15 +96,12 @@ export function playOrderChime() {
   });
 }
 
-type LiveOrder = { id: string; order_number: number; customer_name: string; total: number; created_at: string; paid?: boolean };
+type LiveOrder = { id: string; order_number: number; customer_name: string; total: number; created_at: string };
 type LiveResponse = {
   new_orders: LiveOrder[];
   latest: number;
   pending: number;
   rev: string;
-  // Pedidos de pagamento online que acabaram de ser pagos (só chegam à loja agora) e o ponto de partida para a próxima pergunta.
-  paid_orders?: LiveOrder[];
-  paid_cursor?: number;
 };
 
 // Polling inteligente: pergunta ao servidor a cada poucos segundos com a aba aberta (e mais devagar com a
@@ -158,8 +153,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
     let alive = true;
     let timer: number | undefined;
     let after: number | null = null; // maior número de pedido já visto
-    let paidAfter: number | null = null; // última confirmação de pagamento online já vista
-    const announced = new Set<number>(); // pedidos que já viraram aviso (um pedido pago pode aparecer nas duas listas)
+    const announced = new Set<number>(); // pedidos que já viraram aviso
     let rev: string | null = null;
     let failures = 0;
     let hiddenSince: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
@@ -182,7 +176,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
         toast.push({
           kind: 'order',
           title: 'NOVO PEDIDO',
-          description: `Pedido #${order.order_number} recebido${order.paid ? ' (Pix pago)' : ''}\n${money(order.total)}`,
+          description: `Pedido #${order.order_number} recebido\n${money(order.total)}`,
           action: { label: 'Ver pedido', onClick: () => navigate(`/admin/pedidos/${order.order_number}`) },
         });
       }
@@ -190,7 +184,7 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
 
     const poll = async () => {
       try {
-        const query = after === null ? '' : `?after=${after}${paidAfter === null ? '' : `&paid_after=${paidAfter}`}`;
+        const query = after === null ? '' : `?after=${after}`;
         const data = await api.get<LiveResponse>(`/api/admin/live${query}`);
         if (!alive) return;
         failures = 0;
@@ -199,13 +193,9 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
         if (after === null) {
           // Primeira leitura: só marca o ponto de partida (pedidos antigos não viram aviso).
           after = data.latest;
-          paidAfter = data.paid_cursor ?? 0;
         } else {
           if (data.new_orders.length) after = Math.max(...data.new_orders.map((o) => o.order_number));
-          if (data.paid_cursor !== undefined) paidAfter = data.paid_cursor;
-          // Primeiro os pedidos pagos online (o mesmo pedido não avisa duas vezes).
-          const fresh = [...(data.paid_orders ?? []).map((order) => ({ ...order, paid: true })), ...data.new_orders];
-          if (fresh.length) announce(fresh);
+          if (data.new_orders.length) announce(data.new_orders);
         }
         if (rev !== null && data.rev !== rev) setVersion((v) => v + 1);
         rev = data.rev;
@@ -259,7 +249,6 @@ function LiveOrdersProvider({ children }: { children: ReactNode }) {
 const MENU: { href: string; label: string; icon: typeof Package; owner?: boolean }[] = [
   { href: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
-  { href: '/admin/pagamentos', label: 'Pagamentos', icon: Wallet, owner: true },
   { href: '/admin/clientes', label: 'Clientes', icon: Users },
   { href: '/admin/emails', label: 'E-mails', icon: Mail },
   { href: '/admin/produtos', label: 'Produtos', icon: Package },
@@ -420,8 +409,6 @@ function route(pathname: string): { title: string; page: ReactNode } | null {
       return { title: 'Dashboard', page: <DashboardPage /> };
     case 'pedidos':
       return id ? { title: `Pedido #${id}`, page: <OrderDetailPage number={id} /> } : { title: 'Pedidos', page: <OrdersPage /> };
-    case 'pagamentos':
-      return { title: 'Pagamentos online', page: <PaymentsPage /> };
     case 'clientes':
       return { title: 'Clientes', page: <CustomersPage /> };
     case 'emails':

@@ -13,7 +13,7 @@ O que existe no código, o que a loja precisa fazer para ligar e o que ficou de 
 
 **O que o service worker guarda no aparelho:** apenas arquivos estáticos públicos — o JavaScript/CSS/imagens versionados em `/assets/`, as imagens do site (`/img/`, `/email/`, logo, gelo, ícones) e a página `offline.html`. No máximo 120 arquivos; os mais velhos saem primeiro; versões antigas do cache são apagadas ao ativar uma nova.
 
-**O que ele NUNCA guarda:** nenhuma página (HTML), nenhuma resposta de `/api/*` (cardápio, preços, estoque, pedidos, conta, painel), nada de `/pedido`, `/acompanhar-pedido`, `/conta`, `/pagar`, `/admin`, nenhuma requisição que não seja `GET`, nenhuma resposta com `Set-Cookie`. Tudo isso vai direto para a rede, como se o service worker não existisse — por isso **preço, estoque e status de pedido nunca aparecem velhos** e o checkout/login não mudam.
+**O que ele NUNCA guarda:** nenhuma página (HTML), nenhuma resposta de `/api/*` (cardápio, preços, estoque, pedidos, conta, painel), nada de `/pedido`, `/acompanhar-pedido`, `/conta`, `/admin`, nenhuma requisição que não seja `GET`, nenhuma resposta com `Set-Cookie`. Tudo isso vai direto para a rede, como se o service worker não existisse — por isso **preço, estoque e status de pedido nunca aparecem velhos** e o checkout/login não mudam.
 
 **Atualização:** `sw.js` e `manifest.webmanifest` são servidos com `Cache-Control: max-age=0, must-revalidate` (vercel.json). Para forçar a troca de todo o cache num dia, mude `CACHE = 'copocheio-static-v1'` em `public/sw.js`.
 
@@ -25,7 +25,7 @@ O que existe no código, o que a loja precisa fazer para ligar e o que ficou de 
 
 * **`/robots.txt`** e **`/sitemap.xml`** são gerados pelo servidor (`server/routes/seo.ts`, reescritas no `vercel.json`) porque o `Sitemap:` precisa do endereço completo do site — o mesmo `SITE_URL` (ou o domínio de produção da Vercel) que já vale para os e-mails. Sem endereço configurado o `robots.txt` sai sem a linha `Sitemap:` e o `sitemap.xml` responde 404.
 * **O que entra no sitemap** (só páginas públicas e estáveis): `/`, `/bebidas`, `/privacidade`, `/termos`, `/trocas-e-cancelamentos`, `/entrega`, `/pagamento-e-reembolso`, `/contato-e-responsavel`. **Não entram:** checkout, pedido, acompanhamento, conta, pagamento, painel, `/api`. Produto não tem endereço próprio (o cardápio é uma página só), então não há uma URL por produto para listar.
-* **Bloqueios no `robots.txt`:** `/api/`, `/pedido/`, `/pagar/`, `/acompanhar-pedido/`, `/conta`. O painel não é citado de propósito (para não anunciá-lo) e fica fora do Google por `X-Robots-Tag: noindex, nofollow` + `<meta name="robots">`; o mesmo vale para checkout, pedido, acompanhamento e conta.
+* **Bloqueios no `robots.txt`:** `/api/`, `/pedido/`, `/acompanhar-pedido/`, `/conta`. O painel não é citado de propósito (para não anunciá-lo) e fica fora do Google por `X-Robots-Tag: noindex, nofollow` + `<meta name="robots">`; o mesmo vale para checkout, pedido, acompanhamento e conta.
 * **Título, descrição, canônica, Open Graph e dados estruturados** por página: a Vercel manda robôs (Google, Bing, WhatsApp, Facebook…) para `/api/__page`, que devolve o mesmo site com o `<head>` já escrito (título/descrição vêm do painel → Site → SEO). Dados estruturados `schema.org/Store` (nome, telefone, endereço, horários) **só entram com o que a loja cadastrou** — nada é inventado. As páginas de termos e políticas têm título próprio e canônica; endereço inexistente responde **404 de verdade**.
 * **Depois do deploy:** cadastre o site no Google Search Console e envie `https://SEU-SITE/sitemap.xml`. Não é possível fazer isso por código.
 
@@ -34,7 +34,7 @@ O que existe no código, o que a loja precisa fazer para ligar e o que ficou de 
 **Estado:** o código está pronto e coberto por teste unitário (`tests/unit/analytics.test.mjs`), mas **só funciona depois de dois passos manuais da loja** e **não foi validado contra o Google real** (não há como fazer isso daqui).
 
 1. Na Vercel, cadastre **`GA_MEASUREMENT_ID`** = o identificador do fluxo web do GA4 (formato `G-XXXXXXXXXX`; não é segredo). Valor fora desse formato é ignorado. O servidor entrega o identificador ao site em `GET /api/site` (campo `analytics_id`).
-2. **Libere o Google na política de segurança (CSP)** do `vercel.json` — hoje ela bloqueia qualquer script externo, e é por isso que o GA não carrega sozinho. No bloco `"source": "/((?!pagar/).*)"` (e só nele — **nunca** em `/pagar/`, a tela do cartão), acrescente:
+2. **Libere o Google na política de segurança (CSP)** do `vercel.json` — hoje ela bloqueia qualquer script externo, e é por isso que o GA não carrega sozinho. No bloco `"source": "/(.*)"` (o primeiro de `headers`), acrescente:
    * `script-src 'self'` → `script-src 'self' https://www.googletagmanager.com`
    * `connect-src 'self'` → `connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com`
    * (`img-src` já aceita `https:`.)

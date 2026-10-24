@@ -1,6 +1,6 @@
 # Auditoria geral do COPO CHEIO — checklist e plano priorizado
 
-Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
+Estado em 20/10/2026, depois das Etapas A a F. **Atualização de 24/10/2026: o pagamento pelo site (Pix online e cartão online, pela ValidaPay) foi retirado do sistema**; os itens 22 a 26 abaixo ficam como registro ("Retirado"). Legenda dos estados:
 
 * **Aprovado** — implementado, validado no servidor/banco e coberto por teste automático que foi executado (resultados em `tests/README.md` e no relatório final).
 * **Precisa de correção** — existe, mas há defeito ou lacuna conhecida que deve ser corrigida.
@@ -8,9 +8,9 @@ Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
 * **Bloqueado** — depende de terceiros (credencial, serviço, decisão jurídica/fiscal) e não pode ser concluído só por código.
 * **Não se aplica** — avaliado e deliberadamente não implementado, com o motivo.
 
-> **Bateria completa executada em 20/10/2026** (PostgreSQL local, serviços externos simulados): verificação de tipos estrita (`tsc -b`, site e servidor) e build de produção sem erros; **292** testes unitários; **39** suítes de API (**3.505** verificações, 0 falhas); **27** arquivos de navegador (Chromium, celular e computador), todos aprovados; axe-core sem violações. Não há ESLint configurado no projeto (veja o item 42).
+> **Bateria completa executada em 24/10/2026, depois da retirada do pagamento online** (PostgreSQL local, serviços externos simulados): verificação de tipos estrita (`tsc -b`, site e servidor) e build de produção sem erros; **212** testes unitários; **35** suítes de API (**2.926** verificações, 0 falhas); **24** arquivos de navegador (Chromium, celular e computador), todos aprovados. (Em 20/10/2026, com o pagamento online: 292 unitários, 39 suítes de API com 3.505 verificações e 27 arquivos de navegador; a diferença são os testes do que foi retirado.) A auditoria de acessibilidade (axe-core, sem violações) é de 20/10/2026 e **não foi repetida** depois desta mudança (o checkout perdeu os avisos e a opção do pagamento online). Não há ESLint configurado no projeto (veja o item 42).
 
-> "Aprovado" **não** significa "validado em produção": nada aqui foi testado contra a ValidaPay real, contra o Neon de produção ou com clientes reais. Os testes usam PostgreSQL local, ValidaPay/ViaCEP/Blob/e-mail **simulados**.
+> "Aprovado" **não** significa "validado em produção": nada aqui foi testado contra o Neon de produção ou com clientes reais. Os testes usam PostgreSQL local, ViaCEP/Blob/e-mail **simulados**.
 
 ## 1. Site público
 
@@ -22,7 +22,7 @@ Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
 | 4 | Carrinho e checkout (taxa por bairro, pedido mínimo, troco, observações) | Aprovado | `api-test11`, `e2e` |
 | 5 | Horário de funcionamento, pausa de pedidos, **feriados e horários especiais** | Aprovado | migration 0030; `api-test32`, `e2e-extras` |
 | 6 | **Confirmação de maioridade (18+)** | **Parcialmente implementado** | Autodeclaração (janela de entrada + caixa no checkout) exigida **no banco**, mais conferência do documento na entrega, registrada. Não prova idade (ninguém prova pelo navegador) e **o texto precisa de validação jurídica** — `docs/JURIDICO-PENDENCIAS.md`. `api-test28`, `e2e-agegate` |
-| 7 | **Cancelamento do pedido pelo cliente** | Aprovado | até a loja confirmar e sem dinheiro recebido; estoque devolvido uma vez; cancela a cobrança Pix na operadora (melhor esforço). `api-test28`, `e2e-agegate` |
+| 7 | **Cancelamento do pedido pelo cliente** | Aprovado | até a loja confirmar e sem dinheiro recebido; estoque devolvido uma vez; `api-test28`, `e2e-agegate` |
 | 8 | Acompanhamento por link/número | Aprovado | `api-test4`, `e2e-track` |
 | 9 | Conta do cliente: cadastro com e-mail de **qualquer provedor**, login com código, recuperação de senha | Aprovado | `api-test5/7/23/26`, `e2e-account/verify/recover/logincode/providers` |
 | 10 | **Cupons** e **entrega grátis por valor** | Aprovado | migration 0029; `api-test30`, `e2e-coupon` |
@@ -43,12 +43,12 @@ Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
 | # | Funcionalidade | Estado | Observações |
 | - | -------------- | ------ | ----------- |
 | 21 | Dinheiro, cartão na entrega, Pix com chave da loja | Aprovado | `api-test11` |
-| 22 | **Pix online (ValidaPay)** | **Parcialmente implementado** | Adaptador completo e testado contra servidor falso baseado na documentação (`api-test14/15`). **Nunca falou com a ValidaPay de verdade.** Homologação no sandbox pendente (`docs/PAGAMENTO-ONLINE.md`) |
-| 23 | **Cartão online** (migration 0020, tela `/pagar/`) | **Parcialmente implementado** | `api-test22`, `e2e-card` (SDK com chamadas interceptadas). Não validado em produção; fluxo de antifraude e Id Público dependem da conta real |
-| 24 | Webhooks assinados, idempotentes, com confirmação na operadora | Aprovado | `api-test15/22`; assinatura HMAC, janela de 5 min, repetição e fora de ordem |
-| 25 | **Cancelamento financeiro**: Pix vencido encerrado na operadora | Aprovado | `api-test35` (rotina automática: cobrança cancelada na operadora, 10 min de nova tentativa e então o pedido é cancelado e o estoque volta; Pix pago com aviso perdido é liberado, nunca cancelado) |
-| 26 | **Reembolso pela API** | **Bloqueado (desligado por padrão)** | Implementado (migration 0028, `api-test29`), mas o escopo `wallet/write` da ValidaPay também autoriza saque/transferência; só liga com `VALIDAPAY_REFUNDS=on` depois de confirmar com a ValidaPay e testar no sandbox. O status manual "reembolsado" **não é** transação financeira |
-| 27 | Nota fiscal (NFC-e) | **Bloqueado / Não se aplica** | Sem integração fiscal (nada no código). A API de notas da ValidaPay emite **somente NFS-e (serviço)**, que provavelmente não serve para venda de bebidas (mercadoria → NFC-e/NF-e). Depende do regime tributário e do contador. Requisitos e plano em `docs/FISCAL.md`; nada foi inventado ou ligado |
+| 22 | Pix online (ValidaPay) | **Retirado** | Retirado do sistema por decisão do proprietário (migration 0036 e remoção do código). Os pagamentos são feitos à loja: chave PIX, dinheiro e cartão na entrega. `api-test39` |
+| 23 | Cartão online (migration 0020, tela `/pagar/`) | **Retirado** | Retirado junto com o Pix online. A tela `/pagar/`, o SDK do cartão e a liberação de segurança dele (CSP) saíram. `api-test39` |
+| 24 | Webhooks de pagamento | **Retirado** | A rota `/api/payments/webhook` não existe mais (responde 404). `api-test39` |
+| 25 | Cancelamento financeiro (Pix vencido encerrado na operadora) | **Retirado** | Sem pagamento online não há cobrança para vencer. A rotina automática segue com a fila de e-mails, os avisos da operação e a limpeza (`api-test34`) |
+| 26 | Reembolso pela API | **Retirado** | Não há devolução pelo sistema. O dono combina com o cliente e marca o pedido como reembolsado à mão |
+| 27 | Nota fiscal (NFC-e) | **Bloqueado / Não se aplica** | Sem integração fiscal (nada no código). Venda de bebidas é mercadoria (NFC-e/NF-e). Depende do regime tributário e do contador. Requisitos e plano em `docs/FISCAL.md`; nada foi inventado ou ligado |
 
 ## 3. Painel
 
@@ -67,8 +67,8 @@ Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
 
 | # | Item | Estado | Observações |
 | - | ---- | ------ | ----------- |
-| 36 | **Tarefas agendadas** (Pix vencido, fila de e-mails, limpeza) | **Parcialmente implementado** | Cron diário na Vercel (limite do plano gratuito) + varredura de passagem + agendador externo opcional (`docs/OPERACAO.md`). Sem agendador externo, um Pix que vence à noite numa loja parada só é encerrado na próxima execução |
-| 37 | Monitoramento | **Parcialmente implementado** | `/api/health` para monitor externo, logs JSON com `request_id`, relatório de CSP e de erros do navegador, estado da rotina no painel, **e-mail aos donos** quando a rotina automática falha/para ou o estoque fica baixo (`api-test37`), alertas de e-mail (entregabilidade) e falhas de pagamento sinalizadas no painel. **Não existe** alerta automático de queda do site nem de pico de erros: exige serviço externo |
+| 36 | **Tarefas agendadas** (fila de e-mails, avisos da operação, limpeza) | **Parcialmente implementado** | Cron diário na Vercel (limite do plano gratuito) + varredura de passagem + agendador externo opcional (`docs/OPERACAO.md`). Sem agendador externo, um e-mail que ficou na fila numa loja parada só sai na próxima execução |
+| 37 | Monitoramento | **Parcialmente implementado** | `/api/health` para monitor externo, logs JSON com `request_id`, relatório de CSP e de erros do navegador, estado da rotina no painel, **e-mail aos donos** quando a rotina automática falha/para ou o estoque fica baixo (`api-test37`), alertas de e-mail (entregabilidade) sinalizadas no painel. **Não existe** alerta automático de queda do site nem de pico de erros: exige serviço externo |
 | 38 | Proteção contra abuso (limites, isca, idempotência) | Aprovado | `docs/SEGURANCA.md` seção 8 |
 | 39 | CAPTCHA | **Não se aplica (por ora)** | Decisão registrada com gatilho e opção (Turnstile) em `docs/SEGURANCA.md` seção 8 |
 | 40 | Segurança geral | Aprovado | `docs/SEGURANCA.md`. Pendente: pentest independente; Tailwind 3→4 para zerar 5 alertas **só de desenvolvimento** |
@@ -87,18 +87,16 @@ Estado em 20/10/2026, depois das Etapas A a F. Legenda dos estados:
 
 ## 6. Plano priorizado do que falta
 
-**P0 — antes de divulgar / ligar pagamento online (depende do proprietário)**
+**P0 — antes de divulgar (depende do proprietário)**
 
 1. Revisão jurídica dos textos de maioridade, termos, políticas e privacidade; preencher razão social/CNPJ/endereço do responsável (`docs/JURIDICO-PENDENCIAS.md`).
-2. Implantação segura (migrations 0027–0035 num branch do Neon antes de produção; `docs/OPERACAO.md`, "Roteiro de implantação segura").
+2. Implantação segura (migrations 0027–0036 num branch do Neon antes de produção; `docs/OPERACAO.md`, "Roteiro de implantação segura").
 3. Marcar no painel quais produtos **não** são bebida alcoólica (item 17 do pós-deploy).
 4. Cadastrar `CRON_SECRET`.
 
-**P1 — para ligar o Pix/cartão online**
+**P1 — o que mudou**
 
-5. Homologar a ValidaPay no **sandbox** (roteiro em `docs/PAGAMENTO-ONLINE.md`): Pix, webhook assinado, vencimento, cartão, antifraude. Só depois, produção, acompanhando os primeiros pagamentos.
-6. Confirmar com a ValidaPay o contrato de devolução e a permissão `wallet/write`; só então `VALIDAPAY_REFUNDS=on`.
-7. Agendador externo para a rotina de vencimento (a cada 5–30 min), se for vender com Pix online.
+5. Pagamento pelo site (Pix e cartão online, ValidaPay): **retirado do sistema**. Não há mais homologação, sandbox, webhook nem agendador de vencimento a fazer.
 
 **P2 — qualidade e operação**
 

@@ -6,13 +6,11 @@
 
 * **Investigação feita no código (20/10/2026):** não há tabela, coluna, rota, tela, variável de ambiente nem dependência de emissão fiscal. Não há NCM, CFOP, CST/CSOSN, alíquota, série, numeração fiscal nem certificado digital em nenhum lugar.
 * O que o sistema gera é um **recibo/comanda do pedido** (tela de confirmação, e-mails de pedido, impressão da comanda no painel). **Recibo de pedido não é nota fiscal** e a tela/e-mails não dizem que é.
-* O sistema guarda para cada pedido: itens com preço da hora, subtotal, taxa de entrega, desconto (cupom), taxa de serviço/cartão (quando há pagamento online), total, forma e situação do pagamento. Esses dados servem de **base** para uma futura emissão, mas **não bastam** (faltam os dados fiscais do produto e do emitente).
+* O sistema guarda para cada pedido: itens com preço da hora, subtotal, taxa de entrega, desconto (cupom), total, forma e situação do pagamento. Esses dados servem de **base** para uma futura emissão, mas **não bastam** (faltam os dados fiscais do produto e do emitente).
 
-## 2. O que a ValidaPay oferece (consultado na documentação oficial em 20/10/2026)
+## 2. Emissor e operadora de pagamento
 
-A ValidaPay tem uma API de notas fiscais (`/v1/invoices/notas`, escopos `nota.fiscal/read` e `nota.fiscal/write`) **que emite somente NFS-e (nota fiscal de SERVIÇO)**. A própria documentação diz: *"Hoje o único modelo suportado é `NFSE`"*. Ela exige a **configuração fiscal da empresa emissora** (CNPJ, regime tributário, certificado digital A1, tributos padrão) e depende do padrão da **prefeitura** do município.
-
-**Consequência importante:** a venda de bebidas é **venda de mercadoria** (comércio), que normalmente se documenta com **NFC-e** (consumidor final, SEFAZ do estado) ou **NF-e**, e **não** com NFS-e. Portanto **a API de notas da ValidaPay, como documentada, provavelmente não atende** a venda de bebidas. Só poderia se aplicar a algo que seja **serviço** de fato (por exemplo, se o contador entender que a taxa de entrega é um serviço faturado à parte). **A confirmar com o contador.** Não foi ligada, testada nem simulada.
+O sistema **não usa mais operadora de pagamento** (o pagamento pelo site foi retirado) e não tem nenhuma integração de nota fiscal. A venda de bebidas é **venda de mercadoria** (comércio), que normalmente se documenta com **NFC-e** (consumidor final, SEFAZ do estado) ou **NF-e**. Qual documento emitir, por qual emissor e quando é decisão do **contador** da loja (veja a seção 3).
 
 ## 3. O que o contador precisa definir
 

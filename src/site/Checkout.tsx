@@ -4,7 +4,6 @@ import type { FormEvent, ReactNode } from 'react';
 import { useId } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { trackOnce } from '../lib/analytics';
-import { cardFeeCents, serviceFeeCents } from '../lib/cardFee';
 import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
 import { ICE_REQUIRED_MESSAGE } from '../lib/ice';
@@ -16,7 +15,7 @@ import { AGE_TEXT_VERSION } from './AgeGate';
 import { ScheduleChoice } from './ScheduleChoice';
 import type { ScheduleValue } from './ScheduleChoice';
 import { useCustomer } from './customer';
-import { acceptedPayments, cardFeeRates, fullAddress, useShop } from './data';
+import { acceptedPayments, fullAddress, useShop } from './data';
 import { Field, PageShell } from './shell';
 import { EMAIL_INPUT } from './accountUi';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
@@ -151,7 +150,6 @@ type PriceChangedBody = {
   total?: number | string;
   delivery_fee?: number | string;
   discount?: number | string;
-  payment_fee?: number | string;
   items?: { product_id: string; name: string; quantity: number; unit_price: number | string; ice_choice?: string | null; swap_to?: string | null }[];
 };
 
@@ -210,13 +208,7 @@ export function CheckoutPage() {
 
   // Só oferece o que a loja aceita agora.
   const deliveryOptions = (['delivery', 'pickup'] as DeliveryType[]).filter((d) => (d === 'delivery' ? store.delivery_enabled : store.pickup_enabled));
-  // Cartão online: a taxa (percentual + tarifa fixa) vem do servidor só para o resumo mudar enquanto a pessoa mexe no pedido; o servidor calcula
-  // de novo ao receber o pedido e recusa (409) se o total que a pessoa viu for diferente. Sem a taxa conhecida, a opção nem aparece.
-  const cardRates = cardFeeRates(payments.find((p) => p.code === 'card_online')?.card_fee);
   const paymentOptions: PaymentMethod[] = acceptedPayments(payments).map((p) => p.code);
-  // Pix online: taxa de serviço do cliente (percentual sobre itens + entrega), também só para o resumo; o servidor calcula e confere de novo.
-  const pixRate = payments.find((p) => p.code === 'pix_online')?.service_fee;
-  const pixBps = pixRate && Number.isSafeInteger(pixRate.bps) && pixRate.bps >= 0 && pixRate.bps <= 1000 ? pixRate.bps : null;
   const pixKey = payments.find((p) => p.code === 'pix')?.details ?? null;
   const delivery = deliveryOptions.includes(form.delivery) ? form.delivery : deliveryOptions[0];
   const payment = paymentOptions.includes(form.payment) ? form.payment : paymentOptions[0];
@@ -235,14 +227,6 @@ export function CheckoutPage() {
   const fee = baseFee === null ? null : feeWaived ? 0 : baseFee;
   const total = (itemsCents - discountCents) / 100 + (fee ?? 0);
   const totalCents = itemsCents - discountCents + Math.round((fee ?? 0) * 100);
-  // A taxa do cartão incide sobre tudo o que vai no cartão (itens + entrega), em centavos inteiros, como no servidor. Entrega ainda sem valor
-  // (bairro não escolhido): a taxa fica para depois, e o envio já é bloqueado até escolher o bairro.
-  const hasFee = payment === 'card_online' || (payment === 'pix_online' && pixBps !== null);
-  const feeLabel = payment === 'pix_online' ? 'Taxa de serviço' : 'Taxa do cartão';
-  const cardFee =
-    fee === null || totalCents <= 0 ? 0 : payment === 'card_online' && cardRates ? cardFeeCents(totalCents, cardRates) : payment === 'pix_online' && pixBps !== null ? serviceFeeCents(totalCents, pixBps) : 0;
-  const payTotalCents = totalCents + cardFee;
-  const payTotal = payTotalCents / 100;
   const belowMinimum = delivery === 'delivery' && store.min_order > 0 && subtotal < store.min_order;
   const needsAge = lines.some((line) => line.product.alcoholic);
 
@@ -413,7 +397,6 @@ export function CheckoutPage() {
     const phone = onlyDigits(form.phone);
     if (phone.length < 10 || phone.length > 11) next.phone = 'Informe um telefone com DDD.';
     if (form.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) next.email = 'Confira o e-mail.';
-    else if (payment === 'card_online' && !form.email.trim()) next.email = 'Informe o e-mail para pagar com cartão de crédito.';
     if (delivery === 'delivery') {
       if (!form.address.trim()) next.address = 'Informe a rua.';
       if (!form.number.trim()) next.number = 'Informe o número.';
@@ -492,7 +475,7 @@ export function CheckoutPage() {
       })),
     };
     // O total que a pessoa está vendo (ou o novo total que ela acabou de aceitar), em centavos para não errar na soma.
-    const seenTotal = priceNotice ? priceNotice.current : payTotalCents / 100;
+    const seenTotal = priceNotice ? priceNotice.current : totalCents / 100;
     let order: PublicOrder;
     let token: string;
     try {
@@ -516,7 +499,6 @@ export function CheckoutPage() {
           .map((line) => `${line.product.name}${line.swap ? ` (com ${line.swap.name})` : ''}: ${money(line.unit)} → ${money(byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0)}`);
         if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
         if (body.discount !== undefined && Math.abs(Number(body.discount) - discountCents / 100) >= 0.005) changes.push(`Desconto do cupom: ${money(discountCents / 100)} → ${money(Number(body.discount))}`);
-        if (hasFee && body.payment_fee !== undefined && Math.abs(Number(body.payment_fee) - cardFee / 100) >= 0.005) changes.push(`${feeLabel}: ${money(cardFee / 100)} → ${money(Number(body.payment_fee))}`);
         setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
         void refresh(true);
         return;
@@ -561,12 +543,6 @@ export function CheckoutPage() {
     rememberOrder(order.order_number, token);
     trackOnce(`purchase:${order.order_number}`, 'purchase', { value: Number(order.total), transaction_id: String(order.order_number), payment_type: order.payment_method });
     clear();
-    // Cartão: a tela do cartão é uma página à parte, aberta de novo do zero (o SDK da operadora e o antifraude dela só podem rodar ali, com regras de
-    // segurança próprias). Se por algum motivo não abrir, o pedido está salvo e o botão "Pagar com cartão" fica na página do pedido.
-    if (order.payment_method === 'card_online') {
-      window.location.assign(`/pagar/${token}`);
-      return;
-    }
     navigate(`/pedido/${token}`);
   };
 
@@ -650,11 +626,7 @@ export function CheckoutPage() {
                   />
                 )}
               </Field>
-              <Field
-                label={payment === 'card_online' ? 'E-mail *' : 'E-mail (opcional)'}
-                error={errors.email}
-                hint={payment === 'card_online' ? 'A operadora do cartão exige o e-mail para enviar o comprovante.' : undefined}
-              >
+              <Field label="E-mail (opcional)" error={errors.email}>
                 {(p) => (
                   <input {...p} {...EMAIL_INPUT} value={form.email} onChange={(e) => set('email', e.target.value)} className={FIELD} placeholder="voce@email.com" />
                 )}
@@ -801,7 +773,7 @@ export function CheckoutPage() {
                   value={p}
                   checked={payment === p}
                   onChange={() => set('payment', p)}
-                  icon={p === 'pix' || p === 'pix_online' ? <QrCode className="h-5 w-5" aria-hidden="true" /> : p === 'cash' ? <Banknote className="h-5 w-5" aria-hidden="true" /> : <CreditCard className="h-5 w-5" aria-hidden="true" />}
+                  icon={p === 'pix' ? <QrCode className="h-5 w-5" aria-hidden="true" /> : p === 'cash' ? <Banknote className="h-5 w-5" aria-hidden="true" /> : <CreditCard className="h-5 w-5" aria-hidden="true" />}
                   title={PAYMENT_LABEL[p]}
                   subtitle={
                     p === 'card'
@@ -812,31 +784,11 @@ export function CheckoutPage() {
                         ? pixKey
                           ? 'Chave na confirmação'
                           : 'Combine pelo WhatsApp'
-                        : p === 'pix_online'
-                          ? 'Pague agora, pelo site'
-                          : p === 'card_online'
-                            ? 'Pague agora, pelo site · com taxa do cartão'
-                            : undefined
+                        : undefined
                   }
                 />
               ))}
             </div>
-            {payment === 'pix_online' && (
-              <div data-pix-notice className="mt-4 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
-                <p className="flex items-start gap-2.5">
-                  <QrCode className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
-                  <span>Você paga na próxima tela, com QR Code ou Pix copia e cola. O pedido só é enviado para a loja depois que o pagamento for confirmado.</span>
-                </p>
-              </div>
-            )}
-            {payment === 'card_online' && (
-              <div data-card-notice className="mt-4 rounded-2xl border border-[#145CFF]/30 bg-[#145CFF]/10 px-4 py-3 text-sm text-white/80">
-                <p className="flex items-start gap-2.5">
-                  <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-[#8FB1FF]" aria-hidden="true" />
-                  <span>Os dados do cartão vão direto para a operadora de pagamento: este site não guarda número nem código de segurança.</span>
-                </p>
-              </div>
-            )}
             {payment === 'cash' && (
               <Field label="Troco para quanto? (opcional)" error={errors.change} hint="Deixe em branco se não precisar de troco." className="mt-4 sm:max-w-xs">
                 {(p) => <input {...p} value={form.change} onChange={(e) => set('change', e.target.value)} inputMode="decimal" className={FIELD} placeholder="R$ 50,00" />}
@@ -957,16 +909,10 @@ export function CheckoutPage() {
                   )}
                 </dd>
               </div>
-              {hasFee && (
-                <div data-card-fee data-fee-line className="flex justify-between text-white/70">
-                  <dt>{feeLabel}</dt>
-                  <dd className="tabular-nums">{fee === null ? 'Escolha o bairro' : money(cardFee / 100)}</dd>
-                </div>
-              )}
               <div className="flex items-end justify-between border-t border-white/10 pt-3">
                 <dt className="font-bold text-white">Total</dt>
                 <dd>
-                  <Price value={payTotal} className="text-3xl" />
+                  <Price value={totalCents / 100} className="text-3xl" />
                 </dd>
               </div>
             </dl>
@@ -1068,7 +1014,7 @@ export function CheckoutPage() {
                   <>Confirmar novo total · {money(priceNotice.current)}</>
                 ) : (
                   <>
-                    {payment === 'pix_online' ? 'Finalizar e pagar com Pix' : payment === 'card_online' ? 'Finalizar e pagar com cartão' : 'Finalizar pedido'} · {money(payTotal)}
+                    Finalizar pedido · {money(total)}
                   </>
                 )}
               </button>

@@ -94,7 +94,7 @@ const text = (page) => page.evaluate(() => document.body.innerText);
     ok(Object.keys(cached).join() === 'copocheio-static-v1', 'um único cache, com o nome versionado', Object.keys(cached));
     ok(all.includes('/offline.html'), 'a página "sem conexão" está guardada', all);
     ok(all.some((p) => p.startsWith('/assets/')), 'os arquivos versionados do site estão guardados', all);
-    ok(!all.some((p) => p.startsWith('/api') || p.startsWith('/admin') || p.startsWith('/pedido') || p.startsWith('/conta') || p.startsWith('/acompanhar') || p.startsWith('/pagar') || p === '/' || p === '/bebidas' || p === '/index.html'), 'NADA de API, página, pedido, conta ou painel foi guardado', all);
+    ok(!all.some((p) => p.startsWith('/api') || p.startsWith('/admin') || p.startsWith('/pedido') || p.startsWith('/conta') || p.startsWith('/acompanhar') || p === '/' || p === '/bebidas' || p === '/index.html'), 'NADA de API, página, pedido, conta ou painel foi guardado', all);
 
     // Sem rede DE VERDADE: o servidor de teste sai do ar. (O modo offline do Playwright só vale para a página, não para o service worker, que continuaria alcançando o servidor.)
     stopServer();

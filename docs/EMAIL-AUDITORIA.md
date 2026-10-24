@@ -77,7 +77,7 @@ Gravidade pelo efeito na entrega/segurança, não pelo esforço de corrigir.
 | E-10 | Baixa | **Cabeçalhos mínimos:** só `Auto-Submitted` e `X-Auto-Response-Suppress` (adequados a transacionais). Sem `Reply-To`, sem marca de mensagem. Quando houver promocional, **não** pode usá-los e precisa de `List-Unsubscribe` + `List-Unsubscribe-Post` | `server/mail.ts:87` |
 | E-11 | Baixa | O **assunto do e-mail de código contém o código** (prática comum para códigos). Um registro futuro de envios **não pode guardar o assunto** desses e-mails, nem corpo nem links | `server/mailTemplates.ts:34` |
 | E-12 | Baixa | Links e logo apontam para o domínio da Vercel; para reputação, o ideal é o mesmo domínio (ou subdomínio) do remetente | `server/mailBrand.ts:61` |
-| E-13 | Info | Não há agendador (cron). O projeto já usa o padrão "de passagem" (`sweep` dos pagamentos). Na Vercel **Hobby** o cron só roda 1×/dia | `docs/PAGAMENTO-ONLINE.md:95`; docs da Vercel (abaixo) |
+| E-13 | Info | Não há agendador (cron). O projeto usava o padrão "de passagem" (`sweep`, do módulo de pagamentos online, hoje retirado). Na Vercel **Hobby** o cron só roda 1×/dia | docs da Vercel (abaixo) |
 | E-14 | Info | Variáveis só no servidor; `.gitignore` protege `.env*`; **nenhum segredo versionado** (busca no código e no histórico); `/api/health` público só diz "de pé"; o painel mostra só **nomes** das variáveis que faltam; o log mascara endereços | `git grep` limpo; `server/index.ts:48-65` |
 
 ## 3. O que já está bom e será preservado

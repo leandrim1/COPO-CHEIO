@@ -44,11 +44,11 @@ function Section({ icon, title, children, ...rest }: { icon: ReactNode; title: s
   );
 }
 
-const PAYMENT_NOTE: Partial<Record<PaymentMethod, string>> = { card: 'na entrega ou na retirada', pix_online: 'pague agora, pelo site', card_online: 'pague agora, pelo site' };
+const PAYMENT_NOTE: Partial<Record<PaymentMethod, string>> = { card: 'na entrega ou na retirada' };
 
 function PaymentIcon({ code }: { code: PaymentMethod }) {
   const cls = 'h-4 w-4';
-  if (code === 'pix' || code === 'pix_online') return <QrCode className={cls} aria-hidden="true" />;
+  if (code === 'pix') return <QrCode className={cls} aria-hidden="true" />;
   if (code === 'cash') return <Banknote className={cls} aria-hidden="true" />;
   return <CreditCard className={cls} aria-hidden="true" />;
 }

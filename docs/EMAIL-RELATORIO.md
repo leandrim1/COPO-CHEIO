@@ -123,7 +123,7 @@ Depois: `MAIL_FROM` com o domínio autenticado, `SITE_URL`, novo deploy, e **E-m
 
 - **O que acontece ao publicar:** a Vercel roda `vercel-build`, que aplica a migration **0019** no banco de produção (só em deploys de produção) e faz o deploy do site.
 - **A migration só acrescenta:** tabelas, funções e gatilhos novos. Nenhuma tabela existente muda de forma. As duas funções existentes que são trocadas (`anonymize_person`, `purge_expired_data`) ficam iguais para tudo o que já existia. Foi exercitada em um banco com o formato antigo (api-test16): ela não gera e-mails retroativos de pedidos antigos.
-- **Gatilhos nos pedidos:** a partir do deploy, cada mudança de etapa do pedido e cada pagamento online confirmado/reembolsado passa a enfileirar um e-mail. **Isso vai para clientes reais.** Se algo parecer estranho, pause com `EMAIL_ORDER_NOTICES=off` (seção 6) e faça um novo deploy.
+- **Gatilhos nos pedidos:** a partir do deploy, cada mudança de etapa do pedido e cada pagamento marcado como pago/reembolsado passa a enfileirar um e-mail. **Isso vai para clientes reais.** Se algo parecer estranho, pause com `EMAIL_ORDER_NOTICES=off` (seção 6) e faça um novo deploy.
 - **Desfazer sem apagar dados:** além do interruptor, os dois gatilhos podem ser removidos com `drop trigger order_status_history_email on order_status_history; drop trigger orders_payment_email on orders;` (as tabelas novas ficam, inofensivas).
 - **Sem backup** foi a sua escolha nas migrations anteriores; esta é maior (tabelas e gatilhos novos). Um backup/branch do Neon antes do deploy continua sendo a forma mais barata de desfazer tudo. Cabe a você decidir.
 
@@ -148,7 +148,7 @@ Rodados em 14/10/2026 sobre o código final desta branch, com PostgreSQL 16 loca
 | --------- | ----- |
 | Cadastro e verificação de e-mail | `api-test5`, `api-test5-modes`, `api-test17` §1 e §6, `e2e-verify`, `e2e-emails` §1 |
 | Login e redefinição de senha | `api-test7`, `api-test17` §6 (o registro nunca atrapalha o código de login), `e2e-recover` |
-| Confirmação de pedido e de pagamento | `api-test18` §1 a §5 (recebido, confirmado, saiu, entregue, cancelado, Pix online, reembolso) |
+| Confirmação de pedido e de pagamento | `api-test18` §1 a §4 (recebido, confirmado, saiu, entregue, cancelado) |
 | Envio duplicado | `api-test18` §2 e §5 (uma mensagem por etapa), `api-test19` (uma por pessoa e campanha), `api-test21` (chave de idempotência) |
 | Falha temporária do provedor | `api-test17` §4 e §5, `api-test18` §6 (o pedido não é afetado; o aviso espera e sai) |
 | Endereço inválido e devolução | `api-test17` §3 (`550 5.1.1` suprime e não repete), `api-test18` §7 (domínio e tetos), `api-test21` (devolução por aviso assinado) |

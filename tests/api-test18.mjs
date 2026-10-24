@@ -189,65 +189,7 @@ section('4. Sem e-mail no pedido: nenhum e-mail; com conta, vai para o e-mail da
 }
 
 // ------------------------------------------------------------------------------------------------
-section('5. Pagamento online (Pix): só "pagamento confirmado" (um e-mail, não dois), cancelamento por falta de pagamento e reembolso');
-{
-  psql(`insert into merchant_accounts (provider, kind, status, provider_account_id, proposal_id, authorized_at) values ('simulador', 'pj', 'approved', 'sim-sub-18', 'sim-prop-18', now())`);
-  const on = await owner.patch('/api/admin/payments/pix_online', { enabled: true });
-  check('Pix online ligado para o teste', on.status === 200, on.data);
-  const sim = (path, body) => fetch(`${BASE}/__pay/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).then((r) => r.json());
-  const email = fresh('pix');
-  await clearMail();
-  const A = await placeOrder({ customer_email: email, payment_method: 'pix_online' });
-  check('pedido nasce "aguardando pagamento" e NÃO manda "pedido recebido"', orderRow(A.number).order_status === 'awaiting_payment' && msgs(A.number).length === 0, msgs(A.number));
-  const created = await A.c.post(`/api/tracking/${A.token}/payment`, { method: 'pix' });
-  check('Pix gerado', created.status === 201, created.data);
-  const charge = psql(`select provider_charge_id from payments p join orders o on o.id = p.order_id where o.order_number = ${A.number}`);
-  await sim(`charge/${charge}`, { status: 'paid' });
-  const refreshed = await owner.post(`/api/admin/payments/${psql(`select p.id from payments p join orders o on o.id = p.order_id where o.order_number = ${A.number}`)}/refresh`);
-  check('a operadora confirma e o painel atualiza o pagamento', refreshed.status === 200 && orderRow(A.number).payment_status === 'paid', [refreshed.status, orderRow(A.number).payment_status]);
-  const pay = (await arrive(email, 1, /Pagamento do pedido/))[0];
-  check('"pagamento confirmado": um e-mail só, com o valor, a taxa de serviço do Pix (R$ 0,43) e o total (R$ 17,43)', Boolean(pay) && /confirmado/i.test(pay.subject) && /R\$\s*17,00/.test(plain(pay)) && /Taxa de serviço do Pix/.test(plain(pay)) && /R\$\s*0,43/.test(plain(pay)) && /R\$\s*17,43/.test(plain(pay)) && (await mailsTo(email)).length === 1, (await mailsTo(email)).map((m) => m.subject));
-  check('...e NÃO sai "pedido recebido" junto', msgs(A.number, 'order_received').length === 0 && msgs(A.number, 'payment_confirmed').length === 1, msgs(A.number).map((m) => m.kind));
-  // Ver o mesmo pagamento de novo (atualização repetida) não repete o aviso.
-  await owner.post(`/api/admin/payments/${psql(`select p.id from payments p join orders o on o.id = p.order_id where o.order_number = ${A.number}`)}/refresh`);
-  await process_();
-  check('atualizar o mesmo pagamento de novo não duplica o e-mail', msgs(A.number, 'payment_confirmed').length === 1 && (await mailsTo(email)).length === 1);
-  await patchStatus(A.id, 'confirmed');
-  check('depois, a loja confirma o pedido: "confirmado" segue normalmente', (await arrive(email, 1, /Pedido #\d+ confirmado/)).length === 1 && msgs(A.number, 'order_confirmed').length === 1);
-
-  // Pagamento online: a loja não marca "reembolsado" à mão (quem confirma é a operadora).
-  check('pagamento online não se altera à mão no painel (400)', (await owner.patch(`/api/admin/orders/${A.id}`, { payment_status: 'refunded' })).status === 400);
-  // Estorno PARCIAL: o pedido segue pago e nada é enviado; estorno TOTAL: "reembolso registrado".
-  await sim(`charge/${charge}`, { status: 'refunded', refundedCents: 500 });
-  await sim('webhook', { id: 'evt-18-part', type: 'charge.refunded', chargeId: charge });
-  await process_();
-  check('estorno parcial: o pedido continua "pago" e nenhum e-mail de reembolso sai', orderRow(A.number).payment_status === 'paid' && msgs(A.number, 'payment_refunded').length === 0);
-  await sim(`charge/${charge}`, { status: 'refunded', refundedCents: 1743 });
-  await sim('webhook', { id: 'evt-18-total', type: 'charge.refunded', chargeId: charge });
-  const refund = (await arrive(email, 1, /Reembolso/))[0];
-  check('estorno total: e-mail "reembolso", sem prometer prazo', Boolean(refund) && /reembolso/i.test(refund.subject) && /R\$\s*17,43/.test(plain(refund)) && !/em até \d+ dias/i.test(refund.text), refund?.subject);
-
-  // Pedido que não foi pago a tempo e foi cancelado: texto "nada foi cobrado".
-  const email2 = fresh('pixexp');
-  await clearMail();
-  const B = await placeOrder({ customer_email: email2, payment_method: 'pix_online' });
-  psql(`update orders set order_status = 'cancelled' where id = ${lit(B.id)}`);
-  psql(`insert into order_status_history (order_id, from_status, to_status, changed_by_name) values (${lit(B.id)}, 'awaiting_payment', 'cancelled', 'Sistema')`);
-  await process_();
-  const exp = (await arrive(email2, 1, /cancelado/))[0];
-  check('cancelado por falta de pagamento: diz que nada foi cobrado', Boolean(exp) && /nada foi cobrado/i.test(plain(exp)) && !/devolu/i.test(plain(exp)), exp?.text?.slice(0, 500));
-
-  // Pagamento que chega depois de o pedido ter sido cancelado não vira "pagamento confirmado".
-  const email3 = fresh('pixlate');
-  await clearMail();
-  const L = await placeOrder({ customer_email: email3, payment_method: 'pix_online' });
-  psql(`update orders set order_status = 'cancelled' where id = ${lit(L.id)}`);
-  psql(`update orders set payment_status = 'paid' where id = ${lit(L.id)}`);
-  check('pagamento tardio de pedido cancelado não manda "pagamento confirmado"', msgs(L.number, 'payment_confirmed').length === 0, msgs(L.number).map((m) => m.kind));
-}
-
-// ------------------------------------------------------------------------------------------------
-section('6. Falha do servidor de e-mail NÃO atrapalha o pedido; o aviso espera na fila e sai depois; e-mail velho não sai fora de hora');
+section('5. Falha do servidor de e-mail NÃO atrapalha o pedido; o aviso espera na fila e sai depois; e-mail velho não sai fora de hora');
 {
   const email = fresh('falha');
   await clearMail();
@@ -276,7 +218,7 @@ section('6. Falha do servidor de e-mail NÃO atrapalha o pedido; o aviso espera 
 }
 
 // ------------------------------------------------------------------------------------------------
-section('7. Travas contra abuso: endereço de outra pessoa digitado no pedido');
+section('6. Travas contra abuso: endereço de outra pessoa digitado no pedido');
 {
   // 7a. Domínio inexistente / descartável: o e-mail nem é tentado.
   await clearMail();
@@ -323,7 +265,7 @@ section('7. Travas contra abuso: endereço de outra pessoa digitado no pedido');
 }
 
 // ------------------------------------------------------------------------------------------------
-section('8. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail (sem login)');
+section('7. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail (sem login)');
 {
   const email = fresh('pref');
   await clearMail();
@@ -353,7 +295,7 @@ section('8. "Não quero e-mails de pedidos neste endereço": pelo link do e-mail
 }
 
 // ------------------------------------------------------------------------------------------------
-section('9. O painel mostra o que aconteceu com cada pedido (por pedido e por cliente), sem corpo nem segredo');
+section('8. O painel mostra o que aconteceu com cada pedido (por pedido e por cliente), sem corpo nem segredo');
 {
   const byOrder = await owner.get(`/api/admin/emails/messages?q=${flowMail}`);
   check('histórico do endereço: recebido, confirmado, saiu, entregue', byOrder.status === 200 && byOrder.data.messages.length === 4 && byOrder.data.messages.every((m) => m.category === 'transactional' && m.order_number === F.number), byOrder.data.messages?.map((m) => [m.kind, m.order_number]));
@@ -366,7 +308,7 @@ section('9. O painel mostra o que aconteceu com cada pedido (por pedido e por cl
 }
 
 // ------------------------------------------------------------------------------------------------
-section('10. Falha do gatilho nunca derruba o pedido');
+section('9. Falha do gatilho nunca derruba o pedido');
 {
   // Uma restrição quebrada na tabela de mensagens (como se o esquema estivesse errado) não pode impedir o pedido.
   psql('alter table email_messages add constraint email_messages_quebrada check (false) not valid');
@@ -382,7 +324,7 @@ section('10. Falha do gatilho nunca derruba o pedido');
 }
 
 // ------------------------------------------------------------------------------------------------
-section('11. Interruptor de segurança: EMAIL_ORDER_NOTICES=off pausa SÓ os e-mails de pedido e pagamento');
+section('10. Interruptor de segurança: EMAIL_ORDER_NOTICES=off pausa SÓ os e-mails de pedido e pagamento');
 {
   serve({ EMAIL_ORDER_NOTICES: 'off' });
   const o = new Client(undefined, '198.51.100.38');

@@ -28,18 +28,11 @@ nunca vão para o Git (`.env*` está no `.gitignore`; só o `.env.example` é ve
 | `GA_MEASUREMENT_ID` | Opcional: identificador do Google Analytics 4 (`G-XXXXXXXXXX`; **não é segredo**). Liga a medição de visitas **somente para quem aceitar** o aviso. Para o Google carregar também é preciso liberar os endereços dele na política de segurança do `vercel.json` ([`PWA-SEO-ANALYTICS.md`](PWA-SEO-ANALYTICS.md), seção 3) | Nenhuma medição, nenhum aviso, nenhum script de terceiro |
 | `MIGRATE_ON_PREVIEW` | `1` = deploys de teste (preview) também aplicam migrations. **Só** se o ambiente *Preview* usar um banco **separado** | Previews apenas listam as migrations pendentes e **não** mexem no banco |
 | `SHELL_HTML_FILE` | Avançado: caminho do `index.html` usado na página para robôs (WhatsApp, Facebook, Google). Os testes usam | Usa `dist/index.html`, que a Vercel inclui na função (`vercel.json` → `includeFiles`) |
-| `VALIDAPAY_ENV`, `VALIDAPAY_CLIENT_ID`, `VALIDAPAY_CLIENT_SECRET`, `VALIDAPAY_WEBHOOK_SECRET` | Pix online com a ValidaPay. `VALIDAPAY_ENV` é `sandbox` (testes, nada é cobrado) ou `production`. As credenciais vêm do painel da ValidaPay (*Integração → API* e *Integração → Webhooks*); as de sandbox e as de produção são **diferentes**. **Só ligam se as quatro existirem** | O Pix online fica **indisponível** (o painel *Pagamentos* mostra o **nome** das que faltam) e o servidor recusa pedidos com esse meio. O resto do site segue normal. `production` só vale no deploy de **produção** da Vercel |
-| `VALIDAPAY_PUBLIC_ID` | Cartão de crédito online: o **Id Público** da **subconta** do estabelecimento na ValidaPay (*Gerenciamento → Minha Conta → Id Público*); o cartão é cobrado nela, sem split (o Pix segue com a mesma subconta e o split). **Não é segredo** (o navegador o usa para trocar o cartão por um token), mas fica só no servidor e chega à tela só no momento de pagar. Precisa das quatro `VALIDAPAY_*` acima | O cartão online fica **indisponível** (o painel *Pagamentos → Cartão de crédito online* mostra o **nome** desta variável). O Pix online não depende dela |
-| `VALIDAPAY_REFUNDS` | Opcional, **desligada por padrão**: `on` libera o botão "Devolver pagamento" (só owner). Exige uma credencial com o escopo `wallet/write`, que na ValidaPay é o **mesmo** do saque: crie uma credencial separada e só ligue depois do teste no sandbox ([`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md)) | Sem ela, a loja nunca pede `wallet/write` |
-| `VALIDAPAY_WEBHOOK_TOKEN` | Opcional: token estático do webhook (cabeçalho `x-access-token`), se você o definiu no cadastro do webhook na ValidaPay | Só o HMAC da assinatura é conferido |
 | `ADMIN_PASSWORD` | Só para rodar `npm run admin:create` sem digitar (CI, testes). **Não cadastre na Vercel** | O script pergunta a senha |
 
 Definidas pela própria Vercel (não cadastre): `VERCEL`, `VERCEL_ENV`, `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL`.
 
-**Pagamento online (ValidaPay):** as credenciais ficam **só no servidor** (nunca `VITE_`). A produção da ValidaPay só é usada quando
-`VERCEL_ENV=production`: num deploy de teste (preview) ela é recusada de propósito, para um preview nunca criar cobrança ou subconta de verdade.
-Para a ValidaPay chamar a loja, cadastre o webhook `https://<seu-domínio>/api/payments/webhook` no painel dela. Passo a passo e escopos mínimos da
-credencial: [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md).
+**Pagamento pelo site (retirado):** o sistema não usa mais a ValidaPay nem nenhuma operadora de pagamento. Se as variáveis `VALIDAPAY_*` ainda estiverem cadastradas na Vercel, **pode apagá-las** (são ignoradas), assim como o webhook que você tenha cadastrado no painel da ValidaPay (`/api/payments/webhook` não existe mais).
 
 **Por que `SITE_URL` importa:** o servidor **nunca** monta o link de um e-mail a partir do que o navegador envia (`Host`,
 `X-Forwarded-Host`). Se montasse, quem pedisse "esqueci a senha" com um cabeçalho forjado faria o e-mail da vítima apontar para um
@@ -113,7 +106,7 @@ seguem as regras acima (só acrescentam colunas e trocam funções), com duas re
 
 **A migration 0027 (maioridade 18+ e cancelamento pelo cliente).** Acrescenta `products.alcoholic` (**todos os produtos nascem `true`**: o lado seguro), cinco colunas de maioridade em `orders` (`age_required`, `age_declared_at`, `age_declaration_version`, `age_checked_at`, `age_checked_by_name`), `order_status_history.reason` e a função `order_cancel_why`; troca `order_json`, `create_order` e `admin_set_order_status` (a antiga de 3 argumentos é removida e a nova tem os argumentos extras com padrão, então chamadas antigas continuam valendo) e cria `customer_cancel_order`. Nenhum pedido, preço, estoque ou dado é alterado ou apagado. **Exceção ao "voltar o código funciona":** o banco passa a recusar pedido com bebida alcoólica sem `age_confirmed: true`, que o código antigo não envia (veja o item 17 do pós-deploy para a saída de emergência).
 
-**A migration 0028 (devolução de pagamento online).** Só acrescenta a tabela `payment_refunds` (registro financeiro: sem `on delete cascade`, fora da limpeza automática) e as funções `refund_begin` e `refund_update`. Nenhuma função existente muda e nenhum dado é escrito ou apagado. Voltar o código não quebra nada (a tabela fica sem uso). Chamar a ValidaPay para devolver só acontece com `VALIDAPAY_REFUNDS=on` (veja `PAGAMENTO-ONLINE.md`).
+**A migration 0028 (devolução de pagamento online).** Só acrescentou a tabela `payment_refunds` e as funções `refund_begin` e `refund_update`. A funcionalidade foi retirada; a tabela fica sem uso.
 
 **A migration 0017 (troca do energético dos combos).** Só acrescenta (duas colunas e funções de apoio) e troca três funções (`create_order`, `restore_order_stock`, `order_json`) por versões iguais para tudo o que já existe: pedido sem troca não muda. Na criação da coluna `products.swap_base_product_id`, ela é **preenchida uma única vez** nos produtos da categoria "Combos", procurando no nome do combo o energético de 2L que ele cita (ex.: "…1 Energético Jack Power 2L"). **Depois do deploy, abra cada combo no painel (Produtos → editar) e confira o campo "Energético que vem neste combo"**: combo sem ele não oferece a troca. Nada mais muda para quem não usa a troca.
 
@@ -130,19 +123,7 @@ Os gatilhos engolem qualquer erro: se a tabela de e-mails falhar, o **pedido ent
 3. Tudo o que muda para o cliente: e-mail de **pedido recebido/confirmado/saiu para entrega/entregue/cancelado** e **pagamento confirmado/reembolso**; a caixa **opcional** de promoções (desmarcada) no cadastro; a página
    `/conta/emails/…` e o painel de preferências em *Minha conta*. Promoções só saem quando o owner criar e enviar uma campanha.
 
-**As migrations 0014, 0015 e 0016 (pagamento online).** A 0016 só troca a função que informa a taxa da comissão (de 5% para 2%); cobranças já criadas guardam a taxa com que nasceram. A 0015 só acrescenta uma coluna (`merchant_accounts.ambiguous`), um índice (um cadastro de
-conta ativo por operadora) e dois desfechos permitidos em `payment_events`. A 0014 segue as regras acima: só acrescenta (tabelas `merchant_accounts`, `payments` e `payment_events`
-e funções novas), amplia duas listas de valores permitidos (o status do pedido ganha `awaiting_payment`; os meios de pagamento ganham
-`pix_online`) e troca cinco funções (`create_order`, `order_json`, `admin_set_order_status`, `admin_set_payment_status`, `admin_dashboard`)
-por versões que se comportam igual para tudo o que já existe. Escreve **uma linha de dados**: o meio `pix_online`, **desligado**. Enquanto
-ele estiver desligado, nenhum cliente vê mudança e nenhum pedido existente é tocado; e ele **não pode ser ligado** sem operadora
-configurada e conta aprovada (a verificação é do servidor novo). Nenhuma migration chama a ValidaPay nem cria conta. Dois cuidados:
-
-1. Depois de um **rollback do código para antes desta versão**, o painel antigo lista "Pix online" entre as formas de pagamento e não
-   conhece essa trava: **não o ligue**. Um pedido assim ficaria "aguardando pagamento" sem tela para pagar (seria cancelado pelo sistema
-   depois de 30 minutos, com o estoque devolvido).
-2. Quando o Pix online for ligado, **recarregue o painel em todos os aparelhos**: uma aba aberta de antes da versão não conhece o status
-   "aguardando pagamento".
+**As migrations 0014 a 0016, 0020 e 0028 (pagamento online e devolução) e a 0036 (retirada).** As cinco primeiras criaram a integração de pagamento online (tabelas `merchant_accounts`, `payments`, `payment_events`, `payment_refunds`, o status de pedido `awaiting_payment`, o meio `pix_online`/`card_online` e funções); o código dela foi **retirado** do sistema. A 0036 só **desliga** `pix_online` e `card_online` (idempotente) e **não apaga nada**: as tabelas, colunas e funções ficam no banco, sem uso e sem efeito. Voltar o código para antes desta versão não exige desfazer nada; **não ligue** "Pix online" nem "Cartão online" se o painel antigo os listar (o pedido ficaria "aguardando pagamento" sem tela para pagar).
 
 **Ver o que está pendente / aplicar manualmente:** `vercel env pull .env.local` e `npm run db:migrate` (aplica no banco do
 `.env.local`; confirme que não é o de produção se estiver testando).
@@ -171,11 +152,11 @@ painel" que você não reconhece.
 
 ### Rotina com mais frequência (opcional)
 
-O plano gratuito da Vercel só aceita cron **diário**; o `vercel.json` já agenda `/api/cron/email` (06:23 UTC) e `/api/cron/sweep` (03:47 UTC). Entre uma execução e outra, o Pix/cartão vencido também é encerrado de passagem quando entra movimento
-(pedido novo, painel aberto), mas numa loja parada um Pix que venceu à noite só seria encerrado (e o estoque devolvido) na próxima execução. Para encerrar em poucos minutos, chame a rotina de fora, **sem custo**:
+O plano gratuito da Vercel só aceita cron **diário**; o `vercel.json` já agenda `/api/cron/email` (06:23 UTC) e `/api/cron/sweep` (03:47 UTC). Entre uma execução e outra, a fila de e-mails também sai de passagem quando entra movimento
+(pedido novo, painel aberto), mas numa loja parada um e-mail que ficou na fila só sai na próxima execução. Para sair em poucos minutos, chame a rotina de fora, **sem custo**:
 
 * **GitHub Actions** (repositório privado: ~2.000 min/mês grátis; cada chamada gasta ~1 min, então use no máximo a cada 30 min; público: ilimitado) ou **cron-job.org** (gratuito): `GET https://<seu site>/api/cron/sweep` com o cabeçalho `Authorization: Bearer <CRON_SECRET>`, a cada 5 a 30 minutos.
-* A rotina é **segura de repetir**: cada pedido vencido é encerrado uma única vez, o estoque volta uma única vez, e um Pix pago na operadora cujo aviso se perdeu é **liberado, nunca cancelado**. Se a operadora estiver fora do ar, nada é cancelado às cegas.
+* A rotina é **segura de repetir**: o aviso da operação (estoque baixo, rotina com problema) e a limpeza de dados vencidos não duplicam nada, e a fila de e-mails não manda a mesma mensagem duas vezes.
 * Nunca coloque o `CRON_SECRET` num arquivo do repositório: use os segredos do serviço (em GitHub Actions: *Settings → Secrets and variables → Actions*).
 
 > A Vercel não avisa sozinha quando `/api/health` cai: é preciso cadastrar o monitor (item acima). Este repositório **não** inclui
@@ -237,14 +218,6 @@ rodados contra o Neon de verdade. Teste a restauração **antes** de precisar de
 | Cliente diz que o pedido "sumiu" | Busque o número em *Pedidos*. Sem o link do acompanhamento, o painel gera um novo (*Pedido → Acompanhamento do cliente*) |
 | Cliente diz que não consegue adicionar ou finalizar um copão ("Escolha o tipo de gelo para continuar.") | É a regra da escolha do gelo. No site novo, a pergunta aparece ao tocar em "Adicionar"; se a pessoa está com uma aba aberta de antes do deploy, basta recarregar. Confira em *Produtos* quais produtos têm o selo "Pede o gelo" (liga e desliga no botão do floco de neve da linha ou na chave do formulário do produto; o filtro "Pedem o gelo" lista só eles). Depois de um rollback do código, veja o item 3 |
 | Cliente viu o aviso de que o valor mudou ("Confirmar novo total") | É esperado: o total mostrado precisa bater com o do servidor (`409 price_changed`: preço, promoção ou taxa mudaram). A tela mostra o que mudou e pede a confirmação; nenhum pedido foi criado até ali |
-| *Pagamentos* mostra cobranças em "Pedem conferência" (só quando o Pix online estiver ligado) | O dinheiro entrou, mas algo não fecha: pago **depois** de o pedido ser cancelado, pago **em duplicidade**, valor diferente do cobrado, ou repasse da comissão que falhou. O pedido **não** é reaberto sozinho. Nos três primeiros casos há dinheiro do cliente a conferir/devolver: faça pelo painel da operadora (o sistema só registra) e marque como conferido em *Pagamentos*. Se foi só o repasse da comissão que falhou, o pedido segue normal e a comissão fica "Falhou" (não "Efetivada"): resolva com a operadora |
-| Pedido "Aguardando pagamento" parado (só com Pix online ligado) | Normal por até 15 minutos (validade do Pix) + 10 de nova tentativa; depois o pedido é cancelado e o estoque volta. Se ficar mais tempo, abra *Pagamentos → Conferir agora* (não há agendador: a conferência roda quando o painel está aberto ou entra pedido) |
-| Cliente diz que pagou o Pix e o pedido não avançou (só com Pix online ligado) | Em *Pagamentos* (ou no detalhe do pedido), use **Atualizar pagamento** na cobrança (consulta a operadora). Pagamento só conta quando a operadora confirma: ver o QR Code ou a tela "Já paguei" não confirma nada. Confira também se o webhook da operadora está cadastrado e apontando para `/api/payments/webhook` |
-| "O pagamento online não está disponível agora" no checkout | O servidor não tem a ValidaPay conectada (faltam variáveis) ou ela não respondeu. Em *Pagamentos* aparece o **nome** das variáveis que faltam. Desligue o "Pix online no site" até resolver |
-| *Pagamentos* mostra a conta "Aguardando aprovação" há muito tempo | A ValidaPay analisa o cadastro (antecedentes, documentos). Use **Atualizar andamento**: se pedir documentos, aparece o link de envio. A conta só vira "Aprovada" com o aviso oficial da ValidaPay; confira se o webhook está cadastrado (eventos `onboarding.*`) e, se a conta já existir lá, use **Vincular conta existente** |
-| Cadastro da conta com "Erro" e a mensagem "pode ter sido criado (e cobrado)" | A ValidaPay não respondeu ao envio. **Confira no painel da ValidaPay** se a proposta existe antes de tentar de novo (cada conta nova custa R$ 15,00 em produção); a nova tentativa pede confirmação explícita |
-| Pagamento com comissão "Aguardando confirmação" depois de pago | A loja só marca a comissão como efetivada quando o extrato da conta master mostra o crédito dessa cobrança. Use **Atualizar pagamento**; se não aparecer no extrato da ValidaPay, a divisão não aconteceu: fale com a ValidaPay |
-| Cobrança vencida que continua "aguardando" | A loja cancela a cobrança na ValidaPay quando o Pix vence; se ela estiver fora do ar, tenta de novo na próxima conferência (*Pagamentos → Conferir agora*) e, depois de 30 minutos, encerra e sinaliza |
 | Pedido de privacidade (LGPD) | *Painel → Clientes → Privacidade*. Responda pelo contato deixado (a política informa até 15 dias). Para quem comprou como visitante, o **owner** usa *Anonimizar uma pessoa* (telefone e/ou e-mail); a conta e os links de acompanhamento são apagados e os pedidos ficam sem dados pessoais (itens, valores, datas e bairro continuam para a contabilidade). Marque como atendido |
 | Suspeita de acesso indevido | 1) Troque a senha do administrador (encerra as sessões). 2) *Configurações → Atividades*: confira entradas e mudanças. 3) Ligue o 2FA. 4) Se houve vazamento de segredo, rotacione (abaixo) |
 | Depois de um deploy algo quebrou | *Vercel → Deployments →* promova o deploy anterior (rollback). O banco não volta; as migrations são compatíveis com a versão anterior |
@@ -290,15 +263,7 @@ agendador, então com o site parado ela só roda quando houver movimento.
 5. Se mexeu em e-mail: *Clientes → Enviar e-mail de teste* (owner) e abra **Painel → E-mails**: nenhum alerta aberto, "Aceitas pelo servidor" subindo e a fila vazia. Depois da migration 0019, faça **um pedido de teste com um e-mail seu** e
    confira: chegou "Pedido recebido"; ao mudar a etapa no painel, chegou o aviso da etapa; abra a mensagem em **Mensagens** para ver a linha do tempo.
 6. Confira nos logs da Vercel se não há `erro inesperado`, `not_configured` nem `csp-bloqueio` novos.
-7. Depois das migrations 0014 a 0018: no checkout **não** deve aparecer "Pix online" (nasce desligado) e o painel (owner) ganha o item *Pagamentos*. Sem as
-   variáveis `VALIDAPAY_*` ele mostra "Operadora de pagamento: Não conectada" e o **nome** das que faltam. Com o Pix online desligado, os pedidos seguem como antes.
-8. Se ligou o Pix online: faça **um pedido de teste no sandbox** da ValidaPay e confira pedido, comissão e histórico antes de usar credenciais de produção.
-9. Depois da migration 0020 (cartão de crédito online **e taxa de serviço do Pix**): o checkout **não** deve mostrar "Cartão online" (nasce desligado) e os pedidos antigos seguem
-   iguais. Para ligar o cartão: siga [`CARTAO-ONLINE.md`](CARTAO-ONLINE.md) (a taxa do cartão precisa ser **conferida com o contrato da ValidaPay** e o teste no **sandbox** feito antes de qualquer cartão real).
-   **Atenção ao Pix online, se já estiver ligado:** a 0020 passa a cobrar do cliente a **taxa de serviço de 2,5%** (e descontar mais 2,5% do estabelecimento, 5% no total para a conta master) em
-   TODO pedido de Pix feito a partir dela; pedidos de Pix feitos antes continuam com o total e a comissão de 2% de quando nasceram. Se não quiser a taxa, zere os percentuais em
-   `payment_fee_settings` (`pix_customer_fee_bps` e `pix_store_fee_bps`, com SQL no Neon; ainda não há tela para isso): com os dois em zero os pedidos NOVOS voltam a cobrar só o valor do pedido, sem
-   divisão. O Pix online nasce desligado: se ainda não foi ligado em produção, nenhum pedido é afetado.
+7. Depois da migration 0036 (retirada do pagamento pelo site): no checkout só aparecem **PIX, Dinheiro e Cartão** (na entrega ou na retirada); *Pagamentos* deixa de existir no menu do painel. Faça um pedido de teste com dinheiro: ele nasce **Novo**, sem etapa de pagamento.
 10. Depois da migration 0021 (uma coluna opcional em `store_settings`, hoje sem uso no site): nada muda. Abra **/bebidas**, toque no **ⓘ** ao lado de "Aberto agora" e confira o
    **horário de funcionamento** (com o dia de hoje destacado) e as **formas de pagamento**.
 13. Depois da migration 0024 (**login do painel com código por e-mail**): ANTES de sair do painel que está aberto, confirme que o envio de e-mail funciona (*Configurações → Painel → Estado do
@@ -335,14 +300,11 @@ agendador, então com o site parado ela só roda quando houver movimento.
    **Cuidado com o rollback do código:** depois da 0027 o **banco** passa a exigir `age_confirmed: true` em pedidos com bebida alcoólica. A versão anterior do site **não envia isso**, então, se o código voltar para antes
    desta versão, **os pedidos com bebida alcoólica são recusados** (erro `age_required`) até o código novo voltar. Saída de emergência (só se precisar mesmo do código antigo): no Neon, `update products set alcoholic = false;`
    (isso desliga a exigência e a conferência de maioridade para TODOS os produtos; refaça a marcação no painel quando o código novo voltar). A 0027 não apaga nem altera pedidos; o painel antigo continua mudando status (os argumentos novos têm padrão).
-18. Depois da migration 0028 (**devolução de pagamento online pelo painel**; só uma tabela nova): nada muda para o cliente. Só o **owner** vê **Devolver pagamento** (em *Pagamentos* e no pedido, pagamento "Pago").
-   O valor só vira "devolvido" quando a operadora **confirma**: até lá o painel mostra "Aguardando a operadora". Se aparecer "Sem resposta da operadora", **não peça de novo**: use **Conferir devolução**.
-   **Antes de usar com dinheiro de verdade**, faça uma devolução no **sandbox** da ValidaPay e siga a lista de [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md) (seção "Homologação"): o contrato de devolução (cabeçalho da subconta no Pix, permissão `wallet/write`) **não foi confirmado com a operadora**.
+18. (Retirado) A devolução de pagamento online pelo painel (migration 0028) deixou de existir junto com o pagamento pelo site. O dono combina a devolução com o cliente e marca o pedido como **reembolsado** à mão.
 19. Depois da migration 0029 (**cupons e entrega grátis por valor**): nada muda no site (nenhum cupom existe e a entrega grátis nasce **desligada**). Para usar: *Cupons* (só o owner) → *Novo cupom* e, para a entrega grátis, *Configurações → Entrega*
    → "Entrega grátis a partir de um valor". Confira com um pedido de teste: o desconto aparece no resumo do checkout, no pedido e no painel; um cupom desligado/vencido/esgotado é recusado com a mesma mensagem ("inválido ou expirado", para não
    revelar quais códigos existem). **Regras**: um cupom por pedido; o desconto nunca passa do valor dos itens elegíveis; cupom de porcentagem pode ter teto; o pedido mínimo do cupom e o da entrega olham o subtotal **antes** do desconto; a entrega grátis por valor
-   olha o subtotal **depois** do cupom; pedido cancelado não conta como uso; apagar ou mudar um cupom **nunca** altera um pedido já feito (o pedido guarda o código, o desconto e a taxa dispensada). Cupom que zera o pedido só vale para pagar na entrega/retirada
-   (a operadora não cobra R$ 0,00). Rollback do código: a versão anterior ignora cupom e entrega grátis (as colunas ficam sem uso); pedidos feitos com cupom continuam corretos.
+   olha o subtotal **depois** do cupom; pedido cancelado não conta como uso; apagar ou mudar um cupom **nunca** altera um pedido já feito (o pedido guarda o código, o desconto e a taxa dispensada). Cupom que cobre o pedido inteiro deixa o total em R$ 0,00 (vale: todo pagamento é feito à loja). Rollback do código: a versão anterior ignora cupom e entrega grátis (as colunas ficam sem uso); pedidos feitos com cupom continuam corretos.
 20. **Exportar CSV** (sem migration): *Pedidos* e *Clientes* → **Exportar CSV** (só o owner, porque têm nome, telefone, e-mail e endereço: dados pessoais da LGPD); *Estoque* → Exportar CSV (qualquer administrador). Cada exportação aparece em
    *Configurações → Painel → Registro de atividades* (quem, filtros, quantas linhas; nunca o conteúdo). A planilha abre no Excel/Google Planilhas em português (separador ";", acentos certos). Textos que começam com `=`, `+`, `-` ou `@` recebem um apóstrofo
    (proteção contra "injeção de fórmula" em planilhas). Guarde o arquivo com cuidado e apague quando não precisar mais; limite de 20 exportações por hora por pessoa e 20.000 linhas.
@@ -375,12 +337,12 @@ Nada abaixo foi feito pelo desenvolvimento: **o deploy e o uso de credenciais de
 
 1. **Backup lógico antes de tudo** (seção 5) e anote o ponto no tempo do Neon.
 2. **Teste num ambiente separado primeiro**: crie um *branch* do Neon (cópia do banco de produção), aponte o ambiente *Preview* da Vercel para ele (seção 2 deste guia: `DATABASE_URL` só no ambiente Preview) e faça um deploy de preview com `MIGRATE_ON_PREVIEW=1`.
-   Confira que as 9 migrations (0027 a 0035) aplicam sem erro e que o site de preview abre, cardápio e pedido de teste funcionam. **Não** ligue ValidaPay de produção no preview (o servidor recusa de propósito).
-3. **Variáveis de produção**: `CRON_SECRET` (obrigatória para os crons), `SITE_URL` (recomendada), `GA_MEASUREMENT_ID` (opcional). **Não** cadastre `VALIDAPAY_REFUNDS` até a homologação do estorno.
+   Confira que as 10 migrations (0027 a 0036) aplicam sem erro e que o site de preview abre, cardápio e pedido de teste funcionam.
+3. **Variáveis de produção**: `CRON_SECRET` (obrigatória para os crons), `SITE_URL` (recomendada), `GA_MEASUREMENT_ID` (opcional).
 4. **Atenção ao rollback**: depois da 0027 o código **antigo** não fecha pedido com bebida alcoólica (item 17). Se precisar voltar o código, siga a saída de emergência do item 17.
 5. **Deploy de produção** (`git push` no branch de produção): a Vercel aplica as migrations **antes** do build; se uma falhar, o site antigo continua no ar.
 6. **Depois do deploy**: percorra os itens 15 a 29 acima (principalmente 17: marcar o que **não** é bebida alcoólica) e o checklist da seção 8.
-7. **Pagamento online**: só depois de tudo estável, siga o roteiro de homologação em [`PAGAMENTO-ONLINE.md`](PAGAMENTO-ONLINE.md) no **sandbox** da ValidaPay; produção por último e com a loja acompanhando os primeiros pagamentos.
+7. **Pagamento pelo site**: não existe (retirado). Se quiser oferecê-lo no futuro, será um projeto novo, com orçamento e teste em sandbox antes de qualquer cobrança real.
 
 ## 9. O que este guia não cobre
 

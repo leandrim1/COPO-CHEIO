@@ -2,7 +2,7 @@
 
 Auditoria de ponta a ponta feita sobre o código desta versão (20/10/2026). Cada linha diz **o que foi verificado, onde, como se testa** e **o que ficou fora**. Regra do projeto: o navegador não é barreira de segurança — toda operação privilegiada é conferida no **servidor** (e o que é regra de negócio, no **banco**).
 
-> Limite desta auditoria: foi feita lendo o código e rodando os testes automáticos num PostgreSQL local, com a ValidaPay, o ViaCEP, o Blob e o e-mail **simulados**. Nada foi testado contra produção, contra a ValidaPay de verdade ou por um profissional de segurança independente. Não é um teste de invasão (pentest).
+> Limite desta auditoria: foi feita lendo o código e rodando os testes automáticos num PostgreSQL local, com o ViaCEP, o Blob e o e-mail **simulados**. Nada foi testado contra produção ou por um profissional de segurança independente. Não é um teste de invasão (pentest).
 
 ## 1. Resumo
 
@@ -17,7 +17,7 @@ Auditoria de ponta a ponta feita sobre o código desta versão (20/10/2026). Cad
 | SSRF | **Aprovado** (sem URL vinda do usuário; hosts de saída fixos) |
 | Upload de arquivos | **Aprovado** |
 | Limites de requisição / abuso | **Aprovado** (46 pontos de limite no servidor, contados no banco) |
-| Webhooks (ValidaPay, e-mail) | **Aprovado** no que o simulador cobre; **não validado com a ValidaPay real** |
+| Webhooks (e-mail, opcional) | **Aprovado** no que o simulador cobre |
 | Sessões, recuperação de senha, 2 etapas | **Aprovado** |
 | Variáveis de ambiente / segredos | **Aprovado** (nenhum segredo no repositório, nada vai ao navegador) |
 | Cabeçalhos de segurança e CORS | **Aprovado** |
@@ -60,14 +60,13 @@ Auditoria de ponta a ponta feita sobre o código desta versão (20/10/2026). Cad
 
 * **CSRF:** cookies `SameSite` (Strict no painel, Lax no cliente) **e** `foreignOrigin()` em `server/index.ts`: escrita (`POST/PUT/PATCH/DELETE`) com `Origin` de outro site → 403. Os webhooks são a única exceção a "mesma origem" e usam **assinatura HMAC** (veja 7).
 * **CORS:** não há. A API só responde ao próprio site; nenhum `Access-Control-Allow-Origin`.
-* **Cabeçalhos (`vercel.json`, testados em `tests/api-test10.mjs`):** `Content-Security-Policy` restritiva (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, `upgrade-insecure-requests`, relatório em `/api/csp-report`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (câmera, microfone, localização, pagamento, USB desligados), `Strict-Transport-Security`. Pedido, acompanhamento, conta e painel: `no-store`, `noindex`, `Referrer-Policy: no-referrer`. A tela do cartão (`/pagar/`) tem CSP própria (só a operadora e o antifraude dela) e `no-store`.
+* **Cabeçalhos (`vercel.json`, testados em `tests/api-test10.mjs`):** `Content-Security-Policy` restritiva (`default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `frame-ancestors 'none'`, `base-uri 'self'`, `form-action 'self'`, `upgrade-insecure-requests`, relatório em `/api/csp-report`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (câmera, microfone, localização, pagamento, USB desligados), `Strict-Transport-Security`. Pedido, acompanhamento, conta e painel: `no-store`, `noindex`, `Referrer-Policy: no-referrer`.  A CSP vale igual para todas as páginas (a antiga tela do cartão, `/pagar/`, que tinha uma CSP própria, foi retirada junto com o pagamento online).
 * **Cache público:** só dados do cardápio/loja e textos de políticas (curto, `s-maxage` de 30 a 60 s); nada de pedido, conta ou painel. O service worker (PWA) só guarda arquivos estáticos (`docs/PWA-SEO-ANALYTICS.md`).
 
 ## 7. Webhooks
 
-* **ValidaPay:** `X-Webhook-Signature: t=<ms>,v1=<hex>`, `v1 = HMAC-SHA256(segredo, "<t>.<corpo bruto>")`, comparação em tempo constante, tolerância de relógio, rejeição de corpo alterado, **idempotência** por `X-Webhook-Id` (aviso repetido não repete efeito) e **o aviso nunca é a única fonte da verdade**: antes de liberar o pedido o servidor consulta a cobrança na operadora (`server/payments/validapay.ts`, `tests/api-test15.mjs`, `tests/api-test22.mjs`, `tests/unit/validapay.test.mjs`). Aviso falsificado, duplicado, fora de ordem e de valor diferente estão cobertos.
 * **E-mail (Resend, opcional):** assinatura Svix verificada (`server/email/svix.ts`, `tests/api-test21.mjs`).
-* **Não validado:** o formato exato dos avisos da ValidaPay **em produção**. O que existe é fiel à documentação oficial e ao simulador escrito a partir dela. Veja `docs/PAGAMENTO-ONLINE.md` (homologação).
+* O webhook de pagamento (ValidaPay) **não existe mais**: `/api/payments/webhook` responde 404 (`api-test39`).
 
 ## 8. Abuso, robôs e CAPTCHA
 
@@ -83,18 +82,18 @@ Limites (contados no banco, atômicos — `server/auth.ts → reserve`): login d
 
 ## 10. SSRF
 
-O servidor só faz requisições de saída para destinos **fixos no código**: ValidaPay (hosts oficiais), ViaCEP (`viacep.com.br`), API do Resend (opcional) e o Blob da própria loja. Nenhum endereço vem do usuário. **Única exceção controlada:** a leitura, pelo painel, da foto de um produto cadastrada com endereço de outro site (`GET /api/admin/image-source`, descrita acima). As variáveis `CEP_API_URL`, `RESEND_API_URL` e `FAKE_*` existem só para os testes e são **ignoradas em produção** (`VERCEL_ENV=production`).
+O servidor só faz requisições de saída para destinos **fixos no código**: ViaCEP (`viacep.com.br`), API do Resend (opcional) e o Blob da própria loja. Nenhum endereço vem do usuário. **Única exceção controlada:** a leitura, pelo painel, da foto de um produto cadastrada com endereço de outro site (`GET /api/admin/image-source`, descrita acima). As variáveis `CEP_API_URL`, `RESEND_API_URL` e `FAKE_*` existem só para os testes e são **ignoradas em produção** (`VERCEL_ENV=production`).
 
 ## 11. Segredos e variáveis de ambiente
 
 * Nenhum segredo no repositório (varredura por padrões de chave, token, URL de banco e chave privada em todos os arquivos versionados e novos: nada encontrado; `.env*` está no `.gitignore`, só `.env.example`, sem valores).
 * Variáveis do servidor não começam com `VITE_` → **nunca chegam ao navegador**. A única que chega é `GA_MEASUREMENT_ID` (identificador público da medição de visitas), e é exposta de propósito por `/api/site`, validada por formato.
 * As respostas de erro não trazem pilha, SQL nem variável; o servidor registra o detalhe no log e devolve mensagem genérica. Falta de configuração vira `503` que diz *qual* variável falta, sem o valor.
-* Segredos de cobrança (chaves da ValidaPay) ficam em variáveis da Vercel, nunca no banco nem na tela.
+* Não há segredo de cobrança: o sistema não fala com operadora de pagamento. Os segredos que restam (`CRON_SECRET`, SMTP, Resend, Blob) ficam em variáveis da Vercel, nunca no banco nem na tela.
 
 ## 12. Dados pessoais, logs e auditoria
 
-* **Minimização:** não guardamos documento nem data de nascimento (só "declarou 18+" e "quem conferiu e quando"); número e CVV do cartão **não passam pelo servidor** (vão direto à operadora); avaliações não guardam nome nem telefone; o CEP digitado não é gravado no pedido.
+* **Minimização:** não guardamos documento nem data de nascimento (só "declarou 18+" e "quem conferiu e quando"); o site **não coleta dados de cartão** (o cartão é pago na entrega); avaliações não guardam nome nem telefone; o CEP digitado não é gravado no pedido.
 * **Logs:** o servidor não registra senha, código, token, cartão nem corpo de requisição; erros do navegador e relatórios de CSP vão para o log do servidor com limite de volume e sem dado pessoal (`server/routes/seo.ts`).
 * **Retenção e LGPD:** prazos em `docs/OPERACAO.md` (seção 7); pedido de acesso/correção/exclusão e anonimização em `/privacidade` e no painel; `purge_expired_data()` apaga o vencido (e roda na rotina automática — `docs/OPERACAO.md`).
 * **Trilha de auditoria:** `Configurações → Atividades` (só owner) registra quem fez o quê e quando (produtos, preços, cupons, política, estorno, exportação, equipe, moderação de avaliação…), sem segredos.
@@ -102,9 +101,8 @@ O servidor só faz requisições de saída para destinos **fixos no código**: V
 
 ## 13. Pontos de atenção e recomendações
 
-1. **Teste de invasão por terceiro** antes de divulgar em larga escala e sempre que a ValidaPay for ligada em produção.
-2. **Estorno pela API desligado por padrão** (`VALIDAPAY_REFUNDS=on`): o escopo `wallet/write` da ValidaPay também autoriza saque/transferência; só ligar com a credencial restrita ou confirmação do suporte (`docs/PAGAMENTO-ONLINE.md`).
-3. **Mantenha `CRON_SECRET`, `SITE_URL` e as credenciais como *Sensitive* na Vercel**; troque-as se houver suspeita de vazamento.
-4. **Dependências:** rodar `npm audit` a cada deploy relevante; planejar a migração do Tailwind 3 → 4 (corrige os 5 alertas de desenvolvimento).
-5. **Backups:** o Neon guarda o histórico (ponto no tempo); faça o exercício de restauração de `docs/OPERACAO.md` uma vez.
-6. **Autenticação de e-mail (SPF/DKIM/DMARC)** depende de domínio próprio — ver `docs/EMAIL-RELATORIO.md`.
+1. **Teste de invasão por terceiro** antes de divulgar em larga escala.
+2. **Mantenha `CRON_SECRET`, `SITE_URL` e as credenciais como *Sensitive* na Vercel**; troque-as se houver suspeita de vazamento.
+3. **Dependências:** rodar `npm audit` a cada deploy relevante; planejar a migração do Tailwind 3 → 4 (corrige os 5 alertas de desenvolvimento).
+4. **Backups:** o Neon guarda o histórico (ponto no tempo); faça o exercício de restauração de `docs/OPERACAO.md` uma vez.
+5. **Autenticação de e-mail (SPF/DKIM/DMARC)** depende de domínio próprio — ver `docs/EMAIL-RELATORIO.md`.

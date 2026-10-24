@@ -17,16 +17,8 @@ function subscribe(listener: () => void) {
 
 const getLocation = () => window.location.pathname + window.location.search + window.location.hash;
 
-// A tela do cartão (/pagar) tem regras de segurança próprias (vercel.json): ela só funciona aberta do zero, nunca por troca de tela dentro do site.
-// E quem está nela sai por carregamento completo, para o resto do site não ficar com as permissões dela.
-const isCardPage = (pathname: string) => pathname === '/pagar' || pathname.startsWith('/pagar/');
-
 export function navigate(to: string, { replace = false }: { replace?: boolean } = {}) {
   if (to === window.location.pathname + window.location.search + window.location.hash) return;
-  if (isCardPage(to.split(/[?#]/)[0]) || isCardPage(window.location.pathname)) {
-    window.location[replace ? 'replace' : 'assign'](to);
-    return;
-  }
   window.history[replace ? 'replaceState' : 'pushState'](null, '', to);
   notify();
 }
@@ -50,8 +42,6 @@ export function useLinkInterception() {
       if (!anchor || (anchor.target && anchor.target !== '_self') || anchor.hasAttribute('download') || anchor.hasAttribute('data-full-reload')) return;
       const url = new URL(anchor.href, window.location.href);
       if (url.origin !== window.location.origin || !isAppPath(url.pathname)) return;
-      // De dentro ou para a tela do cartão: carregamento completo (o navegador cuida).
-      if (isCardPage(url.pathname) || isCardPage(window.location.pathname)) return;
       if (url.pathname === window.location.pathname && url.search === window.location.search) {
         // Mesma página: "#seção" rola sozinho; um link para esta página volta ao topo.
         if (!url.hash) {

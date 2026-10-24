@@ -10,7 +10,6 @@ import { runOpsAlerts } from './opsAlerts.js';
 import { kickQueue, onQueueRun, rememberRequest } from './email/service.js';
 import { mailConfigured, mailMissing } from './mail.js';
 import { siteUrl } from './mailBrand.js';
-import { onlineReadiness } from './payments/service.js';
 import { HttpError, Router, json } from './http.js';
 import type { Access, Admin, Ctx } from './http.js';
 import { registerAccount } from './routes/account.js';
@@ -28,7 +27,6 @@ import { registerAddresses } from './routes/addresses.js';
 import { registerLegal } from './routes/legal.js';
 import { registerLoyalty } from './routes/loyalty.js';
 import { registerOrders } from './routes/orders.js';
-import { registerPayments } from './routes/payments.js';
 import { registerPrivacy } from './routes/privacy.js';
 import { registerPublic } from './routes/public.js';
 import { registerSeo } from './routes/seo.js';
@@ -80,14 +78,12 @@ router.get('/api/health', 'public', async (ctx) => {
 });
 
 // Mesmo resultado detalhado, mas só para administradores logados (inclui o nome das variáveis que faltam).
-// `payments`: o pagamento online é opcional (não entra em `missing`); mostra só se há operadora e conta aprovada, sem valores.
 router.get('/api/admin/health', 'admin', async (ctx) => {
   const status = await systemStatus(ctx.req);
-  const payments = status.database === 'ok' ? await onlineReadiness().catch(() => null) : null;
   // `admin_login_code`: 'on' = o login do painel exige o código enviado por e-mail (o normal); 'off' = interruptor de emergência ADMIN_EMAIL_CODE=off ligado.
-  // `jobs`: quando a rotina automática (Pix vencido, fila de e-mails, limpeza) rodou pela última vez e se deu certo; `cron_secret`: sem o segredo o cron da Vercel recebe 401.
+  // `jobs`: quando a rotina automática (fila de e-mails, avisos da operação, limpeza) rodou pela última vez e se deu certo; `cron_secret`: sem o segredo o cron da Vercel recebe 401.
   const sweep = status.database === 'ok' ? await one<{ last_run_at: string; ok: boolean; detail: string | null }>("select last_run_at, ok, detail from job_runs where name = 'sweep'").catch(() => null) : null;
-  return json({ ...status, payments, admin_login_code: adminEmailCodeEnabled() ? 'on' : 'off', jobs: { sweep: sweep ?? null, cron_secret: (process.env.CRON_SECRET ?? '').trim() ? 'ok' : 'missing' } });
+  return json({ ...status, admin_login_code: adminEmailCodeEnabled() ? 'on' : 'off', jobs: { sweep: sweep ?? null, cron_secret: (process.env.CRON_SECRET ?? '').trim() ? 'ok' : 'missing' } });
 });
 
 registerPublic(router);
@@ -96,7 +92,6 @@ registerTwoFactor(router);
 registerTracking(router);
 registerAccount(router);
 registerOrders(router);
-registerPayments(router);
 registerCatalog(router);
 registerContent(router);
 registerCoupons(router);
@@ -186,8 +181,8 @@ function failure(error: unknown, admin: Admin | null, requestId: string): Respon
 
 const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
-// As rotas que mudam pedido ou pagamento (e, por isso, podem ter enfileirado um e-mail pelos gatilhos do banco).
-const ENQUEUES_EMAIL = /^\/api\/(orders|payments\/|admin\/(orders|payments)(\/|$)|tracking\/[^/]+\/(payment|cancel)|account\/orders\/\d+\/(payment|cancel))/;
+// As rotas que mudam pedido (e, por isso, podem ter enfileirado um e-mail pelos gatilhos do banco).
+const ENQUEUES_EMAIL = /^\/api\/(orders|admin\/orders(\/|$)|tracking\/[^/]+\/cancel|account\/orders\/\d+\/cancel)/;
 
 // Defesa extra contra CSRF (além do cookie SameSite=Lax): escritas só da própria origem.
 function foreignOrigin(req: Request, url: URL): boolean {

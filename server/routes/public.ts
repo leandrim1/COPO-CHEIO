@@ -5,8 +5,6 @@ import { batch, one, query } from '../db.js';
 import { analyticsId } from '../env.js';
 import { HttpError, json, readJson } from '../http.js';
 import type { Router } from '../http.js';
-import { getProvider, isOnlineMethod } from '../payments/provider.js';
-import { sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken, trackingTokenFromKey } from '../tracking.js';
 
 // Listas públicas (cardápio e conteúdo do site) podem ficar uns segundos na borda da Vercel: muita gente abrindo o site ao mesmo
@@ -75,16 +73,8 @@ export function registerPublic(r: Router) {
            from banners where active and placement = 'cover' order by position, created_at`,
       ],
       ['select id, name, fee, position, active from delivery_zones where active order by position, name'],
-      // O cartão online leva a taxa (percentual e tarifa fixa) e o Pix online leva a taxa de serviço (percentual) só para a tela mostrar o resumo enquanto a
-      // pessoa mexe no pedido; quem cobra de verdade é o banco.
-      [
-        `select m.code, m.label, m.details,
-                case when m.code = 'card_online' then jsonb_build_object('bps', f.card_fee_bps, 'fixed_cents', f.card_fee_fixed_cents) end as card_fee,
-                case when m.code = 'pix_online' then jsonb_build_object('bps', f.pix_customer_fee_bps) end as service_fee
-           from payment_methods m cross join payment_fee_settings f
-          where m.enabled and (m.code <> 'card_online' or f.confirmed_at is not null)
-          order by m.position`,
-      ],
+      // Só as formas pagas à loja: o pagamento pelo site (pix_online, card_online) saiu do sistema e nunca é listado, mesmo que a linha ainda exista no banco.
+      ["select code, label, details from payment_methods where enabled and code not in ('pix_online', 'card_online') order by position"],
     ]);
     if (!store[0] || !site[0] || !hero[0]) {
       throw new HttpError(503, 'O banco ainda não tem o conteúdo inicial. Rode as migrations (npm run db:migrate).');
@@ -107,15 +97,13 @@ export function registerPublic(r: Router) {
     const filledMs = typeof body.fill_ms === 'number' ? body.fill_ms : NaN;
     const tooFast = Number.isFinite(filledMs) && filledMs >= 0 && filledMs < MIN_FILL_MS;
     if (trap || tooFast) throw new HttpError(400, 'Não foi possível enviar o pedido. Atualize a página e tente de novo.', { code: 'rejected' });
-    // Pagamento online sem operadora configurada neste servidor: não cria um pedido que a pessoa não conseguiria pagar.
-    if (isOnlineMethod(body.payment_method) && !getProvider()) {
-      throw new HttpError(503, 'O pagamento online não está disponível agora. Escolha outra forma de pagamento.', { code: 'payments_unavailable' });
+    // O pagamento pelo site (Pix ou cartão online) foi retirado do sistema: as formas aceitas são as que se pagam à loja (Pix da loja, dinheiro e cartão na entrega).
+    if (body.payment_method === 'pix_online' || body.payment_method === 'card_online') {
+      throw new HttpError(400, 'Essa forma de pagamento não está disponível. Escolha outra.', { code: 'payment_unavailable' });
     }
     await reserve('order', ctx.ip, 600, 20, wait);
 
     try {
-      // Pedido de pagamento online que não foi pago a tempo devolve o estoque antes desta venda (sem agendador: de passagem, no máximo a cada 20 s).
-      await sweep({ lookups: false }).catch(() => undefined);
       // Preço, estoque, taxa e regras da loja são conferidos dentro do banco (create_order): o navegador só diz o que o cliente
       // escolheu. O código de acompanhamento nasce aqui, no servidor: só o hash vai para o banco, na mesma transação do pedido.
       // Com chave de idempotência, o código é derivado dela: repetir o envio devolve o MESMO pedido e o mesmo código.

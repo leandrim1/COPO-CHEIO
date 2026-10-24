@@ -244,33 +244,11 @@ produto e envie a foto.
     do combo ou sem estoque é recusada, mesmo numa requisição feita direto à API. O pedido grava "…— troca do energético por X (+ R$ 2,00)" (ou "(sem
     diferença)"), o estoque do energético novo sai (e volta ao cancelar) e "pedir de novo" traz a troca de volta (se ainda valer).
 - **Pagamento**: PIX, dinheiro (com troco) e cartão na entrega, cada um liga/desliga (sempre pelo menos um ativo). A chave PIX
-  (opcional) aparece para o cliente depois do pedido. O **Pix online** (pagar pelo site) tem a base pronta, mas está **desligado e sem
-  operadora conectada**: veja o item abaixo.
-- **Pagamento online (Pix pelo site, com a ValidaPay)** — **escrito e testado contra um servidor ValidaPay FALSO que segue a documentação oficial; NUNCA
-  testado na ValidaPay de verdade** (nem sandbox, nem produção). O "Pix online" nasce **desligado**; só liga com as variáveis `VALIDAPAY_*` e uma conta
-  do estabelecimento **aprovada**. O que existe, o que falta, o que a documentação não confirma, o cartão e o passo a passo para ligar (começando pelo
-  sandbox): [`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md). Em resumo:
-  - O pedido com Pix online nasce **"aguardando pagamento"** (estoque reservado; a loja não o vê como novo e ele não entra nas vendas) e só
-    vira **novo** quando a ValidaPay confirma (aviso **assinado** + consulta da cobrança), na mesma transação do banco. Sem pagamento
-    a tempo, o Pix é **cancelado na ValidaPay** e o pedido, cancelado (o estoque volta uma vez só).
-  - **Taxa de serviço do Pix de 5%** (2,5% paga pelo cliente, somada ao total, e 2,5% paga pelo estabelecimento), calculada no banco em centavos sobre itens + entrega e
-    enviada inteira como divisão fixa para a conta master (a cobrança nasce na **subconta** do estabelecimento): R$ 100,00 → o cliente paga R$ 102,50, a master recebe
-    R$ 5,00 e a subconta fica com R$ 97,50. Só vira "efetivada" quando o extrato da master mostra o crédito daquela cobrança. Pedidos de Pix feitos antes da migration
-    `0020` mantêm o total e a comissão de 2% de quando nasceram.
-  - Valor, comissão e status nunca vêm do navegador; ver o QR Code ou tocar em "Já paguei" não confirma nada; uma cobrança aberta por
-    pedido; aviso repetido, atrasado ou fora de ordem não duplica pedido nem comissão.
-  - **Cartão de crédito online** (`card_online`, nasce **desligado**; também **nunca testado na ValidaPay de verdade**): o cliente paga pelo site e a **taxa do cartão é
-    repassada a ele** (total = (pedido + tarifa fixa) ÷ (1 − percentual), em centavos, calculado no **banco**; Pix e pagamento na entrega não têm taxa). O resumo
-    mostra subtotal, entrega, **taxa do cartão** e total em tempo real, o cartão é trocado por um token **direto no navegador** (a loja nunca vê número nem CVV), a
-    cobrança usa o total gravado no pedido e uma chave de idempotência, e só a **consulta à ValidaPay** libera o pedido. A taxa (valores de referência 5,37% + R$ 0,37)
-    é configurada pelo owner e **precisa ser conferida com o contrato da ValidaPay** antes de ligar. **Fluxo separado do Pix**: o cartão é cobrado na **subconta**
-    do estabelecimento, sem split; o Pix segue com a subconta e o split da taxa de serviço (5%), como sempre. Guia completo, procedimento de teste no sandbox, ativação em
-    produção e limitações: [`docs/CARTAO-ONLINE.md`](docs/CARTAO-ONLINE.md).
-  - **Conta do estabelecimento** (só o owner, em *Pagamentos*): vincular uma conta que a ValidaPay já tem ou cadastrar uma nova (PF/PJ), sempre com a
-    autorização do titular e, em produção, a ciência das tarifas (R$ 15,00 por conta nova). Nada é criado sozinho, não duplica e o número da conta
-    só entra com a confirmação oficial. Os dados pessoais vão direto para a ValidaPay e não ficam guardados aqui.
-  - O cartão da **maquininha** continua sendo pago **na entrega/retirada**, como sempre. A documentação da ValidaPay não mostra divisão (split) para cartão, por isso
-    o cartão online (acima) não tem a taxa de serviço do Pix.
+  (opcional) aparece para o cliente depois do pedido. **Todas as formas são pagas à loja**: o sistema não cobra nada pelo site. O pagamento pelo site
+  (Pix online e cartão online, que usavam a ValidaPay) **foi retirado do sistema** (migration `0036` e remoção do código): o servidor recusa pedido com
+  `pix_online` ou `card_online` (`400 payment_unavailable`), o cardápio público nunca as lista e o painel não as liga. As tabelas e colunas que a
+  integração criou (`payments`, `payment_methods`, `payment_fee_settings`, `merchant_accounts`, `orders.payment_fee*` e as funções do banco) continuam no
+  banco, **sem uso e sem efeito**: apagá-las seria destrutivo e irreversível. O dono marca o pagamento como pago ou reembolsado à mão, no pedido.
 - **Banner da capa**: a faixa azul do topo de `/bebidas` mostra o banner cadastrado em *Banners → Capa da página Bebidas*
   no lugar dos gelos. É só imagem (o texto vai dentro da arte), com versão de celular (telas até 639 px) e de computador,
   descrição para leitores de tela e link opcional. Com mais de um banner ativo eles se alternam a cada 6 s (parado para
@@ -336,8 +314,8 @@ no Neon.
   confere o login). A única ação do cliente é **cancelar o pedido** (`POST /api/tracking/:codigo/cancel` ou, logado, `POST /api/account/orders/:numero/cancel`),
   só enquanto o pedido está *aguardando pagamento* ou *novo*, sem pagamento recebido; depois que a loja confirma, ou se já foi pago, a página explica o motivo e
   leva ao WhatsApp. O cancelamento é **uma transação no banco** (`customer_cancel_order`): muda o estado, devolve o estoque **uma única vez** (repetir não devolve de
-  novo), grava quem/quando/motivo no histórico, cancela a cobrança Pix pendente na operadora e dispara o e-mail "pedido cancelado". Pedido de outra pessoa dá 404.
-  **Pedido já pago online não é devolvido sozinho**: a devolução do dinheiro é um passo do owner (veja `docs/PAGAMENTO-ONLINE.md`).
+  novo), grava quem/quando/motivo no histórico, dispara o e-mail "pedido cancelado". Pedido de outra pessoa dá 404.
+  **A devolução do dinheiro é combinada com a loja**: o sistema não devolve valores (o pagamento é feito à loja, na entrega ou pela chave PIX).
   O pedido público nunca traz telefone, e-mail, ids internos nem o código.
 - **Limite de consultas**: 30 consultas erradas por IP a cada 15 min (as certas, como o acompanhamento automático, não
   contam). Pedido inexistente, código errado e link vencido dão exatamente a mesma resposta.
@@ -655,9 +633,8 @@ Tudo abaixo nasce **desligado ou vazio** e é calculado e conferido **no banco**
   (`GET /api/reviews`) depois que a loja **publica**, e o público recebe só nota, comentário e data (nunca nome, telefone nem número do pedido). A loja pode esconder ou apagar (um comentário com dado pessoal, por exemplo).
 - **Entregadores** (migration `0034`; *Configurações → Entrega*): a loja cadastra quem entrega e escolhe o entregador em cada pedido de **entrega**; o **nome fica gravado no pedido** (apagar o entregador não muda o histórico) e o cliente vê só o
   **primeiro nome**, enquanto o pedido está a caminho.
-- **Rotina automática** (`GET /api/cron/sweep`, só com `Authorization: Bearer $CRON_SECRET`): encerra o Pix/cartão vencido **também na operadora**; o cliente ainda tem 10 minutos para gerar outro e, passada essa janela, o pedido é cancelado e o estoque devolvido (uma única vez; se o pagamento já foi feito na operadora e o aviso
-  se perdeu, o pedido é liberado, nunca cancelado), manda a fila de e-mails e limpa dados vencidos; registra quando rodou em `job_runs` (aparece em *Configurações → Painel → Estado do sistema*). A Vercel (plano gratuito) só aceita cron **diário**
-  (`vercel.json` → `crons`); para checar a cada poucos minutos use um agendador externo (veja `docs/OPERACAO.md`, seção 4). Sem agendador, o vencimento também é tratado de passagem quando entra movimento.
+- **Rotina automática** (`GET /api/cron/sweep`, só com `Authorization: Bearer $CRON_SECRET`): manda a fila de e-mails, avisa a operação (estoque baixo, rotina com problema) e limpa dados vencidos; registra quando rodou em `job_runs` (aparece em *Configurações → Painel → Estado do sistema*). A Vercel (plano gratuito) só aceita cron **diário**
+  (`vercel.json` → `crons`); para checar a cada poucos minutos use um agendador externo (veja `docs/OPERACAO.md`, seção 4). Sem agendador, a fila de e-mails também sai de passagem quando entra movimento.
 - **Site instalável, buscadores e medição de visitas** (`docs/PWA-SEO-ANALYTICS.md`): manifesto + service worker que guarda **só arquivos estáticos**; `robots.txt` e `sitemap.xml` gerados com o endereço do site; Google Analytics 4 **opcional**
   (`GA_MEASUREMENT_ID`), só depois do "Aceitar" da pessoa e sem dado pessoal (precisa também liberar o Google na CSP: decisão do proprietário).
 
@@ -667,9 +644,6 @@ Público: `GET /api/products` · `GET /api/site` (traz `banners` do cardápio e 
 Técnico (público): `GET /api/__page` (HTML para robôs) · `GET /api/sitemap.xml` e `GET /api/robots.txt` (servidos como `/sitemap.xml` e `/robots.txt`) · `POST /api/csp-report` · `POST /api/client-error`
 Loja e checkout (público): `POST /api/coupons/validate` (prévia do cupom) · `GET /api/schedule` (faixas do agendamento) · `GET /api/cep/:cep` · `GET /api/legal/:pagina` (termos e políticas) · `GET /api/reviews` (avaliações publicadas)
 Acompanhamento (sem login): `GET /api/tracking/:codigo` · `POST /api/tracking/lookup` (`order_number` + `code`) · `POST /api/tracking/:codigo/cancel` (o cliente cancela o pedido)
-Pagamento online (sem login, pelo código do pedido ou pela própria conta): `GET|POST /api/tracking/:codigo/payment` ·
-`GET|POST /api/account/orders/:numero/payment` · aviso da operadora: `POST /api/payments/webhook` (nada é gravado antes de a operadora provar
-que o aviso é dela, por assinatura HMAC; sem operadora conectada responde `503 payments_unavailable`)
 Conta do cliente: `POST /api/account/register|verify-email|verify-link|resend-verification|login|logout|forgot-password|reset-check|reset|recover` · `GET /api/account/me` ·
 `PATCH|DELETE /api/account` · `PATCH /api/account/password` · `GET /api/account/orders[/:numero]` ·
 `POST /api/account/orders/claim` · `POST /api/account/orders/:numero/cancel` · `GET|POST /api/account/orders/:numero/review` · `GET|POST|PATCH|DELETE /api/account/addresses`
@@ -685,11 +659,7 @@ Painel (exige login): `/api/admin/dashboard`, `orders` (+ `POST orders/:id/track
 (+ `POST products/import`, que devolve o relatório linha a linha), `categories`, `banners`, `settings`, `store` (`PATCH` aceita `expected_updated_at`: se outra pessoa salvou antes, responde `409` em vez de sobrescrever),
 `site`, `hero`, `payments` (formas de pagamento), `zones`, `upload`, `health` (estado do sistema, com o nome das variáveis que faltam), `privacy`
 Só o owner: `/api/admin/admins` (+ `POST admins/:id/reset-2fa`), `GET /api/admin/audit` (registro de atividades), `POST /api/admin/privacy/anonymize`,
-excluir cliente, gerar link de nova senha de cliente, e-mail de teste e os **pagamentos online**: `GET /api/admin/payments` (operadora, conta,
-resumo, comissão calculada × efetivada, cobranças) · `GET /api/admin/payments/:id` · `POST /api/admin/payments/:id/refresh|ack` ·
-`POST /api/admin/payments/:id/refund` (devolução pela operadora; só com `VALIDAPAY_REFUNDS=on`) · `POST /api/admin/payments/:id/refunds/check` ·
-`POST /api/admin/payments/sweep` · conta do estabelecimento: `GET /api/admin/payments/account/candidates` ·
-`POST /api/admin/payments/account/link|proposal|refresh` (a forma "Pix online" só o owner liga: `PATCH /api/admin/payments/pix_online`).
+excluir cliente, gerar link de nova senha de cliente e e-mail de teste.
 
 Toda resposta traz `x-request-id` (um erro `500` mostra o mesmo número no corpo: serve para achar a linha nos logs). A API nunca vai
 para a CDN, exceto as duas listas públicas (10 s); o resto responde `Cache-Control: no-store`.
@@ -780,7 +750,7 @@ build com o `<head>` já escrito a partir do painel (*Site → SEO*): título, d
 `noindex` nas páginas privadas e dados estruturados da loja (schema.org: nome, telefone, endereço e horários **que estiverem
 cadastrados**). Endereço que não existe recebe `404` de verdade. Exceção: na página inicial `/`, só os robôs de prévia de link
 (WhatsApp, Facebook etc.) recebem a versão da função; o Googlebot recebe o `index.html` estático, com o título e a descrição fixos dele.
-`/robots.txt` e `/sitemap.xml` são gerados pelo servidor (precisam do endereço completo do site: `SITE_URL`). O `robots.txt` bloqueia `/api/`, `/pedido/`, `/pagar/`, `/acompanhar-pedido/` e `/conta` e aponta o sitemap; o sitemap só lista as
+`/robots.txt` e `/sitemap.xml` são gerados pelo servidor (precisam do endereço completo do site: `SITE_URL`). O `robots.txt` bloqueia `/api/`, `/pedido/`, `/acompanhar-pedido/` e `/conta` e aponta o sitemap; o sitemap só lista as
 páginas públicas e estáveis (início, cardápio, privacidade e as cinco páginas de políticas). O painel e o checkout ficam fora do Google por `noindex` (cabeçalho `X-Robots-Tag` e `<meta name="robots">`).
 
 > Esse roteamento (`redirects`/`rewrites` com `has` por `user-agent`, `includeFiles`, cabeçalhos) foi validado com o pacote de
@@ -795,8 +765,7 @@ páginas públicas e estáveis (início, cardápio, privacidade e as cinco pági
 **`customer_password_resets`** (hash do link, validade, `via` = e-mail ou loja, envio e uso), **`email_verifications`** (hash do código e do link, validade, tentativas, envio e uso),
 **`email_messages`**, **`email_events`**, **`email_suppressions`**, **`email_preferences`**, **`email_campaigns`**, **`email_alerts`** e **`email_webhook_state`** (o registro e a fila de e-mails: sem corpo, código nem link),
 **`audit_log`** (registro de atividades do painel), **`admin_recovery_codes`**, **`admin_login_challenges`** e **`admin_devices`**
-(verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares), **`merchant_accounts`** (conta da
-loja na operadora de pagamento), **`payments`** (cobranças online, em centavos), **`payment_events`** (avisos da operadora) e **`payment_refunds`** (devoluções), **`coupons`** e **`coupon_categories`**, **`store_exceptions`** (feriados e horários especiais),
+(verificação em duas etapas e aparelhos conhecidos), **`privacy_requests`** (pedidos de titulares), **`merchant_accounts`**, **`payments`**, **`payment_events`** e **`payment_refunds`** (as quatro são da integração de pagamento online, retirada: ficam **sem uso**, veja a 0036 abaixo), **`coupons`** e **`coupon_categories`**, **`store_exceptions`** (feriados e horários especiais),
 **`customer_addresses`** (endereços extras), **`legal_pages`** (termos e políticas), **`couriers`**, **`order_reviews`**, **`loyalty_ledger`** (extrato de pontos) e **`job_runs`** (última execução da rotina automática)
 (+ `rate_limits`, `schema_migrations`). Cada pedido guarda: id interno, número público (#1001…), data, cliente, endereço, itens com preço
 da hora, subtotal, entrega, desconto, total, forma e situação do pagamento, status, histórico, conta (se houver) e
@@ -848,11 +817,9 @@ A migration `0014_online_payments.sql` acrescenta `merchant_accounts`, `payments
 `awaiting_payment`, o meio de pagamento `pix_online` (**desligado**) e as funções de pagamento (`payment_begin`, `payment_apply`,
 `payment_expire_local`, `orders_cancel_unpaid`, o cálculo da comissão, 5% na origem e 2% desde a 0016, e outras); troca `create_order`, `order_json`,
 `admin_set_order_status`, `admin_set_payment_status` e `admin_dashboard` por versões iguais para tudo o que já existe. Não fala com nenhuma
-operadora (o adaptador fica no servidor); a única linha de dados é o `pix_online` desligado. Detalhes em
-[`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md).
+operadora (o adaptador ficava no servidor); a única linha de dados é o `pix_online` desligado. **Sem uso desde a 0036** (o pagamento pelo site foi retirado).
 A migration `0020_card_online.sql` acrescenta o cartão de crédito online (desligado) e a **taxa de serviço do Pix** (2,5% do cliente + 2,5% do estabelecimento = 5% para a conta master; `service_fee_cents`,
-`payment_fee_settings.pix_*`, colunas `payment_fee*` em `orders` e `customer_fee_cents` em `payments`). Pedidos de Pix feitos antes dela mantêm o total e a comissão de 2% de quando nasceram
-([`docs/PAGAMENTO-ONLINE.md`](docs/PAGAMENTO-ONLINE.md)).
+`payment_fee_settings.pix_*`, colunas `payment_fee*` em `orders` e `customer_fee_cents` em `payments`). Também **sem uso desde a 0036**.
 A migration `0021_pickup_time.sql` acrescentou uma coluna opcional, `store_settings.pickup_time` (texto de até 30 letras). **Hoje o site não a usa**: a janela ⓘ da página
 Bebidas ficou só com horário de funcionamento e formas de pagamento, então a coluna fica vazia e sem efeito (pode ser apagada ou reaproveitada depois).
 A migration `0024_admin_login_code.sql` acrescentou a tabela `admin_email_challenges` e cinco funções (`begin_admin_email_challenge`, `finish_admin_email_challenge`, `begin_admin_email_resend`,
@@ -867,7 +834,8 @@ não mudar no deploy); nenhum pedido, preço, estoque ou categoria é alterado. 
 A migration `0027_age_and_customer_cancel.sql` acrescentou `products.alcoholic` (**todos nascem `true`**), as colunas de maioridade em `orders`, `order_status_history.reason`, a regra
 `order_cancel_why` e a função `customer_cancel_order`, e trocou `order_json`, `create_order` (exige `age_confirmed: true` em pedido com bebida alcoólica) e `admin_set_order_status`
 (entregar pedido com bebida alcoólica exige `age_checked`). **Exceção ao rollback**: a versão anterior do site não envia a declaração, então depois da 0027 ela não consegue fechar pedido com
-bebida alcoólica (veja `docs/OPERACAO.md`, item 17). A `0028_payment_refunds.sql` só acrescenta a tabela `payment_refunds` e duas funções (devolução de pagamento online).
+bebida alcoólica (veja `docs/OPERACAO.md`, item 17). A `0028_payment_refunds.sql` só acrescenta a tabela `payment_refunds` e duas funções (devolução de pagamento online; sem uso desde a 0036).
+A `0036_remove_online_payments.sql` **só desliga** as formas `pix_online` e `card_online` que estivessem ligadas (idempotente) e **não apaga nada**: as tabelas, colunas e funções da integração de pagamento online ficam no banco, sem uso. Voltar o código para a versão anterior não exige desfazer nada.
 A `0029_coupons_free_delivery.sql` acrescenta cupons e a entrega grátis por valor (desligada); a `0030_scheduling.sql`, o agendamento (desligado), os dias especiais e `orders.scheduled_for`; a `0031_customer_addresses.sql`, os endereços extras
 da conta (até 4, trava no banco); a `0032_stock_alert.sql`, o limite de estoque baixo (padrão 5, o mesmo de antes); a `0033_legal_pages.sql`, as cinco páginas de termos e políticas com o texto padrão; a `0034_couriers_reviews_jobs.sql`, os
 entregadores, as avaliações e o registro da rotina automática; a `0035_loyalty.sql`, o programa de pontos (desligado e sem valores: colunas em `store_settings`, o extrato `loyalty_ledger` só de acréscimo, `coupons.customer_id` para o cupom pessoal e o gatilho que credita/estorna). **Todas só acrescentam** (tabelas, colunas com padrão que não muda nenhum pedido e funções; `create_order` e `order_json` são trocadas por versões iguais para tudo o que já existia);
@@ -876,7 +844,7 @@ As migrations 0009 a 0024 **só acrescentam** (tabelas, colunas e funções nova
 mesma), para que a versão anterior do site, que segue atendendo durante um deploy ou depois de um rollback, continue funcionando contra o
 banco já migrado. **Exceção da 0013**: como o banco passa a exigir o gelo, a versão anterior do site (que não sabe perguntar) não consegue
 pedir os produtos marcados (inicialmente, os dos copões) enquanto a marca estiver ligada; veja o rollback em [`docs/OPERACAO.md`](docs/OPERACAO.md). **Cuidado
-da 0014**: depois de um rollback do código, o painel antigo lista o "Pix online" e não conhece a trava que impede ligá-lo; não o ligue.
+da 0014**: depois de um rollback do código para uma versão que ainda tinha o pagamento online, o painel antigo lista o "Pix online" e não conhece a trava que impede ligá-lo; não o ligue (o pagamento online foi retirado).
 Mudanças de estrutura são arquivos novos em `db/migrations` (cada comando separado por `-- statement-breakpoint`);
 `npm run db:migrate` aplica os que faltam. Regras que precisam ser atômicas (criar pedido, mudar status, estoque,
 dashboard) são funções do banco chamadas só pelo servidor.
@@ -892,12 +860,8 @@ dashboard) são funções do banco chamadas só pelo servidor.
   Vercel e um servidor local (veja [Robôs e prévia de links](#robôs-e-prévia-de-links)): confira depois do deploy.
 - Não há captcha, **de propósito** (veja `docs/SEGURANCA.md`, seção 8, com o gatilho para adotar e a opção recomendada). O pedido repetido só é detectado dentro da mesma aba (a chave fica no `sessionStorage`); em duas
   abas diferentes valem os limites por rede e por telefone.
-- **Pagamento online (Pix e cartão)**: os dois estão implementados (o cartão online é a migration `0020`, a tela `/pagar/<código>` e `docs/CARTAO-ONLINE.md`; ambos nascem
-  **desligados**), mas o adaptador da ValidaPay **nunca foi testado na ValidaPay de verdade**: só contra um servidor falso baseado na documentação. Nada foi cobrado, devolvido ou transferido em sandbox ou produção.
-  Há pontos que a documentação não confirma (veja `docs/PAGAMENTO-ONLINE.md` e o checklist de homologação ali). **Devolução (estorno) pela API**: existe no código (migration `0028`, botão "Devolver pagamento" só para o owner;
-  o valor só é dado como devolvido quando a ValidaPay **confirma**), mas fica **desligada** até a variável `VALIDAPAY_REFUNDS=on`, porque o escopo `wallet/write` da ValidaPay é o mesmo do saque; nunca foi testada na ValidaPay real.
-  O status manual de um pedido ("cancelado") **não é** uma transação financeira. Pedidos online não pagos são encerrados pela rotina automática (diária na Vercel; mais frequente só com um agendador externo, `docs/OPERACAO.md`)
-  e, entre uma execução e outra, de passagem, quando entra movimento. O checkout não coleta CPF/CNPJ do pagador (o Pix imediato da ValidaPay não o exige).
+- **Pagamento pelo site (Pix online e cartão online)**: **não existe**: foi retirado do sistema por decisão do proprietário. Todo pagamento é feito à loja (chave PIX, dinheiro ou cartão na entrega ou na retirada) e o dono
+  marca o pedido como pago ou reembolsado à mão. O sistema não cobra, não devolve valores e não fala com operadora de pagamento. O status manual de um pedido ("cancelado") **não é** uma transação financeira.
 - **Maioridade (18+)**: a janela de entrada e a caixa do checkout são **autodeclaração** (não provam idade); a prova é a conferência do documento na entrega, registrada no painel (sem guardar o documento). Os textos precisam de
   validação jurídica (`docs/JURIDICO-PENDENCIAS.md`). Todo produto nasce como bebida alcoólica: desmarque o que não é em *Produtos*.
 - A chave do aplicativo de duas etapas fica no banco sem criptografia; o mapa do Google carrega sem pedir consentimento antes (veja
@@ -905,7 +869,7 @@ dashboard) são funções do banco chamadas só pelo servidor.
 - Acessibilidade: auditoria automática (axe-core, WCAG 2.0/2.1/2.2 A e AA) sem violações nas páginas principais em celular e computador; os alvos de toque pequenos ganharam área de 44 × 44 px **sem mudar o desenho**
   (`docs/PWA-SEO-ANALYTICS.md`, seção 4; os apontamentos antigos do Hero — nome do link da logo, região sem rótulo e pontinhos do carrossel — foram corrigidos sem mudar o visual). **Não testado:** leitor de tela real (NVDA/VoiceOver/TalkBack) e zoom de 200 %; recomenda-se um teste manual.
 - **Programa de pontos**: existe (migration `0035`), mas nasce **desligado e sem valores**: as regras são do dono (`/admin/fidelidade`) e precisam de revisão jurídica/fiscal antes de ligar. **Notificações por WhatsApp/SMS/push** não existem (dependem
-  de serviço pago ou de consentimento próprio); o aviso ao cliente é por e-mail. **Nota fiscal (NFC-e)** não é emitida: o sistema não tem integração fiscal (`docs/FISCAL.md`: o que existe, o que a ValidaPay oferece — só NFS-e — e o que o contador precisa decidir).
+  de serviço pago ou de consentimento próprio); o aviso ao cliente é por e-mail. **Nota fiscal (NFC-e)** não é emitida: o sistema não tem integração fiscal (`docs/FISCAL.md`: o que existe e o que o contador precisa decidir).
 - **PWA**: o site é instalável, mas não funciona sem internet (cardápio e pedido exigem conexão, de propósito: preço e estoque nunca ficam velhos).
 - Alertas automáticos (queda do site, pico de erros) e envio de logs para fora da Vercel não existem: veja [`docs/OPERACAO.md`](docs/OPERACAO.md). (Os **e-mails** têm alertas próprios no painel *E-mails*.)
 - **E-mails**: sem domínio próprio não há SPF/DKIM/DMARC da loja; o SMTP comum **não informa** entrega, devolução nem spam; abertura e clique não são medidos; ninguém sabe em que pasta o e-mail caiu; a fila
@@ -945,7 +909,6 @@ api/index.ts           função da Vercel: entrega /api/* para o servidor
 server/                servidor: rotas, validação, login, acompanhamento, contas, banco (Neon), imagens (Blob)
 server/routes/         uma pasta de rotas por assunto (public, orders, catalog, content, session, twofactor, account, tracking, customers,
                        team, audit, privacy, seo, upload, mailadmin, payments, coupons, exports, cep, schedule, addresses, legal, reviews, couriers, cron, loyalty)
-server/payments/       pagamento online: contrato (types.ts), adaptador da ValidaPay (validapay.ts), fábrica pelas variáveis de ambiente (factory.ts), serviço (service.ts), conta do estabelecimento (merchant.ts)
 server/auth.ts         senhas (scrypt), sessões, limites de tentativa atômicos · passwordPolicy.ts / commonPasswords.ts: regra de senha forte
 server/totp.ts         verificação em duas etapas (TOTP, códigos de recuperação) · adminAccess.ts: aparelhos conhecidos e aviso de acesso novo
 server/audit.ts        registro de atividades do painel · clientIp.ts: IP de quem acessa · images.ts: conferência das imagens enviadas
@@ -968,12 +931,10 @@ src/admin/             painel (carregado só em /admin) · src/admin/emails/: ab
 tests/                 testes unitários, de API e de navegador, com o servidor de teste (veja tests/README.md)
 docs/OPERACAO.md       variáveis, deploy, monitoramento, backup, o que fazer quando algo quebra, prazos dos dados
 docs/EMAIL.md          e-mails: envio, registro, entregabilidade, DNS, promoções, alertas, testes e pendências (EMAIL-AUDITORIA.md: a auditoria que originou)
-docs/PAGAMENTO-ONLINE.md  Pix online: o que existe, o que falta (ValidaPay), regras, contrato do adaptador, como ligar
-docs/CARTAO-ONLINE.md  cartão de crédito online (migration 0020, tela /pagar/<código>): o que existe e o que falta validar
 docs/AUDITORIA.md      auditoria geral: o que está aprovado, o que precisa de correção, o que é parcial, o que está bloqueado, e o plano priorizado
 docs/SEGURANCA.md      auditoria de segurança de ponta a ponta
 docs/PWA-SEO-ANALYTICS.md  site instalável, buscadores, medição de visitas (GA4, opcional) e acessibilidade
 docs/JURIDICO-PENDENCIAS.md  textos e regras que precisam de validação jurídica ou fiscal
-docs/FISCAL.md        nota fiscal: o que existe (nada), o que a ValidaPay oferece e o que o contador precisa definir
+docs/FISCAL.md        nota fiscal: o que existe (nada) e o que o contador precisa definir
 .github/workflows/     ci.yml: tipos, build e testes a cada envio ao GitHub
 ```

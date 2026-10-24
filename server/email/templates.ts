@@ -22,15 +22,10 @@ export type OrderMail = {
   subtotal: number;
   deliveryFee: number;
   discount: number;
-  // Taxa paga pelo cliente no pagamento pelo site (0 nas outras formas): "taxa de processamento do cartão" no cartão online e "taxa de serviço" no Pix online.
-  paymentFee?: number;
-  paymentFeeLabel?: string;
   total: number;
   delivery: 'delivery' | 'pickup';
   neighborhood: string | null;
   paymentLabel: string;
-  // Pagamento pelo site (Pix online ou cartão online)?
-  online: boolean;
   paymentStatus: 'pending' | 'paid' | 'refunded';
   trackUrl: string;
   // Link das preferências deste endereço (parar de receber e-mails de pedidos).
@@ -45,7 +40,6 @@ function summary(o: OrderMail): Block[] {
   const rows = [{ label: 'Subtotal', value: brl(o.subtotal) }];
   if (o.deliveryFee > 0) rows.push({ label: 'Taxa de entrega', value: brl(o.deliveryFee) });
   if (o.discount > 0) rows.push({ label: 'Desconto', value: `− ${brl(o.discount)}` });
-  if ((o.paymentFee ?? 0) > 0) rows.push({ label: o.paymentFeeLabel ?? 'Taxa de processamento do cartão', value: brl(o.paymentFee ?? 0) });
   const strong = { label: 'Total', value: brl(o.total), strong: true as const };
   return [{ kind: 'order', number: String(o.number), lines: o.lines.map((l) => ({ qty: l.qty, name: l.name, total: brl(l.total) })), rows: [...rows, strong] }];
 }
@@ -138,11 +132,7 @@ export function orderMessage(brand: Brand, o: OrderMail): Message {
         title: 'Seu pedido foi cancelado',
         blocks: [
           { kind: 'text', text: `O pedido **${n}** foi cancelado.` },
-          o.online && o.paymentStatus === 'paid'
-            ? { kind: 'text', text: 'Como o pagamento já tinha sido feito pelo site, fale com a loja pelos contatos abaixo para tratar da devolução do valor.' }
-            : o.online
-              ? { kind: 'text', text: 'O pagamento pelo site não foi confirmado a tempo, e nada foi cobrado de você por este pedido. Se quiser, é só fazer um novo pedido.' }
-              : { kind: 'text', tone: 'muted', text: 'Se não foi você quem pediu o cancelamento, ou se ficou alguma dúvida, fale com a loja pelos contatos abaixo.' },
+          { kind: 'text', tone: 'muted', text: 'Se não foi você quem pediu o cancelamento, ou se ficou alguma dúvida, fale com a loja pelos contatos abaixo.' },
           notMine,
         ],
       });

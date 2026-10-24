@@ -144,11 +144,9 @@ export type DeliveryZone = {
   position: number;
 };
 
-// awaiting_payment: pedido de pagamento online que ainda não foi pago. A loja só o vê como "novo" depois que o pagamento é confirmado.
-export type OrderStatus = 'awaiting_payment' | 'new' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
-// pix_online e card_online: o cliente paga pelo site (Pix por QR Code/copia e cola, ou cartão de crédito) e a operadora confirma; os outros três são
-// pagos na entrega/retirada. Só o card_online leva a taxa de processamento do cartão (repassada ao cliente).
-export type PaymentMethod = 'pix' | 'cash' | 'card' | 'pix_online' | 'card_online';
+export type OrderStatus = 'new' | 'confirmed' | 'preparing' | 'out_for_delivery' | 'delivered' | 'cancelled';
+// Todas as formas são pagas à loja: o Pix da loja (chave), o dinheiro e o cartão na entrega ou na retirada.
+export type PaymentMethod = 'pix' | 'cash' | 'card';
 export type PaymentStatus = 'pending' | 'paid' | 'refunded';
 export type DeliveryType = 'delivery' | 'pickup';
 
@@ -170,11 +168,6 @@ export type Order = {
   subtotal: number;
   delivery_fee: number;
   discount: number;
-  // Cartão online: a taxa de processamento cobrada do cliente (já dentro do total) e os valores com que foi calculada (percentual em pontos-base e
-  // tarifa fixa em reais; o atendente não recebe estes dois, só o owner).
-  payment_fee: number;
-  payment_fee_bps?: number | null;
-  payment_fee_fixed?: number | null;
   total: number;
   payment_method: PaymentMethod;
   change_for: number | null;
@@ -229,10 +222,6 @@ export type PaymentOption = {
   // PIX: a chave que o cliente vê depois do pedido.
   details: string | null;
   enabled?: boolean;
-  // Só no cartão online: percentual (pontos-base, 537 = 5,37%) e tarifa fixa (centavos) para o resumo na tela. Quem cobra de verdade é o servidor.
-  card_fee?: { bps: number; fixed_cents: number } | null;
-  // Só no Pix online: a taxa de serviço que o cliente paga (pontos-base, 250 = 2,5% sobre itens + entrega), para o resumo na tela.
-  service_fee?: { bps: number } | null;
 };
 
 export type AdminAccount = {
@@ -300,8 +289,6 @@ export type PublicOrder = {
   scheduled_for?: string;
   // Entregador (só o primeiro nome, só enquanto o pedido está a caminho).
   courier_name?: string;
-  // Taxa paga pelo cliente no pagamento pelo site (processamento do cartão ou taxa de serviço do Pix; 0 nas outras formas); já está dentro do total.
-  payment_fee: number;
   total: number;
   created_at: string;
   updated_at: string;
@@ -310,49 +297,15 @@ export type PublicOrder = {
   // Pedido com bebida alcoólica: o documento com foto será conferido na entrega ou na retirada (migration 0027).
   age_check_required?: boolean;
   // O cliente pode cancelar agora? `why` (quando não pode): cancelled · final (já entregue) · in_progress (a loja já confirmou: só ela cancela) ·
-  // paid (há pagamento recebido: a devolução é combinada com a loja) · payment_processing (um pagamento está sendo processado).
-  cancel?: { allowed: boolean; why: 'cancelled' | 'final' | 'in_progress' | 'paid' | 'payment_processing' | null };
+  // paid (o pagamento já foi marcado como recebido: a devolução é combinada com a loja).
+  cancel?: { allowed: boolean; why: 'cancelled' | 'final' | 'in_progress' | 'paid' | null };
   // Por quantos dias, depois da última atualização, o link continua valendo.
   retention_days: number;
   // product_id só vem para o dono da conta (para "pedir de novo").
   items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null; swap_to_product_id?: string | null }[];
   history: { status: OrderStatus; at: string }[];
-  // Resumo do pagamento online (só existe quando já houve uma cobrança). Os detalhes vêm de /api/tracking/:código/payment.
-  payment?: { method: 'pix' | 'card'; status: PaymentState; expires_at: string | null; paid_at: string | null; attempt: number };
 };
 
-// ---- Pagamento online (Pix) -----------------------------------------------------------------------------------------------------
-
-// creating: gerando · pending: aguardando o cliente pagar · paid: confirmado · expired: venceu · cancelled · failed · refunded: estornado
-export type PaymentState = 'creating' | 'pending' | 'paid' | 'expired' | 'cancelled' | 'failed' | 'refunded';
-
-// O pagamento como o cliente vê (GET e POST /api/tracking/:código/payment). Nunca traz comissão, tarifas nem códigos da operadora.
-export type PaymentView = {
-  id: string;
-  status: PaymentState;
-  method: 'pix' | 'card';
-  amount: number;
-  attempt: number;
-  expires_at: string | null;
-  // O Pix "copia e cola": só enquanto aguarda o pagamento.
-  pix: { payload: string } | null;
-  can_retry: boolean;
-  retry_until: string | null;
-  message: string | null;
-};
-
-// card_checkout: o que o navegador precisa para trocar o cartão por um token (só no cartão online que espera pagamento): o Id Público da conta
-// (não é segredo) e o ambiente. O cartão nunca passa pela loja.
-export type CustomerPayment = {
-  payment: PaymentView | null;
-  order_status: OrderStatus;
-  payment_status: PaymentStatus;
-  card_checkout?: { public_id: string; environment: 'sandbox' | 'production' } | null;
-};
-
-// Painel: uma cobrança. Todo administrador vê a situação; só o owner recebe comissão, tarifas e códigos da operadora (os campos opcionais).
-// calculated: só calculada · confirmed: a operadora confirmou o repasse · failed: o repasse falhou · not_applicable: sem divisão
-export type CommissionState = 'calculated' | 'confirmed' | 'failed' | 'not_applicable';
 export type Courier = { id: string; name: string; phone: string | null; active: boolean; on_route?: number };
 export type ReviewRow = { id: string; rating: number; comment: string | null; status: 'pending' | 'published' | 'hidden'; created_at: string; moderated_at: string | null; order_number: number; customer_name: string };
 
@@ -377,130 +330,6 @@ export type Coupon = {
   category_ids: string[];
 };
 
-// Devolução (estorno) pedida pelo painel. "confirmed" só quando a operadora confirmou que o valor voltou ao pagador.
-export type RefundReason = 'CUSTOMER_REQUEST' | 'FRAUD' | 'BANK_ERROR' | 'PIX_CHANGE_ERROR';
-export type RefundState = 'requested' | 'processing' | 'confirmed' | 'failed';
-export type RefundRow = {
-  id: string;
-  payment_id: string;
-  amount_cents: number;
-  reason: RefundReason;
-  status: RefundState;
-  provider_refund_id?: string | null;
-  requested_by_name: string | null;
-  note: string | null;
-  last_error: string | null;
-  requested_at: string;
-  confirmed_at: string | null;
-};
-export type AdminPayment = {
-  id: string;
-  order_id: string;
-  order_number: number;
-  attempt: number;
-  method: 'pix' | 'card';
-  status: PaymentState;
-  amount_cents: number;
-  expires_at: string | null;
-  paid_at: string | null;
-  created_at: string;
-  needs_attention: boolean;
-  attention_reason?: string | null;
-  provider?: string;
-  provider_charge_id?: string | null;
-  provider_status?: string | null;
-  commission_bps?: number;
-  commission_cents?: number;
-  commission_state?: CommissionState;
-  commission_confirmed_cents?: number | null;
-  fee_cents?: number | null;
-  net_cents?: number | null;
-  refunded_cents?: number;
-  // Só para o owner: pedidos de devolução feitos pelo painel (do mais antigo ao mais novo).
-  refunds?: RefundRow[];
-  // A devolução pelo painel está ligada no servidor (VALIDAPAY_REFUNDS=on) e a operadora é a deste pagamento.
-  refund_available?: boolean;
-  // Cartão: a taxa que o cliente pagou (já dentro de amount_cents) e quantas vezes a tentativa foi enviada à operadora.
-  customer_fee_cents?: number;
-  card_attempts?: number;
-  checked_at?: string | null;
-  closed_at?: string | null;
-  last_error?: string | null;
-};
-
-export type MerchantAccount = {
-  id: string;
-  provider: string;
-  kind: 'pf' | 'pj' | null;
-  status: 'draft' | 'submitted' | 'pending' | 'approved' | 'rejected' | 'duplicate' | 'error' | 'suspended';
-  status_detail: string | null;
-  proposal_id: string | null;
-  provider_account_id: string | null;
-  // A operadora não respondeu ao enviar o cadastro: ele PODE ter sido criado (e cobrado).
-  ambiguous?: boolean;
-  authorized_at: string | null;
-  fees_acknowledged_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-export type PaymentsOverview = {
-  payments: AdminPayment[];
-  has_more: boolean;
-  summary: {
-    pending: number;
-    paid: number;
-    expired: number;
-    failed: number;
-    refunded: number;
-    attention: number;
-    paid_cents: number;
-    commission_calculated_cents: number;
-    commission_confirmed_cents: number;
-    commission_waiting_cents: number;
-    commission_failed_cents: number;
-    fee_cents: number;
-  };
-  // Divisão atual para a master no Pix online, em pontos-base (500 = 5%: 2,5% pago pelo cliente + 2,5% pelo estabelecimento); vem do banco.
-  commission_bps: number;
-  pix_fee: { customer_bps: number; store_bps: number };
-  merchant: MerchantAccount | null;
-  provider: {
-    configured: boolean;
-    name: string | null;
-    environment: 'sandbox' | 'production' | null;
-    // Só os NOMES das variáveis de ambiente que faltam (nunca valores).
-    missing: string[];
-    note: string | null;
-    manages_accounts: boolean;
-    // O cartão online precisa também do Id Público da conta (VALIDAPAY_PUBLIC_ID): sem ele o navegador não consegue gerar o token do cartão.
-    card_ready: boolean;
-  };
-  // Tarifa de criação de uma conta nova, em centavos (0 no sandbox; null: a operadora não informa).
-  account_fee_cents: number | null;
-  readiness: { provider: string | null; merchant: string | null; ready: boolean };
-  method: { code: 'pix_online'; label: string; enabled: boolean } | null;
-  // Cartão de crédito online: a forma de pagamento, a taxa repassada ao cliente (do contrato com a operadora) e o que falta para ligar.
-  card: {
-    method: { code: 'card_online'; label: string; enabled: boolean } | null;
-    fee: { card_fee_bps: number; card_fee_fixed_cents: number; confirmed_at: string | null; confirmed_by_name: string | null; updated_at: string } | null;
-    readiness: CardReadiness;
-  };
-};
-
-// Só os NOMES do que falta (nunca valores).
-export type CardReadiness = { ready: boolean; missing: string[] };
-
-// GET/PATCH /api/admin/payment-fees/card (só o owner).
-export type CardFeeSettings = {
-  bps: number;
-  fixed_cents: number;
-  confirmed_at: string | null;
-  confirmed_by_name: string | null;
-  updated_at: string | null;
-  examples: { base_cents: number; fee_cents: number; total_cents: number }[];
-  readiness: CardReadiness;
-};
 
 // Conta do cliente (opcional).
 export type CustomerAccount = {

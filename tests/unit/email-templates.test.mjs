@@ -40,7 +40,6 @@ const order = (over = {}) => ({
   delivery: 'delivery',
   neighborhood: 'Centro',
   paymentLabel: 'Dinheiro',
-  online: false,
   paymentStatus: 'pending',
   trackUrl: 'https://loja.exemplo.com.br/acompanhar-pedido/ABCDE-FGHIJ-KLMNO-PQRST',
   prefsUrl: 'https://loja.exemplo.com.br/conta/emails/00000000-0000-4000-8000-000000000000_0123456789abcdef0123456789abcdef',
@@ -80,15 +79,13 @@ for (const kind of ['order_received', 'order_confirmed', 'order_out_for_delivery
   add(`pedido: ${kind} (entrega)`, 'transactional', tpl.orderMessage(brand, order({ kind })));
   add(`pedido: ${kind} (retirada)`, 'transactional', tpl.orderMessage(brand, order({ kind, delivery: 'pickup', neighborhood: null, deliveryFee: 0, total: 21 })));
 }
-add('pedido: cancelado (Pix online pago)', 'transactional', tpl.orderMessage(brand, order({ kind: 'order_cancelled', online: true, paymentStatus: 'paid', paymentLabel: 'Pix online' })));
-add('pedido: cancelado (Pix online não pago)', 'transactional', tpl.orderMessage(brand, order({ kind: 'order_cancelled', online: true, paymentStatus: 'pending', paymentLabel: 'Pix online' })));
 add('pedido: com desconto', 'transactional', tpl.orderMessage(brand, order({ discount: 3, total: 23 })));
 add('alerta para o dono', 'transactional', tpl.alertMessage(brand, { to: 'dono@exemplo.com', name: 'Dono', alerts: [{ severity: 'critical', title: 'O servidor recusou a senha', detail: 'Nada sai.', hint: 'Confira SMTP_PASS.' }, { severity: 'warning', title: 'Fila parada', detail: '2 mensagens.', hint: 'Processe a fila.' }], panelUrl: `${brand.siteUrl}/admin/emails` }));
 add('promoção (com botão)', 'promotional', tpl.campaignMessage(brand, campaign()));
 add('promoção (sem botão)', 'promotional', tpl.campaignMessage(brand, campaign({ ctaLabel: null, ctaUrl: null })));
 add('promoção (teste)', 'promotional', tpl.campaignMessage(brand, campaign({ sample: true })));
 add('nova senha (exemplo do painel)', 'transactional', mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/recuperar`, minutes: 60, sample: true }));
-add('pedido: exemplo do painel', 'transactional', tpl.orderMessage(brand, order({ kind: 'payment_confirmed', online: true, paymentStatus: 'paid', paymentLabel: 'Pix online', sample: true })));
+add('pedido: exemplo do painel', 'transactional', tpl.orderMessage(brand, order({ kind: 'payment_confirmed', paymentStatus: 'paid', paymentLabel: 'Dinheiro', sample: true })));
 
 const hrefs = (html) => [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
 const SHORTENERS = /(^|\/\/|\.)(bit\.ly|tinyurl\.com|t\.co|goo\.gl|is\.gd|ow\.ly|cutt\.ly|rebrand\.ly|tiny\.cc|buff\.ly|shorturl\.at)(\/|$)/i;
@@ -239,14 +236,12 @@ test('promoção de teste é marcada como teste no assunto e no topo; a real nã
   assert.ok(!real.subject.startsWith('[Teste]') && !/Ninguém mais recebeu/.test(real.text));
 });
 
-test('textos de pedido: entrega diz "entrega", retirada diz "retirar/retirada"; cancelado por falta de pagamento diz que nada foi cobrado', () => {
+test('textos de pedido: entrega diz "entrega", retirada diz "retirar/retirada"; cancelamento comum não fala de reembolso', () => {
   const find = (n) => ALL.find((x) => x.name === n).message;
   assert.match(find('pedido: order_out_for_delivery (entrega)').subject, /saiu para entrega/);
   assert.match(find('pedido: order_out_for_delivery (retirada)').subject, /pronto para retirar/);
   assert.match(find('pedido: order_delivered (entrega)').subject, /entregue/);
   assert.match(find('pedido: order_delivered (retirada)').subject, /retirado/);
-  assert.match(find('pedido: cancelado (Pix online não pago)').text, /nada foi cobrado/);
-  assert.match(find('pedido: cancelado (Pix online pago)').text, /devolução do valor/);
   assert.ok(!/nada foi cobrado|devolução do valor/.test(find('pedido: order_cancelled (entrega)').text), 'cancelamento comum não promete reembolso nem diz que nada foi cobrado');
 });
 
@@ -266,7 +261,7 @@ test('valores em reais no formato brasileiro', () => {
 
 test('exemplos do painel (botão "Enviar exemplos para mim"): "[Teste]" no assunto e o aviso no topo; sem "sample", nenhum dos dois', () => {
   const reset = (sample) => mt.passwordResetMessage(brand, { to: 'a@exemplo.com', name: 'Ana', link: `${brand.siteUrl}/conta/recuperar`, minutes: 60, sample });
-  const paid = (sample) => tpl.orderMessage(brand, order({ kind: 'payment_confirmed', online: true, paymentStatus: 'paid', paymentLabel: 'Pix online', sample }));
+  const paid = (sample) => tpl.orderMessage(brand, order({ kind: 'payment_confirmed', paymentStatus: 'paid', paymentLabel: 'Dinheiro', sample }));
   for (const make of [reset, paid]) {
     const on = make(true);
     const off = make(undefined);
@@ -279,19 +274,6 @@ test('exemplos do painel (botão "Enviar exemplos para mim"): "[Teste]" no assun
   }
   // O exemplo de nova senha aponta para uma página fixa, nunca para um endereço com chave que funcione.
   assert.doesNotMatch(reset(true).html, /\/conta\/redefinir\/[A-Za-z0-9_-]{8,}/);
-});
-
-test('taxa paga pelo cliente no e-mail do pedido: "Taxa de serviço do Pix" no Pix, "Taxa de processamento do cartão" no cartão, e nada quando não há taxa', () => {
-  const pix = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 25, paymentFee: 0.63, paymentFeeLabel: 'Taxa de serviço do Pix', total: 25.63 }));
-  assert.match(pix.html, /Taxa de serviço do Pix/);
-  assert.match(pix.html, /R\$ 0,63/);
-  assert.match(pix.html, /R\$ 25,63/);
-  assert.doesNotMatch(pix.html, /Taxa de processamento do cartão/);
-  assert.match(pix.text, /Taxa de serviço do Pix/);
-  const card = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Cartão online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 100, paymentFee: 6.07, total: 106.07 }));
-  assert.match(card.html, /Taxa de processamento do cartão/);
-  const none = tpl.orderMessage(brand, order({ kind: 'order_received', online: true, paymentLabel: 'Pix online', delivery: 'pickup', neighborhood: null, deliveryFee: 0, subtotal: 21, total: 21 }));
-  assert.doesNotMatch(none.html, /Taxa de serviço|Taxa de processamento/);
 });
 
 test('código do painel: o código está no assunto e no texto, vale 5 minutos, mostra aparelho e rede, avisa "Não foi você?" e NÃO traz botão nem link de acesso', () => {

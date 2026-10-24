@@ -321,7 +321,7 @@ O envio usa `Idempotency-Key` = id do registro: tentar de novo a mesma mensagem 
 | `tests/unit/email-deliverability.test.mjs` | assinatura Svix (**exemplo oficial**, adulteração, hora, várias assinaturas), leitura dos avisos, análise de SPF/DKIM/DMARC, decisão dos alertas |
 | `tests/unit/email-templates.test.mjs` | **compatibilidade dos templates**: HTML de tabelas, sem script/formulário/pixel, só https, texto = HTML, tamanho, assunto, escape de dados, cabeçalhos de descadastro só nas promoções |
 | `tests/api-test17.mjs` | registro de cada e-mail, endereço inexistente, falha temporária, fila, usuário/senha recusados, política, segredo fora do registro, painel e permissões |
-| `tests/api-test18.mjs` | e-mails de pedido e pagamento: gatilhos, sem duplicar, texto de entrega × retirada, Pix online, e-mail velho cancelado, travas contra abuso, preferências, interruptor `EMAIL_ORDER_NOTICES=off` |
+| `tests/api-test18.mjs` | e-mails de pedido e pagamento: gatilhos, sem duplicar, texto de entrega × retirada, e-mail velho cancelado, travas contra abuso, preferências, interruptor `EMAIL_ORDER_NOTICES=off` |
 | `tests/api-test19.mjs` | consentimento, descadastro de um clique (e o `GET` que só leva às preferências), campanhas (público, número confirmado, teto, cancelar, descadastro no meio, cabeçalhos do teste), LGPD, cron |
 | `tests/api-test20.mjs` | visão geral, DNS, alertas (abrem, avisam uma vez, se resolvem), teto diário, remetente gratuito, “Enviar exemplos para mim” (7 modelos, cabeçalhos, limite por hora, fora do teto de 40 por endereço) |
 | `tests/api-test21.mjs` | provedor opcional (simulador): envio, chave de idempotência, erros da API, avisos assinados (autenticidade, repetição, ordem, supressão) |

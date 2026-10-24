@@ -44,7 +44,6 @@ const STATUS_OPTIONS: [string, string][] = [
   ['confirmed', 'Confirmados'],
   ['preparing', 'Em preparo'],
   ['out_for_delivery', 'Saiu para entrega'],
-  ['awaiting_payment', 'Aguardando pagamento'],
 ];
 
 export function ExportButton({ kind, size = 'md' }: { kind: Kind; size?: 'sm' | 'md' }) {

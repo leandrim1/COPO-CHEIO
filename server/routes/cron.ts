@@ -1,7 +1,6 @@
 // Rotina automática (cron): o que não pode depender de alguém estar com o painel aberto. Chamada pela Vercel (cron) ou por um agendador externo gratuito, sempre com
 // "Authorization: Bearer <CRON_SECRET>". Sem CRON_SECRET a rota recusa tudo.
-//  • encerra o Pix/cartão que venceu (e cancela a cobrança na operadora), devolve o estoque do pedido não pago;
-//  • manda o que está na fila de e-mail e limpa dados técnicos vencidos;
+//  • manda o que está na fila de e-mail e limpa dados técnicos vencidos (e avisa a operação de estoque baixo ou rotina com problema);
 //  • registra quando rodou e se deu certo (o painel mostra em "Estado do sistema").
 import { timingSafeEqual } from 'node:crypto';
 import { processQueue } from '../email/service.js';
@@ -9,7 +8,6 @@ import { one, query } from '../db.js';
 import { HttpError, json } from '../http.js';
 import type { Router } from '../http.js';
 import { runOpsAlerts } from '../opsAlerts.js';
-import { sweep } from '../payments/service.js';
 
 const same = (a: string, b: string): boolean => {
   const x = Buffer.from(a);
@@ -34,14 +32,13 @@ export function registerCron(r: Router) {
   r.get('/api/cron/sweep', 'public', async (ctx) => {
     if (!authorizedCron(ctx.req)) throw new HttpError(401, 'Não autorizado.');
     try {
-      const swept = await sweep({ lookups: true, force: true, limit: 50 });
       await query('select purge_expired_data()');
-      await recordJob('sweep', true, `verificados ${swept.checked}, encerrados ${swept.closed}, cancelados ${swept.cancelled}`);
+      await recordJob('sweep', true, 'limpeza concluída');
       // Avisos da operação (estoque baixo, rotina com problema) ANTES da fila: entram nela e saem nesta mesma execução. Uma rotina que falhou é avisada pela
       // próxima atividade do site ou pelo cron de e-mails (esta execução, se tivesse falhado, nem chegaria aqui).
       const ops = await runOpsAlerts(ctx.req, { force: true }).catch(() => 0);
       const queue = await processQueue({ req: ctx.req, limit: 25, budgetMs: 6000 });
-      return json({ ok: true, swept, queue, ops_alerts_queued: ops });
+      return json({ ok: true, queue, ops_alerts_queued: ops });
     } catch (error) {
       await recordJob('sweep', false, error instanceof Error ? error.message : 'erro');
       throw error;

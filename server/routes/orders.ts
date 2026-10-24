@@ -5,18 +5,9 @@ import { HttpError, json, readJson, uuidParam } from '../http.js';
 import type { Router } from '../http.js';
 import { kickQueue } from '../email/service.js';
 import { cleanReason } from '../orderCancel.js';
-import { cancelProviderCharges, openPixCharges, sweep } from '../payments/service.js';
 import { hashToken, newTrackingToken } from '../tracking.js';
-import { paymentsOfOrder } from './payments.js';
 
-// A taxa do cartão (alíquota e tarifa fixa) é da área do owner; o atendente vê só o valor cobrado do cliente (payment_fee).
-const hideRates = (row: Record<string, unknown>, owner: boolean): Record<string, unknown> => {
-  if (owner) return row;
-  const { payment_fee_bps: _bps, payment_fee_fixed: _fixed, ...rest } = row;
-  return rest;
-};
-
-const STATUSES = ['awaiting_payment', 'new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] as const;
+const STATUSES = ['new', 'confirmed', 'preparing', 'out_for_delivery', 'delivered', 'cancelled'] as const;
 const PAYMENT_STATUSES = ['pending', 'paid', 'refunded'] as const;
 
 export function registerOrders(r: Router) {
@@ -38,7 +29,7 @@ export function registerOrders(r: Router) {
     ]);
     return json({
       ...dash[0].dashboard,
-      recent: recent.map((row) => hideRates(row, ctx.admin!.role === 'owner')),
+      recent,
       privacy_open: privacy[0]?.n ?? 0,
       low_stock: { low: lowStock[0]?.low ?? 0, out: lowStock[0]?.out ?? 0 },
     });
@@ -96,7 +87,7 @@ export function registerOrders(r: Router) {
     ]);
     const byStatus: Record<string, number> = {};
     for (const row of counts) byStatus[row.order_status] = row.n;
-    return json({ orders: rows.slice(0, limit).map((row) => hideRates(row, ctx.admin!.role === 'owner')), has_more: rows.length > limit, counts: byStatus });
+    return json({ orders: rows.slice(0, limit), has_more: rows.length > limit, counts: byStatus });
   });
 
   r.get('/api/admin/orders/:number', 'admin', async (ctx) => {
@@ -117,8 +108,7 @@ export function registerOrders(r: Router) {
       ['select id, name, email, phone, status from customers where id = $1', [order.customer_id]],
     ]);
     const retention = await one<{ days: number }>('select tracking_retention_days as days from store_settings where id = 1');
-    const payments = await paymentsOfOrder(order.id, ctx.admin!.role === 'owner');
-    return json({ order: hideRates(order, ctx.admin!.role === 'owner'), items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180, payments });
+    return json({ order, items, history, tracking_links: links, account: accounts[0] ?? null, retention_days: retention?.days ?? 180 });
   });
 
   // Gera um link novo de acompanhamento para mandar ao cliente. O código só aparece nesta resposta (no banco
@@ -166,13 +156,10 @@ export function registerOrders(r: Router) {
       const reason = cleanReason(body.reason);
       if (body.age_checked !== undefined && typeof body.age_checked !== 'boolean') throw new HttpError(400, 'A conferência do documento precisa ser verdadeiro ou falso.');
       const ageChecked = body.age_checked === true;
-      // As cobranças Pix em aberto são lidas ANTES: o banco as marca como canceladas junto com o pedido, e a operadora também precisa cancelá-las.
-      const open = body.status === 'cancelled' ? await openPixCharges(id) : [];
       const before = await one<{ order_status: string; age_checked_at: string | null }>('select order_status, age_checked_at from orders where id = $1::uuid', [id]);
       order = await one<{ order_number: number; order_status: string; age_checked_at: string | null }>('select * from admin_set_order_status($1::uuid, $2, $3::uuid, $4, $5)', [id, body.status, ctx.admin!.id, reason, ageChecked]);
       if (order && before && before.order_status !== order.order_status) {
         if (order.order_status === 'cancelled') {
-          await cancelProviderCharges(open);
           await audit(ctx, { action: 'order.cancel', summary: `Cancelou o pedido #${order.order_number}${reason ? `: ${reason}` : ''}`, entity: 'order', entityId: id });
         }
         if (order.order_status === 'delivered' && !before.age_checked_at && order.age_checked_at) {
@@ -198,18 +185,12 @@ export function registerOrders(r: Router) {
 
   // Polling inteligente: o painel pergunta de poucos em poucos segundos (e só com a aba aberta) se há
   // pedido novo. Sem `after`, só devolve o ponto de partida; com `after`, devolve o que chegou depois.
-  // Pedido de pagamento online que ainda não foi pago não é "novo" para a loja: só aparece quando o pagamento é confirmado
-  // (lista `paid`, com o próprio ponto de partida `paid_after`/`paid_cursor`).
   r.get('/api/admin/live', 'admin', async (ctx) => {
-    // De passagem (o painel aberto é o "agendador" do sistema): encerra o que venceu e confere pagamentos online pendentes.
-    await sweep({ lookups: true }).catch(() => undefined);
     // O painel aberto também é o "agendador" da fila de e-mails: novas tentativas e avisos pendentes saem daqui (no máximo a cada 10 s).
     kickQueue(ctx.req, { minGapMs: 10_000 });
     const afterParam = ctx.url.searchParams.get('after');
     const after = afterParam !== null && /^\d{1,12}$/.test(afterParam) ? afterParam : null;
-    const paidParam = ctx.url.searchParams.get('paid_after');
-    const paidAfter = paidParam !== null && /^\d{1,12}$/.test(paidParam) ? paidParam : null;
-    const [fresh, summary, paid, paidTop] = await batch([
+    const [fresh, summary] = await batch([
       [
         after === null
           ? 'select id, order_number, customer_name, total, created_at from orders where false'
@@ -223,23 +204,12 @@ export function registerOrders(r: Router) {
                 coalesce(extract(epoch from max(updated_at)), 0)::text as rev
            from orders`,
       ],
-      [
-        paidAfter === null
-          ? 'select 0 as paid_seq, id, order_number, customer_name, total, created_at from orders where false'
-          : `select p.paid_seq, o.id, o.order_number, o.customer_name, o.total, p.paid_at as created_at
-               from payments p join orders o on o.id = p.order_id
-              where p.paid_seq > $1::bigint and o.order_status <> 'cancelled' order by p.paid_seq limit 20`,
-        paidAfter === null ? [] : [paidAfter],
-      ],
-      ['select coalesce(max(paid_seq), 0) as top from payments'],
     ]);
     return json({
       new_orders: fresh,
       latest: summary[0].latest,
       pending: summary[0].pending,
       rev: summary[0].rev,
-      paid_orders: paid,
-      paid_cursor: paid.length ? Math.max(...paid.map((row) => Number(row.paid_seq))) : paidAfter === null ? Number(paidTop[0].top) : Number(paidAfter),
     });
   });
 }

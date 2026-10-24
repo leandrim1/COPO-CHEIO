@@ -2,7 +2,7 @@
 //  • avaliação: só de pedido ENTREGUE, uma vez, pelo link ou pela conta (pedido de outra pessoa dá 404); nasce "aguardando", só vai para o site depois que a loja publica; o
 //    público nunca recebe nome, telefone nem número do pedido; moderação pelo painel, registro de atividades, limites de abuso;
 //  • entregadores: cadastro, escolha por pedido de ENTREGA, nome gravado no pedido, o cliente vê só o primeiro nome enquanto o pedido está a caminho;
-//  • rotina automática (cron): só com o segredo, varre o que venceu, registra a execução.
+//  • rotina automática (cron): só com o segredo, limpa o que venceu, manda a fila de e-mails e registra a execução.
 // usage: bash tests/fresh.sh && node tests/api-test34.mjs      (BASE e TEST_DB escolhem o servidor e o banco)
 import { execFileSync } from 'node:child_process';
 import { Client, check, registerVerified, section, summary } from './lib.mjs';
@@ -179,13 +179,13 @@ let joao;
 }
 
 // ------------------------------------------------------------------------------------------------
-section('6. Rotina automática (cron): só com o segredo, varre o vencido e registra');
+section('6. Rotina automática (cron): só com o segredo, limpa o vencido, manda a fila de e-mails e registra');
 {
   check('sem segredo: 401; segredo errado ou em outro formato: 401', (await anon.get('/api/cron/sweep')).status === 401 && (await anon.get('/api/cron/sweep', { headers: { authorization: 'Bearer errado' } })).status === 401 && (await anon.get('/api/cron/sweep', { headers: { authorization: CRON_SECRET } })).status === 401);
   check('o status também exige o segredo', (await anon.get('/api/cron/status')).status === 401);
   check('antes de rodar, não há registro da rotina', (await anon.get('/api/cron/status', { headers: { authorization: `Bearer ${CRON_SECRET}` } })).data.sweep === null);
   const run = await anon.get('/api/cron/sweep', { headers: { authorization: `Bearer ${CRON_SECRET}` } });
-  check('com o segredo: 200 e o resultado da varredura', run.status === 200 && run.data.ok === true && run.data.swept && typeof run.data.swept.closed === 'number', run.data);
+  check('com o segredo: 200 e o resultado da rotina (a fila de e-mails e os avisos da operação)', run.status === 200 && run.data.ok === true && run.data.queue && typeof run.data.queue.processed === 'number' && typeof run.data.ops_alerts_queued === 'number' && run.data.swept === undefined, run.data);
   const st = (await anon.get('/api/cron/status', { headers: { authorization: `Bearer ${CRON_SECRET}` } })).data.sweep;
   check('a execução ficou registrada (ok, há poucos segundos)', st && st.ok === true && st.age < 30, st);
   check('o registro guarda um resumo e nenhum segredo', !/segredo|Bearer/.test(psql("select detail from job_runs where name = 'sweep'")));

@@ -235,8 +235,7 @@ export function registerEmailAdmin(r: Router) {
         total: 26,
         delivery: 'delivery',
         neighborhood: 'Centro',
-        paymentLabel: 'Pix online',
-        online: true,
+        paymentLabel: 'Dinheiro',
         paymentStatus: 'paid',
         trackUrl: `${brand.siteUrl}/acompanhar-pedido`,
         prefsUrl: `${brand.siteUrl}/conta/emails/${token}`,
@@ -246,10 +245,10 @@ export function registerEmailAdmin(r: Router) {
     const list: { label: string; kind: 'template_test' | 'campaign_test'; message: Message }[] = [
       { label: 'Confirmação de e-mail', kind: 'template_test', message: verificationMessage(brand, { to, name, code: '123456', link: `${brand.siteUrl}/conta`, codeMinutes: CODE_MINUTES, linkHours: LINK_HOURS, sample: true }) },
       { label: 'Nova senha', kind: 'template_test', message: passwordResetMessage(brand, { to, name, link: `${brand.siteUrl}/conta/recuperar`, minutes: RESET_MINUTES, sample: true }) },
-      { label: 'Pedido recebido', kind: 'template_test', message: order('order_received', { online: false, paymentStatus: 'pending', paymentLabel: 'Dinheiro' }) },
+      { label: 'Pedido recebido', kind: 'template_test', message: order('order_received', { paymentStatus: 'pending' }) },
       { label: 'Pagamento confirmado', kind: 'template_test', message: order('payment_confirmed') },
       { label: 'Pedido saiu para entrega', kind: 'template_test', message: order('order_out_for_delivery') },
-      { label: 'Pedido cancelado', kind: 'template_test', message: order('order_cancelled', { online: true, paymentStatus: 'pending' }) },
+      { label: 'Pedido cancelado', kind: 'template_test', message: order('order_cancelled', { paymentStatus: 'pending' }) },
       {
         label: 'Promoção',
         // Vai como "teste de campanha": chega com os cabeçalhos de uma promoção (descadastro de um clique, sem "e-mail automático").

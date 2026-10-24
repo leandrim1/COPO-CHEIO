@@ -32,7 +32,6 @@ export function describePath(path: string): PageInfo {
   if (path === '/contato-e-responsavel') return { known: true, indexable: true, title: 'Contato e responsável' };
   if (path === '/checkout') return { known: true, indexable: false, title: 'Finalizar pedido' };
   if (new RegExp(`^/pedido/${token}$`).test(path)) return { known: true, indexable: false, title: 'Seu pedido' };
-  if (new RegExp(`^/pagar/${token}$`).test(path)) return { known: true, indexable: false, title: 'Pagamento do pedido' };
   if (path === '/acompanhar-pedido' || new RegExp(`^/acompanhar-pedido/${token}$`).test(path)) return { known: true, indexable: false, title: 'Acompanhar pedido' };
   if (path === '/conta' || path === '/conta/pedidos' || /^\/conta\/pedidos\/\d{1,12}$/.test(path) || path === '/conta/recuperar') return { known: true, indexable: false, title: 'Minha conta' };
   if (/^\/conta\/(redefinir|verificar)\/[0-9A-Za-z_-]{20,100}$/.test(path)) return { known: true, indexable: false, title: 'Minha conta' };
@@ -45,7 +44,6 @@ const SITEMAP_PATHS = ['/', '/bebidas', '/privacidade', '/termos', '/trocas-e-ca
 const ROBOTS = `User-agent: *
 Disallow: /api/
 Disallow: /pedido/
-Disallow: /pagar/
 Disallow: /acompanhar-pedido/
 Disallow: /conta
 `;
