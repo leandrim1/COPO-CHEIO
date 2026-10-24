@@ -5,7 +5,9 @@ import { initAnalytics, isMeasurementId } from '../lib/analytics';
 import { DEFAULT_HERO, DEFAULT_LOGO, DEFAULT_PAYMENTS, DEFAULT_SITE, DEFAULT_STORE } from '../lib/defaults';
 import { comboNote, swapBasePrice, swapDifference, swapStillValid } from '../lib/combo';
 import { isOpenNow } from '../lib/hours';
-import { addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineQty, setProductTotal, settleCart, swapUnits } from '../lib/ice';
+import { FLAVORS_REQUIRED_MESSAGE, sumPicks } from '../lib/flavors';
+import type { FlavorPick } from '../lib/flavors';
+import { ICE_REQUIRED_MESSAGE, addFlavoredLine, addToCart, changeLineIce, countFor, normalizeCart, parseLineKey, setLineFlavors, setLineQty, setProductTotal, settleCart, swapUnits } from '../lib/ice';
 import type { Cart, IceChoice } from '../lib/ice';
 import type { Banner, Category, DayHours, DayKey, DeliveryZone, HeroSettings, OpeningHours, PaymentOption, SiteSettings, StoreSettings } from '../lib/types';
 
@@ -36,6 +38,10 @@ export type Product = {
   swapBaseId: string | null;
   swapBasePrice: number | null;
   swapOptionIds: string[];
+  // Gelos saborizados (a loja define no painel): `flavoredIce` = o produto é um gelo saborizado (pode ser escolhido nos combos); `comboIces` = quantos gelos
+  // saborizados vêm neste combo (0 = nenhum). Os sabores da escolha são só os produtos com `flavoredIce`: nada de lista fixa.
+  flavoredIce: boolean;
+  comboIces: number;
 };
 
 export const unitPrice = (p: Product) => p.promoPrice ?? p.price;
@@ -60,7 +66,9 @@ type ShopData = {
 // perguntar o gelo, então ela simplesmente não é mais lida.
 // v4: `iceRequired` passou a vir do PRODUTO (a loja escolhe, produto a produto, quais perguntam o gelo); antes vinha da categoria. Uma cópia
 // v3 teria o gelo nos produtos errados, então também não é mais lida.
-const CACHE_KEY = 'copocheio:site-v4';
+// v5: os produtos passaram a trazer `flavoredIce` e `comboIces` (gelos saborizados dos combos). Uma cópia v4 deixaria adicionar um combo sem escolher
+// os sabores, então também não é mais lida.
+const CACHE_KEY = 'copocheio:site-v5';
 const EMPTY: ShopData = { store: DEFAULT_STORE, site: DEFAULT_SITE, hero: DEFAULT_HERO, products: [], banners: [], coverBanners: [], zones: [], payments: DEFAULT_PAYMENTS, analyticsId: null };
 
 // ---- Dados defensivos --------------------------------------------------------------------------
@@ -176,6 +184,8 @@ function readCache(): ShopData | null {
         swapBaseId: typeof p.swapBaseId === 'string' ? p.swapBaseId : null,
         swapBasePrice: Number.isFinite(Number(p.swapBasePrice)) && p.swapBasePrice !== null ? Number(p.swapBasePrice) : null,
         swapOptionIds: Array.isArray(p.swapOptionIds) ? p.swapOptionIds.filter((x): x is string => typeof x === 'string') : [],
+        flavoredIce: p.flavoredIce === true,
+        comboIces: Number.isInteger(p.comboIces) && p.comboIces > 0 && p.comboIces <= 12 ? p.comboIces : 0,
       }));
     return { ...EMPTY, ...content, products };
   } catch {
@@ -201,6 +211,8 @@ type ProductRowFromDb = {
   swap_option_ids?: string[] | null;
   ice_choice_required?: boolean;
   alcoholic?: boolean;
+  flavored_ice?: boolean;
+  combo_ice_count?: number | null;
 };
 
 // As miniaturas viram o `srcset` do <img> (a largura de cada uma é a de quando o painel as gera: 400 e 720). Endereço com vírgula ou espaço
@@ -240,6 +252,8 @@ function toProducts(rows: ProductRowFromDb[], categories: Category[]): Product[]
         swapBaseId: typeof row.swap_base_product_id === 'string' ? row.swap_base_product_id : null,
         swapBasePrice: row.swap_base_price === null || row.swap_base_price === undefined || !Number.isFinite(Number(row.swap_base_price)) ? null : Number(row.swap_base_price),
         swapOptionIds: Array.isArray(row.swap_option_ids) ? row.swap_option_ids.filter((x): x is string => typeof x === 'string') : [],
+        flavoredIce: row.flavored_ice === true,
+        comboIces: Number.isInteger(row.combo_ice_count) && (row.combo_ice_count as number) > 0 && (row.combo_ice_count as number) <= 12 ? (row.combo_ice_count as number) : 0,
       };
     })
     .sort(
@@ -374,7 +388,14 @@ export type CartLine = {
   unit: number;
   // O produto pede o gelo e a linha está sem escolha (ex.: pedido guardado antes de existir a pergunta): precisa escolher.
   needsIce: boolean;
+  // Combo com gelos saborizados: os sabores desta unidade do combo (null = ainda sem escolha), e se falta escolher ou algum sabor deixou de valer (esgotou, saiu do cardápio).
+  flavors: FlavorPick[] | null;
+  needsFlavors: boolean;
+  flavorIssue: string | null;
 };
+
+// O que falta fazer numa linha do pedido para ela poder ser enviada (a mensagem certa para o gelo normal/de sabor ou para os gelos do combo).
+export const incompleteMessage = (lines: readonly CartLine[]): string => (lines[0]?.needsIce === false ? FLAVORS_REQUIRED_MESSAGE : ICE_REQUIRED_MESSAGE);
 
 function loadCart(): Cart {
   try {
@@ -400,7 +421,8 @@ function useCart(products: Product[], ready: boolean) {
     if (!ready) return;
     const byId = new Map(products.map((p) => [p.id, p.iceRequired]));
     // A troca de energético de uma linha só vale se o combo ainda tem energético definido e o novo ainda existe (e é de 2L).
-    setCart((prev) => settleCart(prev, (id) => byId.get(id), (id, swapTo) => swapStillValid(products, id, swapTo)));
+    const byIces = new Map(products.map((p) => [p.id, p.comboIces]));
+    setCart((prev) => settleCart(prev, (id) => byId.get(id), (id, swapTo) => swapStillValid(products, id, swapTo), (id) => byIces.get(id) ?? 0));
   }, [products, ready]);
 
   useEffect(() => {
@@ -415,6 +437,15 @@ function useCart(products: Product[], ready: boolean) {
   const setQty = useCallback((key: string, qty: number) => setCart((prev) => setLineQty(prev, key, qty)), []);
   // Põe unidades de um produto no pedido; `ice` só vale (e é obrigatório) para produto que pede o gelo.
   const add = useCallback((product: Product, ice: IceChoice | null, qty = 1) => setCart((prev) => addToCart(prev, product.id, product.iceRequired ? ice : null, qty)), []);
+  // Combo com gelos saborizados: põe UMA unidade do combo no pedido, com os sabores escolhidos (cada unidade é uma linha própria, nunca misturada com outra).
+  const unitCounter = useRef(0);
+  const addFlavored = useCallback((product: Product, picks: readonly FlavorPick[], swapTo: string | null = null) => {
+    unitCounter.current += 1;
+    const unit = `${Date.now().toString(36)}${unitCounter.current.toString(36)}`.slice(-14);
+    setCart((prev) => addFlavoredLine(prev, product.id, picks, unit, swapTo));
+  }, []);
+  // Troca os sabores de uma unidade que já está no pedido.
+  const setFlavors = useCallback((key: string, picks: readonly FlavorPick[]) => setCart((prev) => setLineFlavors(prev, key, picks)), []);
   // Chamado pelos cartões de produto quando a pessoa aumenta a quantidade: se o produto tem observação (hoje, os combos), mostra o aviso.
   const announce = useCallback((product: Product) => {
     const text = comboNote(product.category);
@@ -434,14 +465,14 @@ function useCart(products: Product[], ready: boolean) {
 
   const lines: CartLine[] = useMemo(() => {
     const byId = new Map(products.map((p) => [p.id, p]));
-    const byProduct = new Map<string, { key: string; qty: number; ice: IceChoice | null; swap: Product | null }[]>();
+    const byProduct = new Map<string, { key: string; qty: number; ice: IceChoice | null; swap: Product | null; flavors: FlavorPick[] | null }[]>();
     for (const [key, qty] of Object.entries(cart)) {
       const parsed = parseLineKey(key);
       if (!parsed) continue;
       const swap = parsed.swapTo ? byId.get(parsed.swapTo) ?? null : null;
       if (parsed.swapTo && !swap) continue;
       const list = byProduct.get(parsed.productId) ?? [];
-      list.push({ key, qty, ice: parsed.ice, swap });
+      list.push({ key, qty, ice: parsed.ice, swap, flavors: parsed.flavors });
       byProduct.set(parsed.productId, list);
     }
     // Na ordem do cardápio; do mesmo produto, primeiro a linha sem escolha, depois gelo normal e gelo de sabor e, por fim, as de energético trocado.
@@ -449,20 +480,29 @@ function useCart(products: Product[], ready: boolean) {
     return products.flatMap((product) =>
       (byProduct.get(product.id) ?? [])
         .sort((a, b) => rank(a.ice, a.swap) - rank(b.ice, b.swap) || (a.swap?.name ?? '').localeCompare(b.swap?.name ?? '', 'pt-BR'))
-        .map(({ key, qty, ice, swap }) => {
+        .map(({ key, qty, ice, swap, flavors }) => {
           // O combo trocado custa o combo + a diferença de preço dos energéticos (o banco recalcula igual ao criar o pedido).
           const basePrice = swap ? swapBasePrice(products, product) : null;
           const unit = swap && basePrice !== null ? (Math.round(unitPrice(product) * 100) + Math.round(swapDifference(swap, basePrice) * 100)) / 100 : unitPrice(product);
-          return { key, product, qty, ice, swap, unit, needsIce: product.iceRequired && ice === null };
+          // Os gelos do combo: falta escolher (linha sem sabores) ou a escolha deixou de valer (sabor esgotado, fora do cardápio, deixou de ser gelo saborizado).
+          const wants = product.comboIces;
+          const needsFlavors = wants > 0 && flavors === null;
+          let flavorIssue: string | null = null;
+          if (wants > 0 && flavors) {
+            const gone = flavors.map((f) => ({ f, p: byId.get(f.id) })).find(({ p }) => !p || !p.flavoredIce || p.soldOut);
+            if (gone) flavorIssue = gone.p ? `${gone.p.name} esgotou` : 'Um dos sabores saiu do cardápio';
+            else if (sumPicks(flavors) !== wants) flavorIssue = `Escolha os ${wants} gelos`;
+          }
+          return { key, product, qty, ice, swap, unit, needsIce: product.iceRequired && ice === null, flavors: wants > 0 ? flavors : null, needsFlavors, flavorIssue };
         }),
     );
   }, [products, cart]);
   const count = lines.reduce((sum, line) => sum + line.qty, 0);
   const total = lines.reduce((sum, line) => sum + Math.round(line.unit * 100) * line.qty, 0) / 100;
   const unavailable = lines.filter((line) => line.product.soldOut || line.swap?.soldOut === true);
-  const incomplete = lines.filter((line) => line.needsIce);
+  const incomplete = lines.filter((line) => line.needsIce || line.needsFlavors || line.flavorIssue !== null);
 
-  return { cart, setQty, add, addSwapped, swapBy, setTotal, changeIce, countOf, clear, lines, count, total, unavailable, incomplete, notice, announce, dismissNotice };
+  return { cart, setQty, add, addFlavored, setFlavors, addSwapped, swapBy, setTotal, changeIce, countOf, clear, lines, count, total, unavailable, incomplete, notice, announce, dismissNotice };
 }
 
 // ---- Contexto ---------------------------------------------------------------------------------

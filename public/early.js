@@ -28,7 +28,7 @@ try {
       document.head.appendChild(link);
     };
     try {
-      preconnect(localStorage.getItem('copocheio:site-v4'));
+      preconnect(localStorage.getItem('copocheio:site-v5'));
     } catch (error) {
       /* navegador sem armazenamento local (modo privado): segue pela resposta do cardápio */
     }

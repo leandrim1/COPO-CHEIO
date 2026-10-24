@@ -28,10 +28,10 @@ test('só "normal" e "flavored" valem como escolha', () => {
 test('chave da linha: produto sem gelo é só o id (o formato de sempre); com gelo, id:gelo', () => {
   assert.equal(ice.lineKey(A, null), A);
   assert.equal(ice.lineKey(A, 'normal'), `${A}:normal`);
-  assert.deepEqual(ice.parseLineKey(A), { productId: A, ice: null, swapTo: null });
-  assert.deepEqual(ice.parseLineKey(`${A}:flavored`), { productId: A, ice: 'flavored', swapTo: null });
+  assert.deepEqual(ice.parseLineKey(A), { productId: A, ice: null, swapTo: null, flavors: null, unit: null });
+  assert.deepEqual(ice.parseLineKey(`${A}:flavored`), { productId: A, ice: 'flavored', swapTo: null, flavors: null, unit: null });
   for (const bad of ['', ':normal', `${A}:banana`, `${A}:`]) assert.equal(ice.parseLineKey(bad), null, bad);
-  for (const choice of [null, 'normal', 'flavored']) assert.deepEqual(ice.parseLineKey(ice.lineKey(B, choice)), { productId: B, ice: choice, swapTo: null });
+  for (const choice of [null, 'normal', 'flavored']) assert.deepEqual(ice.parseLineKey(ice.lineKey(B, choice)), { productId: B, ice: choice, swapTo: null, flavors: null, unit: null });
 });
 
 test('o pedido guardado de antes continua valendo e o lixo é descartado', () => {
@@ -112,7 +112,7 @@ const E2 = 'e2e2e2e2-e2e2-e2e2-e2e2-e2e2e2e2e2e2';
 
 test('chave da linha trocada: id-do-combo@id-do-energético', () => {
   assert.equal(ice.lineKey(C, null, E1), `${C}@${E1}`);
-  assert.deepEqual(ice.parseLineKey(`${C}@${E1}`), { productId: C, ice: null, swapTo: E1 });
+  assert.deepEqual(ice.parseLineKey(`${C}@${E1}`), { productId: C, ice: null, swapTo: E1, flavors: null, unit: null });
   for (const bad of [`${C}@`, `@${E1}`, `${C}@${E1}@${E2}`, `${C}@${E1}:normal`, `${C}:normal@${E1}`]) assert.equal(ice.parseLineKey(bad), null, bad);
   assert.deepEqual(ice.normalizeCart({ [`${C}@${E1}`]: 2, [C]: 1, [`${C}@`]: 3 }), { [`${C}@${E1}`]: 2, [C]: 1 }, 'a linha trocada sobrevive ao recarregar; a chave quebrada é descartada');
 });

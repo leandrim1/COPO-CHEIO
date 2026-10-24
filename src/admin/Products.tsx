@@ -361,7 +361,7 @@ function ImportModal({ open, onClose, onDone }: { open: boolean; onClose: () => 
 
 // ---- Lista (/admin/produtos) -------------------------------------------------------------------
 
-type Filter = 'all' | 'active' | 'inactive' | 'soldout' | 'featured' | 'ice';
+type Filter = 'all' | 'active' | 'inactive' | 'soldout' | 'featured' | 'ice' | 'flavored' | 'combo-ice';
 
 export function ProductsPage() {
   const toast = useToast();
@@ -455,6 +455,8 @@ export function ProductsPage() {
     if (filter === 'soldout' && !isSoldOut(p)) return false;
     if (filter === 'featured' && !p.featured) return false;
     if (filter === 'ice' && !p.ice_choice_required) return false;
+    if (filter === 'flavored' && !p.flavored_ice) return false;
+    if (filter === 'combo-ice' && !((p.combo_ice_count ?? 0) > 0)) return false;
     return !term || normalizeText(`${p.name} ${p.sku ?? ''} ${p.description ?? ''}`).includes(term);
   });
 
@@ -479,6 +481,8 @@ export function ProductsPage() {
       {isSoldOut(p) && <Badge tone="red">Esgotado</Badge>}
       {p.featured && <Badge tone="blue">Destaque</Badge>}
       {p.ice_choice_required && <Badge tone="blue">Pede o gelo</Badge>}
+      {p.flavored_ice && <Badge tone="blue">Gelo saborizado</Badge>}
+      {(p.combo_ice_count ?? 0) > 0 && <Badge tone="blue">Combo com {p.combo_ice_count} gelos</Badge>}
       {p.alcoholic === false && <Badge>Sem álcool</Badge>}
       {p.image_url && !p.image_sm_url && <Badge tone="amber">Miniatura pendente</Badge>}
       {promoState(p) === 'scheduled' && <Badge tone="violet">Promoção agendada</Badge>}
@@ -543,6 +547,8 @@ export function ProductsPage() {
           <option value="soldout">Esgotados</option>
           <option value="featured">Destaques</option>
           <option value="ice">Pedem o gelo</option>
+          <option value="flavored">Gelos saborizados</option>
+          <option value="combo-ice">Combos com gelos</option>
         </select>
       </div>
 
@@ -732,6 +738,9 @@ type Form = {
   swap_options: string[];
   // Quem pede este produto escolhe o gelo (normal ou de sabor).
   ice: boolean;
+  // Gelos saborizados dos combos: este produto é um gelo saborizado (aparece na escolha dos combos) / quantos gelos saborizados vêm neste combo (0 = nenhum).
+  flavored: boolean;
+  comboIces: string;
   // Bebida alcoólica: o pedido que a contém exige a declaração de maioridade e a conferência do documento na entrega.
   alcoholic: boolean;
   sku: string;
@@ -756,6 +765,8 @@ const EMPTY_FORM: Form = {
   swap_price: '',
   swap_options: [],
   ice: false,
+  flavored: false,
+  comboIces: '0',
   // Produto novo nasce alcoólico (o lado seguro): quem vende refrigerante, água ou gelo desliga.
   alcoholic: true,
   sku: '',
@@ -843,6 +854,8 @@ export function ProductFormPage({ id }: { id: string }) {
         swap_price: moneyInput(product.swap_base_price === null || product.swap_base_price === undefined ? null : Number(product.swap_base_price)),
         swap_options: product.swap_option_ids ?? [],
         ice: product.ice_choice_required === true,
+        flavored: product.flavored_ice === true,
+        comboIces: String(product.combo_ice_count ?? 0),
         alcoholic: product.alcoholic !== false,
         sku: product.sku ?? '',
         trackStock: product.stock !== null,
@@ -914,6 +927,10 @@ export function ProductFormPage({ id }: { id: string }) {
     const swapPrice = form.swap_base ? null : parseMoney(form.swap_price);
     if (swapPrice !== null && (Number.isNaN(swapPrice) || swapPrice <= 0)) next.swap_price = 'Informe um valor maior que zero. Ex.: 12,00';
     if (swapPrice === null && !form.swap_base && form.swap_options.length > 0) next.swap_price = 'Informe o valor do energético que vem no combo (ou escolha o produto acima) para a troca funcionar.';
+    const comboIces = Number(form.comboIces.trim() === '' ? '0' : form.comboIces);
+    if (!Number.isInteger(comboIces) || comboIces < 0 || comboIces > 12) next.comboIces = 'Use um número de 0 a 12.';
+    else if (comboIces > 0 && form.flavored) next.comboIces = 'Um gelo saborizado não pode trazer gelos. Deixe em 0.';
+    else if (comboIces > 0 && form.ice) next.comboIces = 'Desligue a escolha do gelo normal ou de sabor: o combo usa a escolha dos gelos saborizados.';
     setErrors(next);
     if (Object.keys(next).length) {
       requestAnimationFrame(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
@@ -944,6 +961,8 @@ export function ProductFormPage({ id }: { id: string }) {
       swap_base_price: form.swap_base ? null : swapPrice,
       swap_option_ids: form.swap_options.filter((id) => id !== form.swap_base),
       ice_choice_required: form.ice,
+      flavored_ice: form.flavored,
+      combo_ice_count: comboIces,
       alcoholic: form.alcoholic,
       sku: form.sku.trim() || null,
       stock,
@@ -1197,6 +1216,31 @@ export function ProductFormPage({ id }: { id: string }) {
               label="Pedir a escolha do gelo"
               description="Quem pedir este produto escolhe entre gelo normal e gelo de sabor. A escolha aparece no pedido, no acompanhamento e no recibo. Desligado, o produto é pedido sem perguntar."
             />
+            <div className="mt-5 space-y-4 border-t border-white/[0.08] pt-5">
+              <Switch
+                checked={form.flavored}
+                disabled={Number(form.comboIces) > 0}
+                onChange={(v) => set('flavored', v)}
+                label="Este produto é um gelo saborizado"
+                description="Aparece na escolha dos gelos dos combos (só enquanto estiver ativo e não esgotado). O cliente continua podendo comprá-lo sozinho."
+              />
+              <Field
+                label="Gelos saborizados que vêm neste combo"
+                error={errors.comboIces}
+                hint="0 = o produto não pede essa escolha. Em um combo com 4 gelos, escreva 4: o cliente escolhe os 4 sabores antes de adicionar ao pedido, entre os produtos marcados como gelo saborizado. O preço do combo não muda."
+              >
+                {(p) => (
+                  <input
+                    {...p}
+                    value={form.comboIces}
+                    onChange={(e) => set('comboIces', e.target.value.replace(/\D/g, '').slice(0, 2))}
+                    inputMode="numeric"
+                    disabled={form.flavored}
+                    className={cx(INPUT, 'max-w-[8rem] tabular-nums')}
+                  />
+                )}
+              </Field>
+            </div>
           </Card>
           <Card title="Visibilidade">
             <div className="space-y-4">

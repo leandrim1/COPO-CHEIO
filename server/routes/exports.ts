@@ -64,7 +64,7 @@ export function registerExports(r: Router) {
       `with tz as (select timezone as name from store_settings where id = 1)
        select o.order_number, o.created_at, o.order_status, o.payment_status, o.payment_method, o.delivery_type, o.customer_name, o.customer_phone, o.customer_email,
               o.address, o.address_number, o.neighborhood, o.subtotal, o.delivery_fee, o.discount, o.coupon_code, o.payment_fee, o.total, o.age_required, o.age_checked_at,
-              (select string_agg(i.quantity || 'x ' || i.product_name, ' | ' order by i.created_at, i.product_name) from order_items i where i.order_id = o.id) as items,
+              (select string_agg(i.quantity || 'x ' || i.product_name || case when i.ice_flavors is not null then ' [gelos: ' || (select string_agg((f ->> 'quantity') || 'x ' || (f ->> 'name'), ', ' order by f ->> 'name') from jsonb_array_elements(i.ice_flavors) f) || ']' else '' end, ' | ' order by i.created_at, i.product_name) from order_items i where i.order_id = o.id) as items,
               (select name from tz) as tz
          from orders o
         where o.created_at >= (($1::date)::timestamp at time zone (select name from tz))

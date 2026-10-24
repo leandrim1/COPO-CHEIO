@@ -27,11 +27,13 @@ import type { CustomerPage } from './site/CustomerPages';
 import { ShopProvider, fullAddress, instagramHandle, storeWhatsappUrl, useShop } from './site/data';
 import type { Product } from './site/data';
 import { EnergeticSwapProvider } from './site/EnergeticSwap';
+import { FlavorPickerProvider } from './site/FlavorChoice';
 import { IcePickerProvider } from './site/IceChoice';
 import { AccountLink } from './site/AccountLink';
 import { AgeGate } from './site/AgeGate';
 import { AnalyticsConsent } from './site/AnalyticsConsent';
 import { OpenStatus, StoreInfoButton } from './site/StoreInfo';
+import { useFlavorPicker } from './site/flavorPicker';
 import { useIcePicker } from './site/icePicker';
 import {
   AddNotice,
@@ -897,6 +899,9 @@ function BebidasPage() {
     [announce, setTotal],
   );
   const picker = useIcePicker();
+  const flavorPicker = useFlavorPicker();
+  // O botão "Adicionar" de quem precisa de uma escolha antes: o gelo (copões) ou os gelos saborizados (combos com gelos). Os demais adicionam direto.
+  const pickerFor = (product: Product) => (product.iceRequired ? picker.pick : product.comboIces > 0 ? flavorPicker.pick : undefined);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState('');
   const chipsRef = useRef<HTMLDivElement>(null);
@@ -1176,7 +1181,7 @@ function BebidasPage() {
                     product={product}
                     qty={countOf(product.id)}
                     onChange={changeQty}
-                    onPick={product.iceRequired ? picker.pick : undefined}
+                    onPick={pickerFor(product)}
                     className="w-[62%] shrink-0 snap-start sm:w-[44%] lg:w-72 xl:w-80"
                   />
                 ))}
@@ -1197,7 +1202,7 @@ function BebidasPage() {
                     product={product}
                     qty={countOf(product.id)}
                     onChange={changeQty}
-                    onPick={product.iceRequired ? picker.pick : undefined}
+                    onPick={pickerFor(product)}
                   />
                 ))}
               </ul>
@@ -2072,35 +2077,37 @@ function PublicSite({ pathname }: { pathname: string }) {
 
   return (
     <IcePickerProvider>
-      <EnergeticSwapProvider>
-        <style>
-          {MOTION_STYLES}
-          {VIEWPORT_STYLES}
-        </style>
-        {/* Venda proibida para menores de 18 anos: a pergunta de maioridade aparece só onde se vê e se compra bebida (/, /bebidas e /checkout). */}
-        <AgeGate page={page.name} />
-        {/* Medição de visitas: só existe se a loja ligou (GA_MEASUREMENT_ID); pergunta uma vez e só mede depois do "Aceitar". */}
-        <AnalyticsConsent page={page.name} pathname={pathname} enabled={page.name !== 'notfound'} />
-        {page.name === 'bebidas' && <BebidasPage />}
-        {page.name === 'checkout' && (
-          <Suspense fallback={<CustomerLoading />}>
-            <CheckoutPage />
-          </Suspense>
-        )}
-        {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
-        {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
-          <Suspense fallback={<CustomerLoading />}>
-            <CustomerPages page={page} />
-          </Suspense>
-        )}
-        {showOrder && (
-          <>
-            {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
-            <AddNotice notice={orderOpen ? null : cart.notice} onClose={cart.dismissNotice} />
-            <OrderDrawer open={orderOpen} onClose={closeOrder} />
-          </>
-        )}
-      </EnergeticSwapProvider>
+      <FlavorPickerProvider>
+        <EnergeticSwapProvider>
+          <style>
+            {MOTION_STYLES}
+            {VIEWPORT_STYLES}
+          </style>
+          {/* Venda proibida para menores de 18 anos: a pergunta de maioridade aparece só onde se vê e se compra bebida (/, /bebidas e /checkout). */}
+          <AgeGate page={page.name} />
+          {/* Medição de visitas: só existe se a loja ligou (GA_MEASUREMENT_ID); pergunta uma vez e só mede depois do "Aceitar". */}
+          <AnalyticsConsent page={page.name} pathname={pathname} enabled={page.name !== 'notfound'} />
+          {page.name === 'bebidas' && <BebidasPage />}
+          {page.name === 'checkout' && (
+            <Suspense fallback={<CustomerLoading />}>
+              <CheckoutPage />
+            </Suspense>
+          )}
+          {page.name === 'home' && <HomePage count={count} onOrder={startOrder} />}
+          {page.name !== 'home' && page.name !== 'bebidas' && page.name !== 'checkout' && (
+            <Suspense fallback={<CustomerLoading />}>
+              <CustomerPages page={page} />
+            </Suspense>
+          )}
+          {showOrder && (
+            <>
+              {page.name === 'bebidas' && <OrderBar show={count > 0 && !orderOpen} count={count} total={total} onOpen={openOrder} corner />}
+              <AddNotice notice={orderOpen ? null : cart.notice} onClose={cart.dismissNotice} />
+              <OrderDrawer open={orderOpen} onClose={closeOrder} />
+            </>
+          )}
+        </EnergeticSwapProvider>
+      </FlavorPickerProvider>
     </IcePickerProvider>
   );
 }

@@ -331,17 +331,23 @@ agendador, então com o site parado ela só roda quando houver movimento.
    em *Minha conta → Meus pontos* ele troca os pontos por um **cupom pessoal** de valor fixo (uso único, só da conta dele, no campo de cupom do checkout). Acerto manual (dar ou tirar pontos, sempre com motivo, no registro de atividades) em *Fidelidade*. **Antes de ligar:** o texto do programa
    e a regra de resgate precisam de validação jurídica/fiscal ([`JURIDICO-PENDENCIAS.md`](JURIDICO-PENDENCIAS.md)). Desligar não apaga saldos (ficam guardados); excluir a conta do cliente apaga os pontos e os cupons dele.
 
+30. Depois da migration 0037 (**escolha dos gelos saborizados dos combos**): o cliente que adiciona um combo que traz gelos escolhe os sabores (exatamente a quantidade do combo, em geral 4) entre os produtos que a loja marcou como **gelo saborizado**. **Nada é uma lista fixa do site**: a fonte é o cadastro de produtos.
+   **Confira em *Produtos* logo depois do deploy** (a migration só faz um ponto de partida): (a) os gelos saborizados precisam ter o selo **Gelo saborizado** (filtro "Gelos saborizados"); a migration marcou os produtos cujo nome começa com "Gelo" (ou que estão numa categoria de gelo) e que não são tradicionais, em kg ou de barra: desmarque o que não serve e marque o que faltou (cartão "Gelo" do produto → *Este produto é um gelo saborizado*); (b) os combos precisam ter o selo **Combo com 4 gelos** (filtro "Combos com gelos"); a migration pôs 4 nos combos da categoria "Combos" cujo nome ou descrição cita "4 gelos": ajuste o número em *Gelos saborizados que vêm neste combo* (0 = o combo não pede a escolha). Só entra na escolha quem estiver **ativo** e **fora de esgotado**; esgotado aparece, mas não se escolhe.
+   O preço do combo **não muda**. Os gelos escolhidos saem do **estoque** do próprio produto (quando ele controla estoque) e voltam se o pedido for cancelado. Os sabores ficam na linha do pedido (`order_items.ice_flavors`) e aparecem no carrinho, no checkout, no acompanhamento, em *Minha conta*, no pedido do painel, no recibo, no CSV e no WhatsApp; **não vão para as observações**. Cada unidade do combo é uma linha com a SUA escolha.
+   **Se não houver nenhum gelo saborizado disponível, os combos com gelos não podem ser comprados** (a escolha exige a quantidade exata): por isso o ponto de partida só põe a quantidade nos combos se existir ao menos um gelo saborizado cadastrado.
+   **Rollback do código**: a versão anterior do site não envia os sabores, então depois da 0037 ela não consegue fechar pedido de combo com gelos (o servidor responde `ice_flavors_required`). Saída de emergência: no Neon, `update products set combo_ice_count = 0;` (desliga a escolha em todos os combos; refaça no painel depois). Uma aba aberta de antes do deploy só passa a perguntar os sabores depois de recarregar.
+
 ### Roteiro de implantação segura (esta versão, migrations 0027 a 0035)
 
 Nada abaixo foi feito pelo desenvolvimento: **o deploy e o uso de credenciais de produção são seus**. Ordem recomendada:
 
 1. **Backup lógico antes de tudo** (seção 5) e anote o ponto no tempo do Neon.
 2. **Teste num ambiente separado primeiro**: crie um *branch* do Neon (cópia do banco de produção), aponte o ambiente *Preview* da Vercel para ele (seção 2 deste guia: `DATABASE_URL` só no ambiente Preview) e faça um deploy de preview com `MIGRATE_ON_PREVIEW=1`.
-   Confira que as 10 migrations (0027 a 0036) aplicam sem erro e que o site de preview abre, cardápio e pedido de teste funcionam.
+   Confira que as 11 migrations (0027 a 0037) aplicam sem erro e que o site de preview abre, cardápio e pedido de teste funcionam.
 3. **Variáveis de produção**: `CRON_SECRET` (obrigatória para os crons), `SITE_URL` (recomendada), `GA_MEASUREMENT_ID` (opcional).
 4. **Atenção ao rollback**: depois da 0027 o código **antigo** não fecha pedido com bebida alcoólica (item 17). Se precisar voltar o código, siga a saída de emergência do item 17.
 5. **Deploy de produção** (`git push` no branch de produção): a Vercel aplica as migrations **antes** do build; se uma falhar, o site antigo continua no ar.
-6. **Depois do deploy**: percorra os itens 15 a 29 acima (principalmente 17: marcar o que **não** é bebida alcoólica) e o checklist da seção 8.
+6. **Depois do deploy**: percorra os itens 15 a 30 acima (principalmente 17: marcar o que **não** é bebida alcoólica) e o checklist da seção 8.
 7. **Pagamento pelo site**: não existe (retirado). Se quiser oferecê-lo no futuro, será um projeto novo, com orçamento e teste em sandbox antes de qualquer cobrança real.
 
 ## 9. O que este guia não cobre

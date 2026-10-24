@@ -92,7 +92,10 @@ export function orderWhatsappMessage(store: StoreSettings, order: PublicOrder, l
     order.customer_name,
     '',
     'Itens:',
-    ...order.items.map((item) => `${item.quantity}x ${item.product_name}${item.ice_choice ? ` – ${iceLabel(item.ice_choice)}` : ''}`),
+    ...order.items.flatMap((item) => [
+      `${item.quantity}x ${item.product_name}${item.ice_choice ? ` – ${iceLabel(item.ice_choice)}` : ''}`,
+      ...(item.ice_flavors?.length ? [`   ${item.ice_flavors.reduce((n, f) => n + f.quantity, 0)} gelos saborizados${item.quantity > 1 ? ' (por combo)' : ''}: ${item.ice_flavors.map((f) => `${f.quantity} × ${f.name}`).join(', ')}`] : []),
+    ]),
     '',
     'Total:',
     money(order.total),
@@ -568,6 +571,18 @@ export function OrderView({
                         {ICE_INFO[item.ice_choice].label}
                       </span>
                     )}
+                    {item.ice_flavors?.length ? (
+                      <span data-ice-flavors="" className="mt-1 block text-xs font-semibold text-[#CFE0FF]">
+                        <span className="block text-white/70">
+                          {item.ice_flavors.reduce((n, f) => n + f.quantity, 0)} gelos saborizados{item.quantity > 1 ? ' (por combo)' : ''}:
+                        </span>
+                        {item.ice_flavors.map((f) => (
+                          <span key={f.name} data-ice-flavor={f.name} className="block">
+                            <span className="tabular-nums">{f.quantity} ×</span> {f.name}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
                   </span>
                   <span className="tabular-nums text-white/75">{money(item.total_price)}</span>
                 </li>

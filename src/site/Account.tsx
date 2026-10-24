@@ -4,6 +4,7 @@ import type { FormEvent } from 'react';
 import { ApiError, api, friendlyError } from '../lib/api';
 import { fetchCep, maskCep } from '../lib/cep';
 import { swapStillValid } from '../lib/combo';
+import { sumPicks } from '../lib/flavors';
 import { maskPhone, onlyDigits } from '../lib/format';
 import { isIceChoice } from '../lib/ice';
 import { navigate } from '../lib/router';
@@ -1213,7 +1214,7 @@ export function MyOrderPage({ number }: { number: string }) {
       throw err;
     }
   });
-  const [again, setAgain] = useState<{ added: number; missing: string[]; swapLost: string[] } | null>(null);
+  const [again, setAgain] = useState<{ added: number; missing: string[]; swapLost: string[]; flavorsLost: string[] } | null>(null);
 
   if (status !== 'in' || feed.state === 'loading') {
     return (
@@ -1241,12 +1242,28 @@ export function MyOrderPage({ number }: { number: string }) {
   const orderAgain = () => {
     const missing: string[] = [];
     const swapLost: string[] = [];
+    const flavorsLost: string[] = [];
     let added = 0;
     for (const item of order.items) {
       const product = products.find((p) => p.id === item.product_id);
       if (!product || product.soldOut) {
         missing.push(item.product_name);
         continue;
+      }
+      // Combo com gelos saborizados: cada unidade volta com os MESMOS sabores se todos ainda existem, estão à venda e somam o que o combo traz; senão entra o combo
+      // sem escolha e o checkout pede os sabores de novo.
+      if (product.comboIces > 0 && item.ice_flavors?.length) {
+        const picks = item.ice_flavors.map((f) => ({ id: f.product_id ?? '', qty: f.quantity }));
+        const flavorsOk = sumPicks(picks) === product.comboIces && picks.every((pick) => products.some((p) => p.id === pick.id && p.flavoredIce && !p.soldOut));
+        if (flavorsOk) {
+          const swapBack = item.swap_to_product_id ? products.find((p) => p.id === item.swap_to_product_id) : undefined;
+          const swapOk = Boolean(swapBack && !swapBack.soldOut && swapStillValid(products, product.id, swapBack.id));
+          if (item.swap_to_product_id && !swapOk) swapLost.push(product.name);
+          for (let unit = 0; unit < item.quantity; unit += 1) cart.addFlavored(product, picks, swapOk && swapBack ? swapBack.id : null);
+          added += 1;
+          continue;
+        }
+        flavorsLost.push(product.name);
       }
       // Combo com o energético trocado: volta com a troca se ela ainda vale; senão entra o combo normal e a pessoa é avisada.
       if (item.swap_to_product_id) {
@@ -1262,8 +1279,8 @@ export function MyOrderPage({ number }: { number: string }) {
       cart.add(product, isIceChoice(item.ice_choice) ? item.ice_choice : null, item.quantity);
       added += 1;
     }
-    if (!missing.length && !swapLost.length && added) navigate('/checkout');
-    else setAgain({ added, missing, swapLost });
+    if (!missing.length && !swapLost.length && !flavorsLost.length && added) navigate('/checkout');
+    else setAgain({ added, missing, swapLost, flavorsLost });
   };
 
   return (
@@ -1280,6 +1297,7 @@ export function MyOrderPage({ number }: { number: string }) {
           {again && (
             <div role="status" className="mt-4 space-y-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
               {again.missing.length > 0 && <p>Estes itens não estão mais disponíveis: {again.missing.join(', ')}.</p>}
+              {again.flavorsLost.length > 0 && <p>Algum sabor de gelo não está mais disponível em: {again.flavorsLost.join(', ')}. O combo entrou no pedido sem os gelos: escolha os sabores de novo antes de finalizar.</p>}
               {again.swapLost.length > 0 && <p>A troca de energético não está mais disponível em: {again.swapLost.join(', ')}. O combo entrou com o energético original.</p>}
               {again.added > 0 ? (
                 <>

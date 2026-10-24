@@ -6,6 +6,7 @@ import { ApiError, api, friendlyError } from '../lib/api';
 import { trackOnce } from '../lib/analytics';
 import { PAYMENT_LABEL, maskPhone, money, onlyDigits, parseMoney } from '../lib/format';
 import { nextOpening } from '../lib/hours';
+import { FLAVORS_REQUIRED_MESSAGE, picksToPayload, picksToken } from '../lib/flavors';
 import { ICE_REQUIRED_MESSAGE } from '../lib/ice';
 import { seedOrder } from '../lib/orderCache';
 import { rememberOrder } from '../lib/recent';
@@ -15,7 +16,8 @@ import { AGE_TEXT_VERSION } from './AgeGate';
 import { ScheduleChoice } from './ScheduleChoice';
 import type { ScheduleValue } from './ScheduleChoice';
 import { useCustomer } from './customer';
-import { acceptedPayments, fullAddress, useShop } from './data';
+import { acceptedPayments, fullAddress, incompleteMessage, useShop } from './data';
+import { useFlavorPicker } from './flavorPicker';
 import { Field, PageShell } from './shell';
 import { EMAIL_INPUT } from './accountUi';
 import { BLUE_BUTTON, CartLineItem, FIELD, Price } from './ui';
@@ -150,12 +152,13 @@ type PriceChangedBody = {
   total?: number | string;
   delivery_fee?: number | string;
   discount?: number | string;
-  items?: { product_id: string; name: string; quantity: number; unit_price: number | string; ice_choice?: string | null; swap_to?: string | null }[];
+  items?: { product_id: string; name: string; quantity: number; unit_price: number | string; ice_choice?: string | null; swap_to?: string | null; ice_flavors?: { product_id: string; quantity: number }[] | null }[];
 };
 
 export function CheckoutPage() {
   const { store, zones, payments, cart, isOpen, fresh, offline, refresh } = useShop();
   const { lines, total: subtotal, setQty, clear, unavailable, incomplete } = cart;
+  const flavorPicker = useFlavorPicker();
   const [form, setForm] = useState<Customer>(() => {
     const saved = loadCustomer();
     return {
@@ -328,7 +331,7 @@ export function CheckoutPage() {
 
   // O aviso "escolha o gelo" some sozinho quando todos os itens já têm a escolha.
   useEffect(() => {
-    if (incomplete.length === 0) setSubmitError((current) => (current === ICE_REQUIRED_MESSAGE ? '' : current));
+    if (incomplete.length === 0) setSubmitError((current) => (current === ICE_REQUIRED_MESSAGE || current === FLAVORS_REQUIRED_MESSAGE ? '' : current));
   }, [incomplete.length]);
 
   useEffect(() => {
@@ -415,9 +418,9 @@ export function CheckoutPage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitError('');
-    // Falta escolher o gelo de algum item: nada é enviado; a mensagem aparece junto do botão e o foco vai para o item.
+    // Falta escolher o gelo (ou os gelos saborizados do combo) de algum item: nada é enviado; a mensagem aparece junto do botão e o foco vai para o item.
     if (incomplete.length > 0) {
-      setSubmitError(ICE_REQUIRED_MESSAGE);
+      setSubmitError(incompleteMessage(incomplete));
       requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-line="${incomplete[0].key}"] [data-ice-pending]`)?.focus());
       return;
     }
@@ -472,6 +475,8 @@ export function CheckoutPage() {
         quantity: line.qty,
         ...(line.product.iceRequired ? { ice_choice: line.ice } : {}),
         ...(line.swap ? { swap_to: line.swap.id } : {}),
+        // Combo com gelos saborizados: os sabores desta unidade do combo (o banco confere que são gelos saborizados cadastrados, disponíveis, na quantidade do combo).
+        ...(line.product.comboIces > 0 && line.flavors ? { ice_flavors: picksToPayload(line.flavors) } : {}),
       })),
     };
     // O total que a pessoa está vendo (ou o novo total que ela acabou de aceitar), em centavos para não errar na soma.
@@ -492,11 +497,15 @@ export function CheckoutPage() {
         // Nada foi enviado: o valor mudou (preço, promoção ou taxa) e a pessoa precisa ver o novo total antes de confirmar.
         const body = error.data as PriceChangedBody;
         // Uma linha é produto + gelo + energético trocado: o preço novo de cada uma vem do servidor, linha a linha.
-        const keyOf = (productId: string, ice: string | null | undefined, swapTo: string | null | undefined) => `${productId}|${ice ?? ''}|${swapTo ?? ''}`;
-        const byLine = new Map((body.items ?? []).map((item) => [keyOf(item.product_id, item.ice_choice, item.swap_to), Number(item.unit_price)]));
+        // (num combo com gelos saborizados, as linhas com sabores diferentes também são linhas diferentes.)
+        const keyOf = (productId: string, ice: string | null | undefined, swapTo: string | null | undefined, flavors: string) => `${productId}|${ice ?? ''}|${swapTo ?? ''}|${flavors}`;
+        const byLine = new Map(
+          (body.items ?? []).map((item) => [keyOf(item.product_id, item.ice_choice, item.swap_to, picksToken((item.ice_flavors ?? []).map((f) => ({ id: f.product_id, qty: f.quantity })))), Number(item.unit_price)]),
+        );
+        const lineKeyOf = (line: (typeof lines)[number]) => keyOf(line.product.id, line.ice, line.swap?.id, picksToken(line.flavors ?? []));
         const changes = lines
-          .filter((line) => byLine.has(keyOf(line.product.id, line.ice, line.swap?.id)) && Math.abs((byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0) - line.unit) >= 0.005)
-          .map((line) => `${line.product.name}${line.swap ? ` (com ${line.swap.name})` : ''}: ${money(line.unit)} → ${money(byLine.get(keyOf(line.product.id, line.ice, line.swap?.id)) ?? 0)}`);
+          .filter((line) => byLine.has(lineKeyOf(line)) && Math.abs((byLine.get(lineKeyOf(line)) ?? 0) - line.unit) >= 0.005)
+          .map((line) => `${line.product.name}${line.swap ? ` (com ${line.swap.name})` : ''}: ${money(line.unit)} → ${money(byLine.get(lineKeyOf(line)) ?? 0)}`);
         if (body.delivery_fee !== undefined && Math.abs(Number(body.delivery_fee) - (fee ?? 0)) >= 0.005) changes.push(`Taxa de entrega: ${money(fee ?? 0)} → ${money(Number(body.delivery_fee))}`);
         if (body.discount !== undefined && Math.abs(Number(body.discount) - discountCents / 100) >= 0.005) changes.push(`Desconto do cupom: ${money(discountCents / 100)} → ${money(Number(body.discount))}`);
         setPriceNotice({ previous: seenTotal, current: Number(body.total), changes });
@@ -513,6 +522,13 @@ export function CheckoutPage() {
         return;
       }
       setSubmitError(friendlyError(error, 'Não foi possível enviar o pedido. Tente de novo em instantes.'));
+      // Um sabor de gelo deixou de estar disponível (ou o combo veio sem os gelos): abre a escolha daquele combo para a pessoa escolher de novo.
+      if (error instanceof ApiError && (error.code === 'flavor_unavailable' || error.code === 'ice_flavors_required')) {
+        const data = error.data as { product_id?: string; products?: { product_id: string }[] } | null;
+        const comboId = data?.product_id ?? data?.products?.[0]?.product_id;
+        const target = lines.find((line) => line.product.id === comboId && line.product.comboIces > 0);
+        if (target) window.setTimeout(() => flavorPicker.edit(target), 0);
+      }
       // Se o pedido era agendado, a faixa pode ter acabado de lotar: busca as faixas de novo.
       if (schedule.mode === 'later') setScheduleKey((k) => k + 1);
       // Se havia um cupom, confere de novo: ele pode ter acabado de vencer ou de esgotar.

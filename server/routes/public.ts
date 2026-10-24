@@ -31,6 +31,8 @@ export function registerPublic(r: Router) {
                 p.ice_choice_required,
                 -- alcoholic: bebida alcoólica (o pedido com ela exige a declaração de maioridade; o banco confere de novo em create_order).
                 p.alcoholic,
+                -- flavored_ice: o produto é um gelo saborizado (pode ser escolhido nos combos). combo_ice_count: quantos gelos saborizados vêm neste combo (0 = nenhum).
+                p.flavored_ice, p.combo_ice_count,
                 array(select o.option_id from product_swap_options o where o.product_id = p.id order by o.option_id) as swap_option_ids
            from products p
            left join categories c on c.id = p.category_id

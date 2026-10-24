@@ -175,6 +175,21 @@ produto e envie a foto.
     diferente). Preço, frete, total e pagamento não mudam por causa do gelo.
   - *Onde aparece*: gaveta do pedido, checkout, página do pedido e de acompanhamento, mensagem de WhatsApp para a loja, "Meus pedidos"
     (resumo), pedido no painel e recibo impresso. O ranking de mais vendidos do dashboard soma os dois gelos do mesmo produto.
+- **Gelos saborizados dos combos** (migration `0037`): em um combo que traz gelos, o botão **Adicionar** abre "**Escolha os 4 gelos saborizados**" (a quantidade vem do
+  combo): "Escolha os sabores dos 4 gelos que acompanham seu combo.", um cartão por sabor (foto, nome, −/quantidade/+), o contador **"Gelos selecionados: X de 4"**,
+  **Cancelar** e **Confirmar sabores e adicionar ao carrinho** (desabilitado até somar exatamente 4; uma quinta unidade não entra; repetir o mesmo sabor vale).
+  - **Os sabores vêm do cadastro, nunca de uma lista fixa**: só os produtos marcados no painel como **gelo saborizado** (*Produtos → cartão "Gelo" → Este produto é um gelo saborizado*),
+    ativos; o esgotado aparece marcado e não se escolhe; o gelo tradicional e os demais produtos não entram. Mudou o cadastro, mudou a escolha, sem mexer no código. O combo diz quantos
+    gelos traz em *Gelos saborizados que vêm neste combo* (0 = não pede a escolha; combos sem gelos seguem direto). Um gelo saborizado não pode trazer gelos, e o combo com gelos não usa a
+    escolha "gelo normal / de sabor" dos copões.
+  - **Cada unidade do combo é uma linha com a SUA escolha**: duas unidades com sabores diferentes ficam separadas; o "+" na gaveta do pedido abre a escolha de uma unidade nova (nunca copia a
+    de outra) e **Alterar sabores** reabre a escolha daquela unidade, já preenchida. A troca do energético continua valendo por unidade. O **preço do combo não muda** por causa dos gelos.
+  - **O banco confere** (`create_order`), não o navegador: exatamente N unidades por combo, só de produtos cadastrados como gelo saborizado, ativos, com categoria ativa, fora de esgotado e com
+    estoque (o gelo escolhido sai do estoque, quando controlado, e volta ao cancelar). Sabor que esgotou antes de finalizar: o checkout avisa, não envia e reabre a escolha (`flavor_unavailable`);
+    combo sem a escolha completa é recusado (`ice_flavors_required`). Os sabores ficam em `order_items.ice_flavors` (nome da hora do pedido + quantidade, por combo) e entram na chave de
+    idempotência; não usam o campo de observações.
+  - *Onde aparece*: gaveta do pedido, checkout, página do pedido e acompanhamento, mensagem de WhatsApp, "Meus pedidos" (resumo e **pedir de novo**, que repete os mesmos sabores se ainda
+    existirem), pedido no painel, recibo impresso, CSV de pedidos e e-mails do pedido.
 - **WhatsApp**: só depois que o pedido está salvo, a página do pedido mostra o botão com a mensagem pronta para o número
   configurado no painel. O número da loja já vem preenchido — (34) 9244-1191, pela migration `0026_store_whatsapp_novo.sql`
   (que troca o número da `0008_store_whatsapp.sql`, (34) 99128-3384, só onde ele ainda é esse: número que a loja já mudou, ou campo
@@ -836,6 +851,7 @@ A migration `0027_age_and_customer_cancel.sql` acrescentou `products.alcoholic` 
 (entregar pedido com bebida alcoólica exige `age_checked`). **Exceção ao rollback**: a versão anterior do site não envia a declaração, então depois da 0027 ela não consegue fechar pedido com
 bebida alcoólica (veja `docs/OPERACAO.md`, item 17). A `0028_payment_refunds.sql` só acrescenta a tabela `payment_refunds` e duas funções (devolução de pagamento online; sem uso desde a 0036).
 A `0036_remove_online_payments.sql` **só desliga** as formas `pix_online` e `card_online` que estivessem ligadas (idempotente) e **não apaga nada**: as tabelas, colunas e funções da integração de pagamento online ficam no banco, sem uso. Voltar o código para a versão anterior não exige desfazer nada.
+A `0037_combo_ice_flavors.sql` acrescenta `products.flavored_ice` e `products.combo_ice_count` (restrições: um gelo saborizado não traz gelos, e combo com gelos não pede a escolha "gelo normal/de sabor"), `order_items.ice_flavors` (jsonb) e troca `create_order`, `restore_order_stock` e `order_json` (os sabores vão no pedido e voltam ao estoque ao cancelar). No fim faz um **ponto de partida, uma única vez**: marca gelos saborizados pelo nome e põe 4 nos combos que citam "4 gelos" (só se existir ao menos um gelo saborizado). A loja confere no painel (`docs/OPERACAO.md`, item 30). **Exceção ao rollback**: o site anterior não envia os sabores e não fecha pedido de combo com gelos.
 A `0029_coupons_free_delivery.sql` acrescenta cupons e a entrega grátis por valor (desligada); a `0030_scheduling.sql`, o agendamento (desligado), os dias especiais e `orders.scheduled_for`; a `0031_customer_addresses.sql`, os endereços extras
 da conta (até 4, trava no banco); a `0032_stock_alert.sql`, o limite de estoque baixo (padrão 5, o mesmo de antes); a `0033_legal_pages.sql`, as cinco páginas de termos e políticas com o texto padrão; a `0034_couriers_reviews_jobs.sql`, os
 entregadores, as avaliações e o registro da rotina automática; a `0035_loyalty.sql`, o programa de pontos (desligado e sem valores: colunas em `store_settings`, o extrato `loyalty_ledger` só de acréscimo, `coupons.customer_id` para o cupom pessoal e o gatilho que credita/estorna). **Todas só acrescentam** (tabelas, colunas com padrão que não muda nenhum pedido e funções; `create_order` e `order_json` são trocadas por versões iguais para tudo o que já existia);

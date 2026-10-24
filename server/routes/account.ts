@@ -78,7 +78,9 @@ const ORDER_LIST = `
   select o.order_number, o.order_status, o.payment_status, o.payment_method, o.delivery_type, o.total, o.created_at, o.updated_at,
          (select string_agg(
                    i.quantity || 'x ' || i.product_name
-                     || case i.ice_choice when 'normal' then ' (gelo normal)' when 'flavored' then ' (gelo de sabor)' else '' end,
+                     || case i.ice_choice when 'normal' then ' (gelo normal)' when 'flavored' then ' (gelo de sabor)' else '' end
+                     -- Combos com gelos saborizados: os sabores escolhidos, no resumo do pedido.
+                     || case when i.ice_flavors is not null then ' [gelos: ' || (select string_agg((f ->> 'quantity') || 'x ' || (f ->> 'name'), ', ' order by f ->> 'name') from jsonb_array_elements(i.ice_flavors) f) || ']' else '' end,
                    ', ' order by i.created_at, i.product_name, i.ice_choice nulls first)
             from order_items i where i.order_id = o.id) as summary
     from orders o`;

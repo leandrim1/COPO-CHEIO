@@ -69,8 +69,8 @@ async function renderOrder(kind: OrderKind, to: string, spec: Record<string, unk
   const stage = STAGE[o.order_status] ?? 0;
   const limit = OBSOLETE_AT[kind];
   if ((limit !== undefined && stage >= limit) || (o.order_status === 'cancelled' && kind !== 'order_cancelled' && kind !== 'payment_refunded')) return null;
-  const items = await query<{ quantity: number; product_name: string; total_price: number; ice_choice: string | null }>(
-    'select quantity, product_name, total_price, ice_choice from order_items where order_id = $1 order by created_at, product_name, ice_choice nulls first',
+  const items = await query<{ quantity: number; product_name: string; total_price: number; ice_choice: string | null; ice_flavors: { name: string; quantity: number }[] | null }>(
+    'select quantity, product_name, total_price, ice_choice, ice_flavors from order_items where order_id = $1 order by created_at, product_name, ice_choice nulls first',
     [orderId],
   );
   const prefs = await ensurePreferences(to);
@@ -81,7 +81,10 @@ async function renderOrder(kind: OrderKind, to: string, spec: Record<string, unk
     number: o.order_number,
     lines: items.map((i) => ({
       qty: i.quantity,
-      name: `${i.product_name}${i.ice_choice === 'normal' ? ' (gelo normal)' : i.ice_choice === 'flavored' ? ' (gelo de sabor)' : ''}`,
+      // Combo com gelos saborizados: os sabores escolhidos vão no nome da linha ("— gelos: 2 × Morango, 1 × Limão").
+      name: `${i.product_name}${i.ice_choice === 'normal' ? ' (gelo normal)' : i.ice_choice === 'flavored' ? ' (gelo de sabor)' : ''}${
+        i.ice_flavors?.length ? ` — gelos: ${i.ice_flavors.map((f) => `${f.quantity} × ${f.name}`).join(', ')}` : ''
+      }`,
       total: Number(i.total_price),
     })),
     subtotal: Number(o.subtotal),

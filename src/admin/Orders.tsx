@@ -707,6 +707,20 @@ export function OrderDetailPage({ number }: { number: string }) {
                         {ICE_INFO[item.ice_choice].label}
                       </p>
                     )}
+                    {item.ice_flavors?.length ? (
+                      <div data-ice-flavors="" className="mt-1 text-xs font-semibold text-[#CFE0FF]">
+                        <p className="text-white/70">
+                          {item.ice_flavors.reduce((n, f) => n + f.quantity, 0)} gelos saborizados{item.quantity > 1 ? ' (por combo)' : ''}:
+                        </p>
+                        <ul>
+                          {item.ice_flavors.map((f) => (
+                            <li key={f.name} data-ice-flavor={f.name}>
+                              <span className="tabular-nums">{f.quantity} ×</span> {f.name}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                     <p className="text-xs text-white/60">{money(Number(item.unit_price))} cada</p>
                   </div>
                   <p className="shrink-0 font-bold tabular-nums text-white">{money(Number(item.total_price))}</p>
@@ -901,13 +915,20 @@ export function OrderDetailPage({ number }: { number: string }) {
         {order.delivery_type === 'delivery' && address.map((line) => <p key={line}>{line}</p>)}
         <hr className="my-2 border-black" />
         {items.map((item) => (
-          <p key={item.id} className="flex justify-between gap-2">
-            <span>
-              {item.quantity}x {item.product_name}
-              {isIceChoice(item.ice_choice) ? ` (${iceLabel(item.ice_choice)})` : ''}
-            </span>
-            <span>{money(Number(item.total_price))}</span>
-          </p>
+          <div key={item.id}>
+            <p className="flex justify-between gap-2">
+              <span>
+                {item.quantity}x {item.product_name}
+                {isIceChoice(item.ice_choice) ? ` (${iceLabel(item.ice_choice)})` : ''}
+              </span>
+              <span>{money(Number(item.total_price))}</span>
+            </p>
+            {item.ice_flavors?.length ? (
+              <p className="pl-3 text-[11px]">
+                {item.ice_flavors.reduce((n, f) => n + f.quantity, 0)} gelos{item.quantity > 1 ? ' (por combo)' : ''}: {item.ice_flavors.map((f) => `${f.quantity} × ${f.name}`).join(', ')}
+              </p>
+            ) : null}
+          </div>
         ))}
         <hr className="my-2 border-black" />
         <p className="flex justify-between">

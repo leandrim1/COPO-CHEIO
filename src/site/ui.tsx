@@ -7,6 +7,7 @@ import { ICE_INFO, iceLabel } from '../lib/ice';
 import { instagramHandle, unitPrice, useShop } from './data';
 import type { CartLine, Product } from './data';
 import { useEnergeticSwap } from './energeticSwapContext';
+import { useFlavorPicker } from './flavorPicker';
 import { useIcePicker } from './icePicker';
 
 // Peças visuais usadas em mais de uma página do site.
@@ -254,10 +255,15 @@ export const FIELD =
 
 // Uma linha do pedido (produto + gelo, ou combo + energético trocado). `setQty` recebe a chave da linha (o id do produto, id:gelo ou id@energético).
 export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: string, qty: number) => void }) {
-  const { product, qty, key, ice, needsIce, swap: swapTo, unit } = line;
+  const { product, qty, key, ice, needsIce, swap: swapTo, unit, flavors, needsFlavors, flavorIssue } = line;
   const picker = useIcePicker();
+  const flavorPicker = useFlavorPicker();
   const swapper = useEnergeticSwap();
-  const { cart } = useShop();
+  const { cart, products } = useShop();
+  // Combo com gelos saborizados: cada unidade é uma linha com os SEUS sabores. Aumentar abre a escolha de uma nova unidade (nunca copia os sabores de outra) e diminuir tira esta.
+  const withFlavors = product.comboIces > 0;
+  const perUnit = withFlavors && flavors !== null;
+  const needsChoice = needsIce || needsFlavors || flavorIssue !== null;
   // Nome para quem usa leitor de tela: a mesma bebida com gelos ou energéticos diferentes são linhas diferentes.
   const name = swapTo ? `${product.name}, com ${swapTo.name}` : ice ? `${product.name}, ${iceLabel(ice).toLowerCase()}` : product.name;
   const askIce = product.iceRequired && !product.soldOut;
@@ -265,7 +271,7 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
   const soldOut = product.soldOut || swapTo?.soldOut === true;
   const extra = swapTo ? unit - unitPrice(product) : 0;
   return (
-    <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsIce ? 'border-amber-400/50' : 'border-white/10'}`}>
+    <li data-line={key} className={`rounded-2xl border bg-white/5 p-2.5 ${needsChoice ? 'border-amber-400/50' : 'border-white/10'}`}>
       <div className="flex items-center gap-3">
         <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[radial-gradient(circle_at_50%_60%,rgba(37,99,255,0.4),transparent_75%)]">
           <ProductImage product={product} padding="p-1" />
@@ -294,15 +300,57 @@ export function CartLineItem({ line, setQty }: { line: CartLine; setQty: (key: s
           </span>
           <button
             type="button"
-            onClick={() => setQty(key, qty + 1)}
+            onClick={() => (perUnit ? flavorPicker.pick(product) : setQty(key, qty + 1))}
             disabled={product.soldOut}
-            aria-label={`Aumentar ${name}`}
+            aria-label={perUnit ? `Adicionar outro ${product.name}, escolhendo os gelos` : `Aumentar ${name}`}
             className="tap grid h-9 w-9 place-items-center rounded-full text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-30"
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
       </div>
+      {/* Os gelos saborizados desta unidade do combo (a escolha vem do cadastro de produtos; o preço do combo não muda). */}
+      {withFlavors && (
+        <div data-flavors-box="" className="mt-2 pl-[4.75rem]">
+          {flavors ? (
+            <>
+              <p className="text-xs font-bold text-white/80">{product.comboIces} gelos saborizados:</p>
+              <ul data-flavor-lines="" className="mt-1 space-y-0.5">
+                {flavors.map((f) => (
+                  <li key={f.id} data-flavor-line={f.id} className="text-xs font-semibold text-[#CFE0FF]">
+                    <span className="tabular-nums">{f.qty} ×</span> {products.find((p) => p.id === f.id)?.name ?? 'Sabor indisponível'}
+                  </li>
+                ))}
+              </ul>
+              {flavorIssue && (
+                <p role="alert" className="mt-1 text-xs font-bold text-rose-300">
+                  {flavorIssue}. Escolha os gelos de novo.
+                </p>
+              )}
+              <button
+                type="button"
+                data-flavors-change=""
+                {...(flavorIssue ? { 'data-ice-pending': '' } : {})}
+                onClick={() => flavorPicker.edit(line)}
+                aria-label={`Alterar os gelos de ${product.name}`}
+                className="-my-1 mt-0.5 rounded px-1 py-1.5 text-xs font-semibold text-[#8FB1FF] underline-offset-4 hover:text-white hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+              >
+                Alterar sabores
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              data-ice-pending=""
+              onClick={() => flavorPicker.edit(line)}
+              aria-label={`Escolher os ${product.comboIces} gelos saborizados de ${product.name} (obrigatório)`}
+              className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-amber-400/15 px-2.5 py-1 text-xs font-bold text-amber-100 ring-1 ring-amber-400/50 transition-colors hover:bg-amber-400/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Escolher os {product.comboIces} gelos *
+            </button>
+          )}
+        </div>
+      )}
       {note && !swapTo && (
         <p data-combo-note="" className="mt-2 rounded-xl bg-amber-400/10 px-3 py-2 text-xs font-semibold leading-snug text-amber-100 ring-1 ring-amber-400/30">
           Obs: {note}

@@ -32,6 +32,9 @@ const productSpec: Spec = {
   swap_base_price: money('Valor do energético que vem no combo', { nullable: true, positive: true }),
   // Quem pede este produto precisa escolher o gelo (normal ou de sabor). Cada produto liga a sua (a categoria não decide mais).
   ice_choice_required: bool('Escolha do gelo'),
+  // Gelos saborizados (migration 0037): o produto É um gelo saborizado (aparece na escolha dos combos) e, nos combos, quantos gelos saborizados vêm nele (0 = nenhum).
+  flavored_ice: bool('Gelo saborizado'),
+  combo_ice_count: int('Gelos saborizados do combo', { min: 0, max: 12 }),
   // Aviso de estoque baixo deste produto (vazio = vale o padrão da loja).
   low_stock_threshold: int('Aviso de estoque baixo', { min: 0, max: 100000, nullable: true }),
   // Bebida alcoólica: o pedido com ela exige a declaração de maioridade e a conferência do documento na entrega (migration 0027; nasce verdadeiro).
@@ -76,6 +79,8 @@ const PRODUCT_LABELS: FieldLabels = {
   swap_base_product_id: { label: 'energético que vem no combo', format: 'changed' },
   swap_base_price: { label: 'valor do energético do combo', format: 'money' },
   ice_choice_required: { label: 'escolha do gelo obrigatória', format: 'bool' },
+  flavored_ice: { label: 'gelo saborizado (aparece na escolha dos combos)', format: 'bool' },
+  combo_ice_count: { label: 'gelos saborizados do combo' },
   alcoholic: { label: 'bebida alcoólica (exige maioridade)', format: 'bool' },
   position: { label: 'ordem' },
 };
@@ -115,6 +120,18 @@ async function checkSwapBase(baseId: unknown, productId?: string) {
   if (productId && baseId === productId) throw new HttpError(400, 'Energético que vem no combo: escolha outro produto, não o próprio combo.', { code: 'swap_base_self' });
   const found = await one<{ id: string }>('select id from products where id = $1', [baseId as string]);
   if (!found) throw new HttpError(400, 'Energético que vem no combo: produto não encontrado.', { code: 'swap_base_missing' });
+}
+
+// Gelos saborizados: um gelo saborizado não é combo com gelos, e o combo com gelos não usa a escolha "gelo normal / gelo de sabor" dos copões. Confere os valores
+// FINAIS do produto (o banco também confere, com restrições).
+function checkFlavorFields(final: Row) {
+  const count = Number(final.combo_ice_count ?? 0);
+  if (final.flavored_ice === true && count > 0) {
+    throw new HttpError(400, 'Gelo saborizado: um produto que é gelo não pode trazer gelos (deixe os gelos do combo em 0).', { code: 'flavored_ice_not_combo' });
+  }
+  if (count > 0 && final.ice_choice_required === true) {
+    throw new HttpError(400, 'Combo com gelos saborizados: desligue a escolha "gelo normal ou de sabor" deste produto (uma coisa ou outra).', { code: 'combo_ice_with_ice_choice' });
+  }
 }
 
 // Energéticos que o cliente pode escolher na troca deste combo (lista opcional; sem lista vale qualquer energético de 2L).
@@ -194,6 +211,7 @@ export function registerCatalog(r: Router) {
       if (found) throw duplicateError(found);
     }
     keepThumbnailsInStep(values);
+    checkFlavorFields(values);
     await checkSwapBase(values.swap_base_product_id);
     const optionIds = swapOptionIds(body);
     await checkSwapOptions(optionIds ?? []);
@@ -226,6 +244,7 @@ export function registerCatalog(r: Router) {
     const optionIds = swapOptionIds(body, id);
     await checkSwapOptions(optionIds ?? []);
     const final = { ...before, ...values } as Row;
+    checkFlavorFields(final);
     checkPromo(Number(final.price), final.promo_price === null ? null : Number(final.promo_price), final.promo_starts_at ?? null, final.promo_ends_at ?? null);
     const renamed = ('name' in values && values.name !== before.name) || ('category_id' in values && values.category_id !== before.category_id);
     if (renamed && body.confirm_duplicate !== true) {
@@ -273,8 +292,8 @@ export function registerCatalog(r: Router) {
   // o arquivo só sai do Blob quando nenhum produto o usa mais.
   r.post('/api/admin/products/:id/duplicate', 'admin', async (ctx) => {
     const product = await one<{ id: string; name: string }>(
-      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic)
-       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic
+      `insert into products (category_id, name, description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, featured, active, position, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic, flavored_ice, combo_ice_count)
+       select category_id, left(name || ' (cópia)', 80), description, price, promo_price, promo_starts_at, promo_ends_at, image_url, image_sm_url, image_md_url, stock, sold_out, false, false, position + 1, swap_base_product_id, swap_base_price, ice_choice_required, alcoholic, flavored_ice, combo_ice_count
          from products where id = $1
        returning *`,
       [uuidParam(ctx)],

@@ -114,6 +114,9 @@ export type ProductRecord = {
   swap_option_ids?: string[];
   // Quem pede este produto precisa escolher o gelo (gelo normal ou de sabor). Cada produto liga a sua no painel; a categoria não decide.
   ice_choice_required?: boolean;
+  // Gelos saborizados: o produto é um gelo saborizado (aparece na escolha dos combos) e, nos combos, quantos gelos saborizados vêm nele (0 = nenhum).
+  flavored_ice?: boolean;
+  combo_ice_count?: number;
   // Bebida alcoólica (migration 0027): o pedido com ela exige a declaração de maioridade e a conferência do documento na entrega. Ausente = sim.
   alcoholic?: boolean;
   created_at: string;
@@ -202,6 +205,8 @@ export type OrderItem = {
   total_price: number;
   // Escolha do gelo (só nos produtos que pedem).
   ice_choice?: IceChoice | null;
+  // Gelos saborizados escolhidos nesta linha de combo (por unidade do combo); null nos demais itens.
+  ice_flavors?: IceFlavor[] | null;
 };
 
 export type StatusChange = {
@@ -302,10 +307,12 @@ export type PublicOrder = {
   // Por quantos dias, depois da última atualização, o link continua valendo.
   retention_days: number;
   // product_id só vem para o dono da conta (para "pedir de novo").
-  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null; swap_to_product_id?: string | null }[];
+  items: { product_id?: string | null; product_name: string; quantity: number; unit_price: number; total_price: number; ice_choice?: IceChoice | null; swap_to_product_id?: string | null; ice_flavors?: IceFlavor[] | null }[];
   history: { status: OrderStatus; at: string }[];
 };
 
+// Os gelos saborizados escolhidos numa linha de combo (por unidade do combo): nome da hora do pedido e quantidade (product_id só para a própria conta).
+export type IceFlavor = { product_id?: string | null; name: string; quantity: number };
 export type Courier = { id: string; name: string; phone: string | null; active: boolean; on_route?: number };
 export type ReviewRow = { id: string; rating: number; comment: string | null; status: 'pending' | 'published' | 'hidden'; created_at: string; moderated_at: string | null; order_number: number; customer_name: string };
 
